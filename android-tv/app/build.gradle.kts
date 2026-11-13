@@ -15,7 +15,7 @@ android {
         targetSdk = 35
         versionCode = 2611001
         versionName = "26.11.001"
-        buildConfigField("String", "GITHUB_REPO", "\"Guaira/LocalStreaming\"")
+        buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {
             useSupportLibrary = true
