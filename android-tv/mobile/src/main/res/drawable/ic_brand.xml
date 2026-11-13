@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Antenna -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M24,14 L18,5 M24,14 L30,4" />
+
+    <!-- 4 Piedini svasati -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M15,36 L13,42 M19,36 L18,40 M29,36 L30,40 M33,36 L35,42" />
+
+    <!-- Scocca TV -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M11,14 L37,14 A4,4 0 0 1 41,18 L41,32 A4,4 0 0 1 37,36 L11,36 A4,4 0 0 1 7,32 L7,18 A4,4 0 0 1 11,14 Z" />
+
+    <!-- Schermo CRT bombato -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,17 L25,17 A2.5,2.5 0 0 1 27.5,19.5 L27.5,30.5 A2.5,2.5 0 0 1 25,33 L12,33 A2.5,2.5 0 0 1 9.5,30.5 L9.5,19.5 A2.5,2.5 0 0 1 12,17 Z" />
+
+    <!-- Dials -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:pathData="M34,19 A1.8,1.8 0 1 0 34.1,19 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:pathData="M34,24 A1.8,1.8 0 1 0 34.1,24 Z" />
+
+    <!-- Feritoie altoparlante -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M31,29 L37,29 M31,31.5 L37,31.5 M31,34 L37,34" />
+
+</vector>

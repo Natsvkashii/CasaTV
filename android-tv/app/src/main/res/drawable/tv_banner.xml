@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Absolute Pure Black Background -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M0,0 h320 v180 h-320 z" />
+
+    <!-- Antenna a V classica Simpson -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M160,56 L130,22 M160,56 L196,17" />
+
+    <!-- 4 Piedini di supporto svasati a cono -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M112,143 L100,164 M128,143 L122,158 M192,143 L198,158 M208,143 L220,164" />
+
+    <!-- Scocca TV Simpson bombata -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M92,56 L228,56 A16,16 0 0 1 244,72 L244,127 A16,16 0 0 1 228,143 L92,143 A16,16 0 0 1 76,127 L76,72 A16,16 0 0 1 92,56 Z" />
+
+    <!-- Schermo CRT bombato (~65% della larghezza a sinistra) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M98,66 L171,66 A12,12 0 0 1 183,78 L183,121 A12,12 0 0 1 171,133 L98,133 A12,12 0 0 1 86,121 L86,78 A12,12 0 0 1 98,66 Z" />
+
+    <!-- Manopole rotative (Dials) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:pathData="M214,73 A7,7 0 1 0 214.1,73 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M214,75 L214,79" />
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:pathData="M214,93 A7,7 0 1 0 214.1,93 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M217,93 L213,93" />
+
+    <!-- Feritoie altoparlante audio -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M200,113 L228,113 M200,119 L228,119 M200,125 L228,125 M200,131 L228,131" />
+
+</vector>

@@ -1,0 +1,24 @@
+{
+  "name": "casatv-desktop",
+  "version": "1.6.0",
+  "description": "CasaTV Server Controller & System Tray for Windows, Mac & Linux",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "casatv",
+    "iptv",
+    "server",
+    "tray",
+    "cross-platform"
+  ],
+  "author": "Guaira Jaramillo Nitoglia <guaira.jaramillo.nitoglia@gmail.com>",
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "electron": "^45.1.0"
+  }
+}

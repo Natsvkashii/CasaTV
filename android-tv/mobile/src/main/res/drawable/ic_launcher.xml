@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- Absolute Pure Black Background -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M0,0 h512 v512 h-512 z" />
+
+    <!-- Antenna a V classica Simpson con estremità arrotondate -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="11"
+        android:strokeLineCap="round"
+        android:pathData="M256,175 L175,75 M256,175 L345,60" />
+
+    <!-- 4 Piedini di supporto svasati a cono -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="12"
+        android:strokeLineCap="round"
+        android:pathData="M148,390 L122,445 M186,390 L172,430 M326,390 L340,430 M364,390 L390,445" />
+
+    <!-- Scocca TV Simpson (squadrata/bombata, angoli continui squircle) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="11"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M102,175 L410,175 A36,36 0 0 1 446,211 L446,354 A36,36 0 0 1 410,390 L102,390 A36,36 0 0 1 66,354 L66,211 A36,36 0 0 1 102,175 Z" />
+
+    <!-- Schermo CRT bombato (~65% della larghezza sul lato sinistro, interno passante) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M116,198 L282,198 A26,26 0 0 1 308,224 L308,341 A26,26 0 0 1 282,367 L116,367 A26,26 0 0 1 90,341 L90,224 A26,26 0 0 1 116,198 Z" />
+
+    <!-- Pannello di controllo destro: Manopola Superiore (Dial 1) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:pathData="M377,212 A18,18 0 1 0 377.1,212 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:pathData="M377,217 L377,227" />
+
+    <!-- Pannello di controllo destro: Manopola Inferiore (Dial 2) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:pathData="M377,264 A18,18 0 1 0 377.1,264 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:pathData="M384,264 L374,264" />
+
+    <!-- Feritoie Altoparlante Audio (4 linee parallele pulite) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:pathData="M346,316 L408,316 M346,331 L408,331 M346,346 L408,346 M346,361 L408,361" />
+
+</vector>
