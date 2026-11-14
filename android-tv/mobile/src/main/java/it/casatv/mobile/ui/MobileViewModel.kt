@@ -10,6 +10,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import it.casatv.mobile.core.LocalDatabase
+import it.casatv.mobile.core.M3uParser
 import it.casatv.mobile.core.PlaylistRepository
 import it.casatv.mobile.data.ConnectionMode
 import it.casatv.mobile.data.CountryFacet
@@ -213,19 +214,22 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         val list = merged.values.toList()
-        val facets = list
+        val countsByCountry = list
             .filter { !it.country.isNullOrBlank() }
-            .groupBy { it.country!! }
-            .map { (code, items) ->
-                val sample = items.first()
+            .groupingBy { if (it.country.equals("UK", true)) "GB" else it.country!!.uppercase() }
+            .eachCount()
+
+        val facets = java.util.Locale.getISOCountries()
+            .map { code ->
+                val (name, flag) = M3uParser.countryMeta(code)
                 CountryFacet(
                     code = code,
-                    name = sample.countryName.ifBlank { code },
-                    flag = sample.flag.ifBlank { "🌐" },
-                    count = items.size,
+                    name = name,
+                    flag = flag,
+                    count = countsByCountry[code] ?: 0,
                 )
             }
-            .sortedByDescending { it.count }
+            .sortedBy { it.name.lowercase() }
 
         _state.update { current ->
             val validCountry = current.selectedCountry?.takeIf { sel -> facets.any { it.code == sel } }

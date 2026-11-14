@@ -2,34 +2,11 @@ package it.casatv.mobile.core
 
 import it.casatv.mobile.data.MobileChannel
 import java.security.MessageDigest
+import java.util.Locale
 
 object M3uParser {
     private val ATTR_RE = Regex("""([a-zA-Z0-9_-]+)="([^"]*)"""")
     private val TRAILING_TITLE_RE = Regex(""",\s*(.+)$""")
-
-    private val COUNTRY_MAP = mapOf(
-        "IT" to ("Italia" to "🇮🇹"),
-        "US" to ("Stati Uniti" to "🇺🇸"),
-        "UK" to ("Regno Unito" to "🇬🇧"),
-        "GB" to ("Regno Unito" to "🇬🇧"),
-        "ES" to ("Spagna" to "🇪🇸"),
-        "FR" to ("Francia" to "🇫🇷"),
-        "DE" to ("Germania" to "🇩🇪"),
-        "PT" to ("Portogallo" to "🇵🇹"),
-        "CH" to ("Svizzera" to "🇨🇭"),
-        "BR" to ("Brasile" to "🇧🇷"),
-        "AR" to ("Argentina" to "🇦🇷"),
-        "MX" to ("Messico" to "🇲🇽"),
-        "CA" to ("Canada" to "🇨🇦"),
-        "NL" to ("Paesi Bassi" to "🇳🇱"),
-        "BE" to ("Belgio" to "🇧🇪"),
-        "PL" to ("Polonia" to "🇵🇱"),
-        "RO" to ("Romania" to "🇷🇴"),
-        "RU" to ("Russia" to "🇷🇺"),
-        "JP" to ("Giappone" to "🇯🇵"),
-        "KR" to ("Corea del Sud" to "🇰🇷"),
-        "INT" to ("Internazionale" to "🌍"),
-    )
 
     fun parse(text: String, playlistId: String = "default"): List<MobileChannel> {
         val cleaned = text.removePrefix("\uFEFF")
@@ -142,8 +119,16 @@ object M3uParser {
     }
 
     fun countryMeta(code: String?): Pair<String, String> {
-        val upper = code?.uppercase() ?: return "Altro" to "🌐"
-        return COUNTRY_MAP[upper] ?: (upper to "🌐")
+        val raw = code?.trim()?.uppercase(Locale.ROOT) ?: return "Altro" to "🌐"
+        val upper = if (raw == "UK") "GB" else raw
+        if (upper.length != 2 || upper.any { it !in 'A'..'Z' }) return upper to "🌐"
+        val flag = String(
+            Character.toChars(0x1F1E6 + (upper[0] - 'A')) +
+                Character.toChars(0x1F1E6 + (upper[1] - 'A')),
+        )
+        val italian = Locale.forLanguageTag("it")
+        val name = Locale("", upper).getDisplayCountry(italian).ifBlank { upper }
+        return name to flag
     }
 
     private fun inferCategory(groupTitle: String): String {

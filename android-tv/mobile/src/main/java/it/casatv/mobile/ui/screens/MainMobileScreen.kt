@@ -20,12 +20,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
@@ -159,7 +159,7 @@ fun MainMobileScreen(
                 NavigationBarItem(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.PlaylistPlay, contentDescription = null) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null) },
                     label = { Text("Liste M3U") },
                 )
                 NavigationBarItem(
@@ -214,17 +214,13 @@ fun MainMobileScreen(
     }
 
     if (showCountryPicker) {
-        CountryPickerAndSearchDialog(
+        CountryPickerDialog(
             countries = state.countries,
-            allChannels = state.allChannels,
+            totalChannels = state.allChannels.size,
             selectedCountry = state.selectedCountry,
             onSelectCountry = { code ->
                 onSelectCountry(code)
                 showCountryPicker = false
-            },
-            onOpenChannel = { ch ->
-                showCountryPicker = false
-                onOpenChannel(ch)
             },
             onDismiss = { showCountryPicker = false },
         )
@@ -265,26 +261,21 @@ fun MainMobileScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CountryPickerAndSearchDialog(
+private fun CountryPickerDialog(
     countries: List<CountryFacet>,
-    allChannels: List<MobileChannel>,
+    totalChannels: Int,
     selectedCountry: String?,
     onSelectCountry: (String?) -> Unit,
-    onOpenChannel: (MobileChannel) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val alphabeticalCountries = remember(countries) {
-        countries.sortedBy { it.name.lowercase() }
-    }
-    val matchingChannels = remember(query, allChannels) {
+    val filteredCountries = remember(query, countries) {
         val q = query.trim().lowercase()
-        if (q.isEmpty()) emptyList()
-        else allChannels.filter {
-            it.name.lowercase().contains(q) ||
-                it.category.lowercase().contains(q) ||
-                (it.number?.toString()?.contains(q) == true)
-        }.take(40)
+        val sorted = countries.sortedBy { it.name.lowercase() }
+        if (q.isEmpty()) sorted
+        else sorted.filter {
+            it.name.lowercase().contains(q) || it.code.lowercase().contains(q)
+        }
     }
 
     Dialog(
@@ -294,7 +285,7 @@ private fun CountryPickerAndSearchDialog(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Paesi e Ricerca Canali", fontWeight = FontWeight.Bold) },
+                    title = { Text("Seleziona Paese", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.Default.Close, contentDescription = "Chiudi")
@@ -311,7 +302,7 @@ private fun CountryPickerAndSearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("Cerca il canale desiderato...") },
+                    placeholder = { Text("Cerca paese...") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) {
@@ -332,76 +323,25 @@ private fun CountryPickerAndSearchDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    if (query.isNotBlank()) {
-                        item {
-                            Text(
-                                text = "Canali trovati (${matchingChannels.size})",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        if (matchingChannels.isEmpty()) {
-                            item {
-                                Text(
-                                    text = "Nessun canale trovato per '$query'",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        } else {
-                            items(matchingChannels, key = { "dlg_${it.id}" }) { ch ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onOpenChannel(ch) },
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = ch.flag.ifBlank { "📺" },
-                                            fontSize = 20.sp,
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = ch.name,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Text(
-                                                text = ch.subtitle,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
+                    if (query.isBlank()) {
                         item {
                             CountryOptionCard(
                                 flag = "🌐",
                                 name = "Tutti i paesi",
-                                count = allChannels.size,
+                                count = totalChannels,
                                 selected = selectedCountry == null,
                                 onClick = { onSelectCountry(null) },
                             )
                         }
-                        items(alphabeticalCountries, key = { it.code }) { facet ->
-                            CountryOptionCard(
-                                flag = facet.flag,
-                                name = facet.name,
-                                count = facet.count,
-                                selected = selectedCountry == facet.code,
-                                onClick = { onSelectCountry(facet.code) },
-                            )
-                        }
+                    }
+                    items(filteredCountries, key = { it.code }) { facet ->
+                        CountryOptionCard(
+                            flag = facet.flag,
+                            name = facet.name,
+                            count = facet.count,
+                            selected = selectedCountry == facet.code,
+                            onClick = { onSelectCountry(facet.code) },
+                        )
                     }
                 }
             }
@@ -515,7 +455,10 @@ private fun ChannelsTab(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         )
 
-        if (state.countries.isNotEmpty()) {
+        val activeCountries = remember(state.countries) {
+            state.countries.filter { it.count > 0 }
+        }
+        if (activeCountries.isNotEmpty()) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -528,7 +471,7 @@ private fun ChannelsTab(
                         label = { Text("Tutti (${state.allChannels.size})") },
                     )
                 }
-                items(state.countries, key = { it.code }) { facet ->
+                items(activeCountries, key = { it.code }) { facet ->
                     FilterChip(
                         selected = state.selectedCountry == facet.code,
                         onClick = {

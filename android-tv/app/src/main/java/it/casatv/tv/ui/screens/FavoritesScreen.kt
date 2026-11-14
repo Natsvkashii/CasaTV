@@ -52,7 +52,12 @@ fun FavoritesScreen(
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val loading by vm.favoritesLoading.collectAsStateWithLifecycle()
     val error by vm.favoritesError.collectAsStateWithLifecycle()
+    val lastPlayedId by vm.lastPlayedChannelId.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
+    val targetIndex = remember(favorites, lastPlayedId) {
+        favorites.indexOfFirst { it.id == lastPlayedId }.takeIf { it >= 0 } ?: 0
+    }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = targetIndex)
     val firstFocus = remember { FocusRequester() }
     var initialFocusDone by remember { mutableStateOf(false) }
 
@@ -60,8 +65,9 @@ fun FavoritesScreen(
         vm.loadFavorites(showLoading = favorites.isEmpty())
     }
 
-    LaunchedEffect(favorites.isNotEmpty()) {
+    LaunchedEffect(favorites.isNotEmpty(), targetIndex) {
         if (!initialFocusDone && favorites.isNotEmpty()) {
+            runCatching { gridState.scrollToItem(targetIndex) }
             delay(160)
             runCatching { firstFocus.requestFocus() }
             initialFocusDone = true
@@ -150,7 +156,7 @@ fun FavoritesScreen(
             )
 
             else -> LazyVerticalGrid(
-                state = rememberLazyGridState(),
+                state = gridState,
                 columns = GridCells.Adaptive(178.dp),
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp),
@@ -162,7 +168,7 @@ fun FavoritesScreen(
                         channel = channel,
                         onClick = { vm.startPlayback(channel, favorites) },
                         onFavorite = { vm.toggleFavorite(channel) },
-                        modifier = if (index == 0) {
+                        modifier = if (index == targetIndex) {
                             Modifier.focusRequester(firstFocus)
                         } else {
                             Modifier

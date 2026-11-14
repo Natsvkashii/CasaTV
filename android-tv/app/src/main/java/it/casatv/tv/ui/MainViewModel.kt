@@ -243,6 +243,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _playback = MutableStateFlow<PlaybackSession?>(null)
     val playback: StateFlow<PlaybackSession?> = _playback.asStateFlow()
 
+    private val _lastPlayedChannelId = MutableStateFlow<String?>(null)
+    val lastPlayedChannelId: StateFlow<String?> = _lastPlayedChannelId.asStateFlow()
+
     private val _aspectRatioMode = MutableStateFlow(
         prefs.getInt(KEY_ASPECT_RATIO_MODE, androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT)
     )
@@ -1106,6 +1109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startPlayback(channel: Channel, queue: List<Channel>) {
+        _lastPlayedChannelId.value = channel.id
         if (channel.streamUrl.isBlank()) {
             showMessage(
                 localize(

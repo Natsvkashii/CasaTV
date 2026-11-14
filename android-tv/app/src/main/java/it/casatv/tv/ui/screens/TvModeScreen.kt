@@ -106,8 +106,13 @@ fun TvModeScreen(
     val searchLoading by vm.searchLoading.collectAsStateWithLifecycle()
     val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
     val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
+    val lastPlayedId by vm.lastPlayedChannelId.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val scale = rememberTvUiScale()
+    val targetIndex = remember(queue, lastPlayedId) {
+        queue.indexOfFirst { it.id == lastPlayedId }.takeIf { it >= 0 } ?: 0
+    }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = targetIndex)
     val firstFocus = remember { FocusRequester() }
     var pickerOpen by remember { mutableStateOf(false) }
     var subTab by rememberSaveable { mutableStateOf(initialSubTab) }
@@ -125,8 +130,9 @@ fun TvModeScreen(
         vm.ensureTvLoaded()
     }
 
-    LaunchedEffect(queue.isNotEmpty(), subTab, searchQuery.isEmpty()) {
+    LaunchedEffect(queue.isNotEmpty(), subTab, searchQuery.isEmpty(), targetIndex) {
         if (queue.isNotEmpty() && subTab == TvSubTab.Channels && searchQuery.isBlank()) {
+            runCatching { gridState.scrollToItem(targetIndex) }
             delay(160)
             runCatching { firstFocus.requestFocus() }
         }
@@ -382,7 +388,7 @@ fun TvModeScreen(
                         )
 
                         else -> LazyVerticalGrid(
-                            state = rememberLazyGridState(),
+                            state = gridState,
                             columns = GridCells.Adaptive(scale.gridMinCardWidth),
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 32.dp),
@@ -394,7 +400,7 @@ fun TvModeScreen(
                                     channel = channel,
                                     onClick = { vm.startPlayback(channel, queue) },
                                     onFavorite = { vm.toggleFavorite(channel) },
-                                    modifier = if (index == 0) {
+                                    modifier = if (index == targetIndex) {
                                         Modifier.focusRequester(firstFocus)
                                     } else {
                                         Modifier
