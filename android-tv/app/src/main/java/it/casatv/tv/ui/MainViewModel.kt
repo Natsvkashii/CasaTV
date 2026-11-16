@@ -1531,24 +1531,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkForUpdates(silent: Boolean = true) {
         viewModelScope.launch {
-            try {
+            val currentVersion = it.casatv.tv.BuildConfig.VERSION_NAME
+            val lanInfo = try {
                 val info = api.versionInfo()
-                val currentVersion = it.casatv.tv.BuildConfig.VERSION_NAME
                 val isNewer = isNewerVersion(info.latest, currentVersion)
-                if ((info.updateAvailable || isNewer) && !info.downloadUrl.isNullOrBlank()) {
-                    _updateInfo.value = info
-                    return@launch
-                }
+                if ((info.updateAvailable || isNewer) && !info.downloadUrl.isNullOrBlank()) info else null
             } catch (_: Exception) {
-                // Fallback to GitHub Releases below
+                null
             }
             val ghInfo = githubUpdater.checkForUpdate(force = !silent)
-            if (ghInfo != null) {
-                _updateInfo.value = ghInfo
+
+            val best = when {
+                lanInfo != null && ghInfo != null ->
+                    if (isNewerVersion(ghInfo.latest, lanInfo.latest)) ghInfo else lanInfo
+                ghInfo != null -> ghInfo
+                lanInfo != null -> lanInfo
+                else -> null
+            }
+
+            if (best != null) {
+                _updateInfo.value = best
             } else {
                 _updateInfo.value = null
                 if (!silent) {
-                    _messages.emit("L'app è già aggiornata all'ultima versione disponibile (${it.casatv.tv.BuildConfig.VERSION_NAME}).")
+                    _messages.emit("L'app è già aggiornata all'ultima versione disponibile ($currentVersion).")
                 }
             }
         }
