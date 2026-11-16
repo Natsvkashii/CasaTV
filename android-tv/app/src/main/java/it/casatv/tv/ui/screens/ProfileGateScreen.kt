@@ -993,19 +993,23 @@ fun CountryPickerOverlay(
     }
     val focusCode = filtered.getOrNull(selectedIndex)?.code ?: filtered.firstOrNull()?.code
 
-    LaunchedEffect(filtered) {
-        delay(120)
+    LaunchedEffect(Unit) {
         gridState.scrollToItem(selectedIndex.coerceAtLeast(0))
+        delay(120)
         runCatching { firstFocus.requestFocus() }
     }
 
-    BackHandler(onBack = onClose)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CasaBackground.copy(alpha = 0.98f)),
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        BackHandler(onBack = onClose)
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(CasaBackground.copy(alpha = 0.98f)),
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1098,6 +1102,7 @@ fun CountryPickerOverlay(
                 fontSize = 10.sp,
             )
         }
+    }
     }
 }
 

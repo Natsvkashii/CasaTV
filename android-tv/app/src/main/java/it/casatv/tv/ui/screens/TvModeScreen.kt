@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -130,8 +131,8 @@ fun TvModeScreen(
         vm.ensureTvLoaded()
     }
 
-    LaunchedEffect(queue.isNotEmpty(), subTab, searchQuery.isEmpty(), targetIndex) {
-        if (queue.isNotEmpty() && subTab == TvSubTab.Channels && searchQuery.isBlank()) {
+    LaunchedEffect(queue.isNotEmpty(), subTab, searchQuery.isEmpty(), targetIndex, pickerOpen) {
+        if (!pickerOpen && queue.isNotEmpty() && subTab == TvSubTab.Channels && searchQuery.isBlank()) {
             runCatching { gridState.scrollToItem(targetIndex) }
             delay(160)
             runCatching { firstFocus.requestFocus() }
@@ -149,6 +150,7 @@ fun TvModeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .focusProperties { canFocus = !pickerOpen }
             .padding(horizontal = scale.paddingHorizontal),
     ) {
         Spacer(Modifier.height(8.dp))
