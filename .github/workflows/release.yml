@@ -1,0 +1,51 @@
+name: Release APKs
+
+on:
+  push:
+    tags:
+      - '[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9]*'
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Android TV APK
+        working-directory: android-tv
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease
+          mkdir -p server/src/main/assets/updates
+          cp app/build/outputs/apk/release/app-release.apk server/src/main/assets/updates/casatv-tv.apk
+          cp app/build/outputs/apk/release/app-release.apk "../casatv-tv-${GITHUB_REF_NAME}.apk"
+
+      - name: Build Server & Mobile APKs
+        working-directory: android-tv
+        run: |
+          ./gradlew :server:assembleRelease :mobile:assembleRelease
+          cp server/build/outputs/apk/release/server-release.apk "../casatv-server-${GITHUB_REF_NAME}.apk"
+          cp mobile/build/outputs/apk/release/mobile-release.apk "../casatv-mobile-${GITHUB_REF_NAME}.apk"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            casatv-tv-${{ github.ref_name }}.apk
+            casatv-server-${{ github.ref_name }}.apk
+            casatv-mobile-${{ github.ref_name }}.apk
