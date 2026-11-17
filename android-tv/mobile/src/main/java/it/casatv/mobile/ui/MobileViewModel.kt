@@ -45,6 +45,7 @@ data class MobileUiState(
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val updateFrequency: UpdateFrequency = UpdateFrequency.WEEKLY,
+    val isCheckingUpdates: Boolean = false,
     val availableUpdate: AvailableUpdate? = null,
     val updateProgress: Float? = null,
 ) {
@@ -380,10 +381,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun checkGitHubUpdates(force: Boolean) {
         viewModelScope.launch {
+            if (force) {
+                _state.update { it.copy(isCheckingUpdates = true, statusMessage = null, errorMessage = null) }
+            }
             updater.checkForUpdate(force = force)
                 .onSuccess { upd ->
                     _state.update {
                         it.copy(
+                            isCheckingUpdates = false,
                             availableUpdate = upd,
                             statusMessage = if (force && upd == null) {
                                 "L'app è già aggiornata all'ultima versione"
@@ -394,10 +399,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 .onFailure { err ->
-                    if (force) {
-                        _state.update {
-                            it.copy(errorMessage = "Errore controllo aggiornamenti: ${err.message}")
-                        }
+                    _state.update {
+                        it.copy(
+                            isCheckingUpdates = false,
+                            errorMessage = if (force) "Errore controllo aggiornamenti: ${err.message}" else it.errorMessage,
+                        )
                     }
                 }
         }

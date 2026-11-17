@@ -61,28 +61,51 @@ class GitHubUpdater(context: Context) {
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "CasaTV-TV/${BuildConfig.VERSION_NAME}")
                 .build()
-            val body = client.newCall(req).execute().use { resp ->
-                if (resp.code == 404 || !resp.isSuccessful) return@runCatching null
-                resp.body?.string() ?: return@runCatching null
+            val (code, body) = client.newCall(req).execute().use { resp ->
+                resp.code to resp.body?.string()
             }
             prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
 
-            val release = json.decodeFromString<GitHubRelease>(body)
-            val remoteVersion = release.tag_name.trim().removePrefix("v").removePrefix("V")
+            if (code == 200 && !body.isNullOrBlank()) {
+                val release = json.decodeFromString<GitHubRelease>(body)
+                val remoteVersion = release.tag_name.trim().removePrefix("v").removePrefix("V")
+                if (!isNewerVersion(remoteVersion, BuildConfig.VERSION_NAME)) {
+                    return@runCatching null
+                }
+                val asset = release.assets.firstOrNull {
+                    it.name.contains("tv", ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true)
+                } ?: return@runCatching null
+                return@runCatching UpdateInfo(
+                    latest = remoteVersion,
+                    current = BuildConfig.VERSION_NAME,
+                    updateAvailable = true,
+                    downloadUrl = asset.browser_download_url,
+                    changelog = release.body.ifBlank { "Aggiornamento CasaTV TV v$remoteVersion da GitHub" },
+                )
+            }
+
+            if (code == 404) return@runCatching null
+
+            val webReq = Request.Builder()
+                .url("https://github.com/${BuildConfig.GITHUB_REPO}/releases/latest")
+                .header("User-Agent", "CasaTV-TV/${BuildConfig.VERSION_NAME}")
+                .build()
+            val finalUrl = client.newCall(webReq).execute().use { resp ->
+                if (!resp.isSuccessful) return@runCatching null
+                resp.request.url.toString()
+            }
+            val tag = finalUrl.substringAfter("/releases/tag/", "").substringBefore('?').trim()
+            if (tag.isBlank()) return@runCatching null
+            val remoteVersion = tag.removePrefix("v").removePrefix("V")
             if (!isNewerVersion(remoteVersion, BuildConfig.VERSION_NAME)) {
                 return@runCatching null
             }
-
-            val asset = release.assets.firstOrNull {
-                it.name.contains("tv", ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true)
-            } ?: return@runCatching null
-
             UpdateInfo(
                 latest = remoteVersion,
                 current = BuildConfig.VERSION_NAME,
                 updateAvailable = true,
-                downloadUrl = asset.browser_download_url,
-                changelog = release.body.ifBlank { "Aggiornamento CasaTV TV v$remoteVersion da GitHub" },
+                downloadUrl = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/$tag/casatv-tv-$tag.apk",
+                changelog = "Aggiornamento CasaTV TV v$remoteVersion da GitHub",
             )
         }.getOrNull()
     }

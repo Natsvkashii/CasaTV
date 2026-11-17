@@ -70,27 +70,47 @@ class GitHubUpdater(private val context: Context) {
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "CasaTV-Server/${BuildConfig.VERSION_NAME}")
                 .build()
-            val body = client.newCall(req).execute().use { resp ->
-                if (resp.code == 404) return@runCatching null
-                if (!resp.isSuccessful) error("GitHub HTTP ${resp.code}")
-                resp.body?.string() ?: error("Risposta vuota")
+            val (code, body) = client.newCall(req).execute().use { resp ->
+                resp.code to resp.body?.string()
             }
             prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
 
-            val release = json.decodeFromString<GitHubRelease>(body)
-            val remoteVersion = release.tag_name.trim().removePrefix("v").removePrefix("V")
+            if (code == 200 && !body.isNullOrBlank()) {
+                val release = json.decodeFromString<GitHubRelease>(body)
+                val remoteVersion = release.tag_name.trim().removePrefix("v").removePrefix("V")
+                if (!isNewerVersion(remoteVersion, BuildConfig.VERSION_NAME)) {
+                    return@runCatching null
+                }
+                val asset = release.assets.firstOrNull {
+                    it.name.contains("server", ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true)
+                } ?: return@runCatching null
+                return@runCatching AvailableUpdate(
+                    version = remoteVersion,
+                    downloadUrl = asset.browser_download_url,
+                    notes = release.body.ifBlank { "Nuova versione $remoteVersion disponibile su GitHub" },
+                )
+            }
+
+            if (code == 404) return@runCatching null
+
+            val webReq = Request.Builder()
+                .url("https://github.com/${BuildConfig.GITHUB_REPO}/releases/latest")
+                .header("User-Agent", "CasaTV-Server/${BuildConfig.VERSION_NAME}")
+                .build()
+            val finalUrl = client.newCall(webReq).execute().use { resp ->
+                if (!resp.isSuccessful) error("GitHub HTTP $code")
+                resp.request.url.toString()
+            }
+            val tag = finalUrl.substringAfter("/releases/tag/", "").substringBefore('?').trim()
+            if (tag.isBlank()) return@runCatching null
+            val remoteVersion = tag.removePrefix("v").removePrefix("V")
             if (!isNewerVersion(remoteVersion, BuildConfig.VERSION_NAME)) {
                 return@runCatching null
             }
-
-            val asset = release.assets.firstOrNull {
-                it.name.contains("server", ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true)
-            } ?: return@runCatching null
-
             AvailableUpdate(
                 version = remoteVersion,
-                downloadUrl = asset.browser_download_url,
-                notes = release.body.ifBlank { "Nuova versione $remoteVersion disponibile su GitHub" },
+                downloadUrl = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/$tag/casatv-server-$tag.apk",
+                notes = "Nuova versione $remoteVersion disponibile su GitHub",
             )
         }
     }

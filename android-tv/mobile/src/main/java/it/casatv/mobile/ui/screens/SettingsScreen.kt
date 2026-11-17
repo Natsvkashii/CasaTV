@@ -211,10 +211,33 @@ fun SettingsScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = onCheckUpdatesNow) {
+                    OutlinedButton(
+                        onClick = onCheckUpdatesNow,
+                        enabled = !state.isCheckingUpdates,
+                    ) {
                         Icon(Icons.Default.SystemUpdate, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Controlla aggiornamenti ora")
+                        Text(if (state.isCheckingUpdates) "Controllo..." else "Controlla aggiornamenti ora")
+                    }
+                    if (state.isCheckingUpdates) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    state.errorMessage?.let { err ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    state.statusMessage?.let { msg ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     }
                     state.availableUpdate?.let { upd ->
                         Spacer(Modifier.height(10.dp))
