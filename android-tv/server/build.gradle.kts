@@ -15,8 +15,8 @@ android {
         // while still running on older boxes and phones.
         minSdk = 26
         targetSdk = 35
-        versionCode = 2611007
-        versionName = "26.11.007"
+        versionCode = 2611008
+        versionName = "26.11.008"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {
@@ -26,10 +26,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(System.getenv("CASATV_KEYSTORE_PATH") ?: "${System.getProperty("user.home")}/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            storeFile = rootProject.file("casatv-official.jks")
+            storePassword = "casatv2026"
+            keyAlias = "casatv"
+            keyPassword = "casatv2026"
         }
     }
 
