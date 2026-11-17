@@ -78,7 +78,7 @@ fun CasaTvApp(vm: MainViewModel) {
 
     val deviceLanguage = remember {
         val code = java.util.Locale.getDefault().language.lowercase()
-        if (code == "en" || code == "es") code else "it"
+        if (code == "it" || code == "es") code else "en"
     }
     val language = activeProfile?.language ?: deviceLanguage
     val strings = remember(language) { AppStrings(language) }

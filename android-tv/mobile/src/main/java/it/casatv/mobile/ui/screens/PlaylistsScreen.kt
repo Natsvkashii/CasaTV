@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import it.casatv.mobile.data.LocalPlaylist
+import it.casatv.mobile.ui.LocalMobileStrings
 import it.casatv.mobile.ui.MobileUiState
 
 @Composable
@@ -56,6 +57,7 @@ fun PlaylistsScreen(
     onDeletePlaylist: (LocalPlaylist) -> Unit,
     onDismissMessage: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     var showUrlDialog by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
@@ -73,13 +75,13 @@ fun PlaylistsScreen(
     ) {
         item {
             Text(
-                text = "Liste M3U locali",
+                text = strings.playlistsTitle,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Importa file .m3u/.m3u8 dal dispositivo o da un indirizzo URL per usare l'app in modo completamente autonomo.",
+                text = strings.playlistsSubtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -97,7 +99,7 @@ fun PlaylistsScreen(
                 ) {
                     Icon(Icons.Default.AddLink, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Da URL")
+                    Text(strings.fromUrl)
                 }
                 OutlinedButton(
                     onClick = {
@@ -116,7 +118,7 @@ fun PlaylistsScreen(
                 ) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("File .M3U")
+                    Text(strings.localFileM3u)
                 }
             }
         }
@@ -191,13 +193,13 @@ fun PlaylistsScreen(
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
                         Text(
-                            text = "Nessuna lista M3U importata",
+                            text = strings.noPlaylists,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "Tocca 'Da URL' oppure 'File .M3U' qui sopra per caricare i tuoi canali.",
+                            text = strings.noPlaylistsHint,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -234,6 +236,7 @@ private fun PlaylistCard(
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -254,8 +257,8 @@ private fun PlaylistCard(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "${playlist.channelCount} canali · " +
-                        if (playlist.isLocalFile) "File locale" else "URL",
+                    text = "${strings.get("channels_count_label", playlist.channelCount)} · " +
+                        if (playlist.isLocalFile) strings.localFileLabel else "URL",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -285,25 +288,26 @@ private fun AddUrlPlaylistDialog(
     onDismiss: () -> Unit,
     onConfirm: (name: String, url: String) -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Aggiungi lista M3U da URL") },
+        title = { Text(strings.addUrlTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nome (opzionale)") },
+                    label = { Text(strings.nameOptional) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("URL M3U / M3U8") },
+                    label = { Text(strings.urlM3uLabel) },
                     placeholder = { Text("https://...") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -315,12 +319,12 @@ private fun AddUrlPlaylistDialog(
                 onClick = { onConfirm(name, url) },
                 enabled = url.trim().startsWith("http"),
             ) {
-                Text("Carica")
+                Text(strings.loadAction)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Annulla")
+                Text(strings.cancelAction)
             }
         },
     )

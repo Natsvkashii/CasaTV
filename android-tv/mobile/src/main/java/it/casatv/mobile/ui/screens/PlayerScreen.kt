@@ -61,6 +61,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import it.casatv.mobile.data.MobileChannel
+import it.casatv.mobile.ui.LocalMobileStrings
 import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
@@ -72,6 +73,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val strings = LocalMobileStrings.current
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -116,7 +118,7 @@ fun PlayerScreen(
 
             override fun onPlayerError(error: PlaybackException) {
                 isBuffering = false
-                errorText = "Impossibile riprodurre il flusso (${error.errorCodeName})"
+                errorText = strings.get("playback_error", error.errorCodeName)
             }
         }
         exoPlayer.addListener(listener)
@@ -194,7 +196,7 @@ fun PlayerScreen(
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
-                    Text("Riprova")
+                    Text(strings.retry)
                 }
             }
         }

@@ -70,6 +70,7 @@ import it.casatv.mobile.data.ConnectionMode
 import it.casatv.mobile.data.CountryFacet
 import it.casatv.mobile.data.LocalPlaylist
 import it.casatv.mobile.data.MobileChannel
+import it.casatv.mobile.ui.LocalMobileStrings
 import it.casatv.mobile.ui.MobileUiState
 import it.casatv.mobile.update.UpdateFrequency
 
@@ -87,6 +88,7 @@ fun MainMobileScreen(
     onRefreshPlaylist: (LocalPlaylist) -> Unit,
     onDeletePlaylist: (LocalPlaylist) -> Unit,
     onDismissMessage: () -> Unit,
+    onSetLanguage: (String) -> Unit,
     onSetDarkTheme: (Boolean) -> Unit,
     onSetAutoServer: (Boolean) -> Unit,
     onSetAutoSaveServerM3u: (Boolean) -> Unit,
@@ -96,6 +98,7 @@ fun MainMobileScreen(
     onInstallUpdate: () -> Unit,
     onDismissUpdate: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showCountryPicker by remember { mutableStateOf(false) }
 
@@ -133,7 +136,7 @@ fun MainMobileScreen(
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                text = selectedCountryFacet?.code ?: "Tutti",
+                                text = selectedCountryFacet?.code ?: strings.allCountriesShort,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -148,25 +151,25 @@ fun MainMobileScreen(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
                     icon = { Icon(Icons.Default.LiveTv, contentDescription = null) },
-                    label = { Text("Canali") },
+                    label = { Text(strings.tabChannels) },
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
-                    label = { Text("Preferiti") },
+                    label = { Text(strings.tabFavorites) },
                 )
                 NavigationBarItem(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
                     icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null) },
-                    label = { Text("Liste M3U") },
+                    label = { Text(strings.tabPlaylists) },
                 )
                 NavigationBarItem(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("Impostazioni") },
+                    label = { Text(strings.tabSettings) },
                 )
             }
         },
@@ -201,6 +204,7 @@ fun MainMobileScreen(
                 )
                 3 -> SettingsScreen(
                     state = state,
+                    onSetLanguage = onSetLanguage,
                     onSetDarkTheme = onSetDarkTheme,
                     onSetAutoServer = onSetAutoServer,
                     onSetAutoSaveServerM3u = onSetAutoSaveServerM3u,
@@ -229,7 +233,7 @@ fun MainMobileScreen(
     state.availableUpdate?.let { upd ->
         AlertDialog(
             onDismissRequest = onDismissUpdate,
-            title = { Text("Aggiornamento disponibile (v${upd.version})") },
+            title = { Text(strings.get("update_dialog_title", upd.version)) },
             text = {
                 Column {
                     Text(upd.notes)
@@ -247,12 +251,12 @@ fun MainMobileScreen(
                     onClick = onInstallUpdate,
                     enabled = state.updateProgress == null,
                 ) {
-                    Text(if (state.updateProgress != null) "Download..." else "Aggiorna")
+                    Text(if (state.updateProgress != null) strings.downloading else strings.updateNow)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismissUpdate) {
-                    Text("Più tardi")
+                    Text(strings.later)
                 }
             },
         )
@@ -268,6 +272,7 @@ private fun CountryPickerDialog(
     onSelectCountry: (String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     var query by remember { mutableStateOf("") }
     val filteredCountries = remember(query, countries) {
         val q = query.trim().lowercase()
@@ -285,10 +290,10 @@ private fun CountryPickerDialog(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Seleziona Paese", fontWeight = FontWeight.Bold) },
+                    title = { Text(strings.selectCountry, fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Chiudi")
+                            Icon(Icons.Default.Close, contentDescription = null)
                         }
                     },
                 )
@@ -302,12 +307,12 @@ private fun CountryPickerDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("Cerca paese...") },
+                    placeholder = { Text(strings.searchCountry) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Pulisci")
+                                Icon(Icons.Default.Clear, contentDescription = null)
                             }
                         }
                     },
@@ -327,7 +332,7 @@ private fun CountryPickerDialog(
                         item {
                             CountryOptionCard(
                                 flag = "🌐",
-                                name = "Tutti i paesi",
+                                name = strings.allCountries,
                                 count = totalChannels,
                                 selected = selectedCountry == null,
                                 onClick = { onSelectCountry(null) },
@@ -394,19 +399,20 @@ private fun CountryOptionCard(
 
 @Composable
 private fun ConnectionBadge(mode: ConnectionMode) {
+    val strings = LocalMobileStrings.current
     val (label, bg, fg) = when (mode) {
         ConnectionMode.SERVER_CONNECTED -> Triple(
-            "Server Wi-Fi",
+            strings.modeServerWifi,
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer,
         )
         ConnectionMode.SEARCHING_WIFI -> Triple(
-            "Ricerca Wi-Fi...",
+            strings.modeSearchingWifi,
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant,
         )
         ConnectionMode.LOCAL_ONLY -> Triple(
-            "Autonomo",
+            strings.modeAutonomous,
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -435,16 +441,17 @@ private fun ChannelsTab(
     onToggleFavorite: (MobileChannel) -> Unit,
     onGoToPlaylists: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = state.searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Cerca canale o categoria...") },
+            placeholder = { Text(strings.searchChannel) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon = {
                 if (state.searchQuery.isNotEmpty()) {
                     IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Pulisci")
+                        Icon(Icons.Default.Clear, contentDescription = null)
                     }
                 }
             },
@@ -468,7 +475,7 @@ private fun ChannelsTab(
                     FilterChip(
                         selected = state.selectedCountry == null,
                         onClick = { onSelectCountry(null) },
-                        label = { Text("Tutti (${state.allChannels.size})") },
+                        label = { Text(strings.get("all_filter", state.allChannels.size)) },
                     )
                 }
                 items(activeCountries, key = { it.code }) { facet ->
@@ -501,9 +508,9 @@ private fun ChannelsTab(
                     Spacer(Modifier.height(12.dp))
                     Text(
                         text = if (state.allChannels.isEmpty()) {
-                            "Nessun canale disponibile"
+                            strings.noChannels
                         } else {
-                            "Nessun canale corrisponde alla ricerca"
+                            strings.noSearchMatch
                         },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
@@ -511,13 +518,13 @@ private fun ChannelsTab(
                     if (state.allChannels.isEmpty()) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "Carica una lista M3U da URL o file locale, oppure collegati a un Wi-Fi con un server CasaTV.",
+                            text = strings.emptyChannelsHint,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(14.dp))
                         Button(onClick = onGoToPlaylists) {
-                            Text("Carica lista M3U")
+                            Text(strings.loadM3uButton)
                         }
                     }
                 }
@@ -546,6 +553,7 @@ private fun FavoritesTab(
     onOpenChannel: (MobileChannel) -> Unit,
     onToggleFavorite: (MobileChannel) -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
     if (favorites.isEmpty()) {
         Box(
             modifier = Modifier
@@ -562,13 +570,13 @@ private fun FavoritesTab(
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "Nessun canale nei preferiti",
+                    text = strings.noFavorites,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Tocca il cuore su un canale per aggiungerlo qui.",
+                    text = strings.noFavoritesHint,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

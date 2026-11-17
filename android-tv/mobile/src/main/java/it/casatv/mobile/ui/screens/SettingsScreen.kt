@@ -34,12 +34,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import it.casatv.mobile.BuildConfig
 import it.casatv.mobile.data.ConnectionMode
+import it.casatv.mobile.ui.LocalMobileStrings
 import it.casatv.mobile.ui.MobileUiState
+import it.casatv.mobile.ui.SUPPORTED_LANGUAGES
 import it.casatv.mobile.update.UpdateFrequency
 
 @Composable
 fun SettingsScreen(
     state: MobileUiState,
+    onSetLanguage: (String) -> Unit,
     onSetDarkTheme: (Boolean) -> Unit,
     onSetAutoServer: (Boolean) -> Unit,
     onSetAutoSaveServerM3u: (Boolean) -> Unit,
@@ -48,6 +51,8 @@ fun SettingsScreen(
     onCheckUpdatesNow: () -> Unit,
     onInstallUpdate: () -> Unit,
 ) {
+    val strings = LocalMobileStrings.current
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -55,10 +60,35 @@ fun SettingsScreen(
     ) {
         item {
             Text(
-                text = "Impostazioni",
+                text = strings.settingsTitle,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = strings.languageTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(SUPPORTED_LANGUAGES, key = { it.code }) { option ->
+                            FilterChip(
+                                selected = state.language == option.code,
+                                onClick = { onSetLanguage(option.code) },
+                                label = { Text(option.nativeName) },
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -74,12 +104,12 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Tema scuro",
+                            text = strings.darkThemeTitle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = if (state.darkTheme) "Attivo (scuro)" else "Disattivo (chiaro)",
+                            text = if (state.darkTheme) strings.darkThemeOn else strings.darkThemeOff,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -104,12 +134,12 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Server CasaTV su Wi-Fi",
+                                text = strings.wifiServerTitle,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "Se trovi un server CasaTV nella stessa rete Wi-Fi, si collega automaticamente (opzionale).",
+                                text = strings.wifiServerSubtitle,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -125,11 +155,11 @@ fun SettingsScreen(
 
                     val statusText = when (state.connectionMode) {
                         ConnectionMode.SERVER_CONNECTED ->
-                            "Collegato a ${state.connectedServerUrl ?: "server"}"
+                            strings.get("server_connected_to", state.connectedServerUrl ?: "")
                         ConnectionMode.SEARCHING_WIFI ->
-                            "Ricerca server CasaTV su Wi-Fi..."
+                            strings.serverSearching
                         ConnectionMode.LOCAL_ONLY ->
-                            "Modalità autonoma (solo liste locali)"
+                            strings.serverAutonomous
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -156,12 +186,12 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Salva liste M3U dal server",
+                                    text = strings.saveServerM3uTitle,
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Medium,
                                 )
                                 Text(
-                                    text = "Salva automaticamente il file M3U del server nella tua lista locale quando sei collegato.",
+                                    text = strings.saveServerM3uSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -176,7 +206,7 @@ fun SettingsScreen(
                         OutlinedButton(onClick = onSearchServerNow) {
                             Icon(Icons.Default.Refresh, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Cerca server su Wi-Fi")
+                            Text(strings.searchServerNow)
                         }
                     }
                 }
@@ -190,23 +220,28 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Aggiornamenti GitHub",
+                        text = strings.githubUpdatesTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Frequenza ricerca automatica",
+                        text = strings.updateFrequencyLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(UpdateFrequency.entries) { freq ->
+                            val label = when (freq) {
+                                UpdateFrequency.DAILY -> strings.freqDaily
+                                UpdateFrequency.WEEKLY -> strings.freqWeekly
+                                UpdateFrequency.MONTHLY -> strings.freqMonthly
+                            }
                             FilterChip(
                                 selected = state.updateFrequency == freq,
                                 onClick = { onSetUpdateFrequency(freq) },
-                                label = { Text(freq.label) },
+                                label = { Text(label) },
                             )
                         }
                     }
@@ -217,7 +252,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.SystemUpdate, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(if (state.isCheckingUpdates) "Controllo..." else "Controlla aggiornamenti ora")
+                        Text(if (state.isCheckingUpdates) strings.checkingUpdates else strings.checkUpdatesNow)
                     }
                     if (state.isCheckingUpdates) {
                         Spacer(Modifier.height(8.dp))
@@ -242,7 +277,7 @@ fun SettingsScreen(
                     state.availableUpdate?.let { upd ->
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            text = "Nuova versione disponibile: v${upd.version}",
+                            text = strings.get("new_version_available", upd.version),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -255,7 +290,7 @@ fun SettingsScreen(
                             )
                         } else {
                             Button(onClick = onInstallUpdate) {
-                                Text("Scarica e installa v${upd.version}")
+                                Text(strings.get("download_and_install", upd.version))
                             }
                         }
                     }
@@ -270,7 +305,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Informazioni",
+                        text = strings.aboutTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -280,7 +315,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        text = "Canali disponibili: ${state.allChannels.size} · Liste locali: ${state.playlists.size}",
+                        text = strings.get("about_stats", state.allChannels.size, state.playlists.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

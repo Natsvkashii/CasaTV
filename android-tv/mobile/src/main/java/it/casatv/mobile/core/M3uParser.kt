@@ -118,16 +118,16 @@ object M3uParser {
         }
     }
 
-    fun countryMeta(code: String?): Pair<String, String> {
-        val raw = code?.trim()?.uppercase(Locale.ROOT) ?: return "Altro" to "🌐"
+    fun countryMeta(code: String?, language: String = "en"): Pair<String, String> {
+        val raw = code?.trim()?.uppercase(Locale.ROOT) ?: return "—" to "🌐"
         val upper = if (raw == "UK") "GB" else raw
         if (upper.length != 2 || upper.any { it !in 'A'..'Z' }) return upper to "🌐"
         val flag = String(
             Character.toChars(0x1F1E6 + (upper[0] - 'A')) +
                 Character.toChars(0x1F1E6 + (upper[1] - 'A')),
         )
-        val italian = Locale.forLanguageTag("it")
-        val name = Locale("", upper).getDisplayCountry(italian).ifBlank { upper }
+        val locale = Locale.forLanguageTag(language.ifBlank { "en" })
+        val name = Locale("", upper).getDisplayCountry(locale).ifBlank { upper }
         return name to flag
     }
 

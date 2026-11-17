@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class MobileUiState(
+    val language: String = "en",
     val darkTheme: Boolean = true,
     val autoConnectWifiServer: Boolean = true,
     val autoSaveServerM3u: Boolean = true,
@@ -76,6 +77,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _state = MutableStateFlow(
         MobileUiState(
+            language = resolveInitialLanguage(),
             darkTheme = prefs.getBoolean(KEY_DARK_THEME, true),
             autoConnectWifiServer = prefs.getBoolean(KEY_AUTO_SERVER, true),
             autoSaveServerM3u = prefs.getBoolean(KEY_AUTO_SAVE_SERVER_M3U, true),
@@ -220,9 +222,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             .groupingBy { if (it.country.equals("UK", true)) "GB" else it.country!!.uppercase() }
             .eachCount()
 
+        val lang = _state.value.language
         val facets = java.util.Locale.getISOCountries()
             .map { code ->
-                val (name, flag) = M3uParser.countryMeta(code)
+                val (name, flag) = M3uParser.countryMeta(code, lang)
                 CountryFacet(
                     code = code,
                     name = name,
@@ -353,6 +356,21 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun resolveInitialLanguage(): String {
+        val saved = prefs.getString(KEY_LANGUAGE, null)
+        if (!saved.isNullOrBlank() && saved in SUPPORTED_LANGUAGE_CODES) return saved
+        val detected = detectDeviceLanguage()
+        prefs.edit().putString(KEY_LANGUAGE, detected).apply()
+        return detected
+    }
+
+    fun setLanguage(code: String) {
+        val clean = if (code in SUPPORTED_LANGUAGE_CODES) code else "en"
+        prefs.edit().putString(KEY_LANGUAGE, clean).apply()
+        _state.update { it.copy(language = clean) }
+        rebuildChannelList()
+    }
+
     fun setDarkTheme(dark: Boolean) {
         prefs.edit().putBoolean(KEY_DARK_THEME, dark).apply()
         _state.update { it.copy(darkTheme = dark) }
@@ -391,7 +409,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                             isCheckingUpdates = false,
                             availableUpdate = upd,
                             statusMessage = if (force && upd == null) {
-                                "L'app è già aggiornata all'ultima versione"
+                                MobileStrings(it.language).alreadyUpToDate
                             } else {
                                 it.statusMessage
                             },
@@ -440,6 +458,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     companion object {
+        private const val KEY_LANGUAGE = "app_language"
         private const val KEY_DARK_THEME = "dark_theme"
         private const val KEY_AUTO_SERVER = "auto_connect_wifi_server"
         private const val KEY_AUTO_SAVE_SERVER_M3U = "auto_save_server_m3u"
