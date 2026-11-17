@@ -41,15 +41,6 @@ jobs:
           cp server/build/outputs/apk/release/server-release.apk "../casatv-server-${GITHUB_REF_NAME}.apk"
           cp mobile/build/outputs/apk/release/mobile-release.apk "../casatv-mobile-${GITHUB_REF_NAME}.apk"
 
-      - name: Delete old releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          IDS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" | jq -r ".[] | select(.tag_name != \"${GITHUB_REF_NAME}\") | .id")
-          for id in $IDS; do
-            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/$id"
-          done
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
