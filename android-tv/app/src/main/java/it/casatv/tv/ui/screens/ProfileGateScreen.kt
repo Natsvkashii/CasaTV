@@ -314,41 +314,22 @@ private fun AppleProfileTile(
             if (focused) Color(0xFF2C2C2E) else Color(0xFF1C1C1E)
         }
         val tileBorder = when {
-            focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
-            active -> CasaGreen
-            else -> if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x33FFFFFF)
+            focused -> Color.White
+            else -> if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x26FFFFFF)
         }
         Box(
             modifier = Modifier
                 .size(118.dp)
-                .clip(RoundedCornerShape(32.dp))
+                .clip(CircleShape)
                 .background(tileBg)
                 .border(
-                    width = if (focused) 3.dp else if (active) 2.dp else 1.dp,
+                    width = if (focused) 2.5.dp else 1.dp,
                     color = tileBorder,
-                    shape = RoundedCornerShape(32.dp),
+                    shape = CircleShape,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Text(text = profile.avatar, fontSize = 52.sp)
-            if (active) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(CasaGreen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "✓",
-                        color = Color.Black,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
         }
         Spacer(Modifier.height(12.dp))
         Text(
@@ -406,19 +387,19 @@ private fun AppleNewProfileTile(
             if (focused) Color(0xFF2C2C2E) else Color(0xFF141416)
         }
         val tileBorder = if (focused) {
-            if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
+            Color.White
         } else {
-            if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x33FFFFFF)
+            if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x26FFFFFF)
         }
         Box(
             modifier = Modifier
                 .size(118.dp)
-                .clip(RoundedCornerShape(32.dp))
+                .clip(CircleShape)
                 .background(tileBg)
                 .border(
-                    width = if (focused) 3.dp else 1.dp,
+                    width = if (focused) 2.5.dp else 1.dp,
                     color = tileBorder,
-                    shape = RoundedCornerShape(32.dp),
+                    shape = CircleShape,
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -1033,30 +1014,12 @@ fun CountryPickerOverlay(
                 )
             }
             Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+            it.casatv.tv.ui.components.TvUniversalSearchBar(
+                query = query,
+                onQueryChange = { query = it },
+                onClear = { query = "" },
+                placeholderText = strings.t("Cerca un paese…", "Search for a country…"),
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = {
-                    Text(
-                        strings.t("Cerca un paese…", "Search for a country…"),
-                        color = CasaDim,
-                        fontSize = 13.sp,
-                    )
-                },
-                textStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
-                    color = CasaText,
-                ),
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CasaGreen,
-                    unfocusedBorderColor = CasaBorder,
-                    focusedContainerColor = CasaBackground.copy(alpha = 0.75f),
-                    unfocusedContainerColor = CasaBackground.copy(alpha = 0.75f),
-                    cursorColor = CasaGreen,
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             )
             Spacer(Modifier.height(16.dp))
             if (filtered.isEmpty()) {

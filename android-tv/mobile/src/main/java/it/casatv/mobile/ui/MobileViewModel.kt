@@ -41,6 +41,8 @@ data class MobileUiState(
     val countries: List<CountryFacet> = emptyList(),
     val selectedCountry: String? = null,
     val searchQuery: String = "",
+    val mixChannels: List<MobileChannel> = emptyList(),
+    val showMixIntro: Boolean = false,
     val activeChannel: MobileChannel? = null,
     val isImporting: Boolean = false,
     val statusMessage: String? = null,
@@ -457,6 +459,34 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(statusMessage = null, errorMessage = null) }
     }
 
+    fun openOrRefreshMix() {
+        val shuffled = _state.value.allChannels.shuffled()
+        val showIntro = !prefs.getBoolean(KEY_MIX_INTRO_SHOWN, false)
+        _state.update {
+            it.copy(
+                mixChannels = shuffled,
+                showMixIntro = if (showIntro) true else it.showMixIntro,
+            )
+        }
+    }
+
+    fun dismissMixIntro() {
+        prefs.edit().putBoolean(KEY_MIX_INTRO_SHOWN, true).apply()
+        _state.update { it.copy(showMixIntro = false) }
+    }
+
+    fun playRandomMixChannel() {
+        val shuffled = _state.value.allChannels.shuffled()
+        if (shuffled.isNotEmpty()) {
+            _state.update {
+                it.copy(
+                    mixChannels = shuffled,
+                    activeChannel = shuffled.first(),
+                )
+            }
+        }
+    }
+
     companion object {
         private const val KEY_LANGUAGE = "app_language"
         private const val KEY_DARK_THEME = "dark_theme"
@@ -464,5 +494,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_AUTO_SAVE_SERVER_M3U = "auto_save_server_m3u"
         private const val KEY_SELECTED_COUNTRY = "selected_country"
         private const val KEY_LAST_SERVER_URL = "last_server_url"
+        private const val KEY_MIX_INTRO_SHOWN = "mix_intro_shown"
     }
 }

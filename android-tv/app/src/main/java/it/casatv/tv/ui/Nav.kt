@@ -32,6 +32,7 @@ enum class TvSubTab(
     val labelEs: String,
 ) {
     Channels("Canali", "Channels", "Canales"),
+    Mix("Mix", "Mix", "Mix"),
     Favorites("Preferiti", "Favorites", "Favoritos");
 
     fun label(language: String): String {

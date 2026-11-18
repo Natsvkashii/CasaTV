@@ -26,8 +26,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,6 +43,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -82,6 +85,9 @@ fun MainMobileScreen(
     onSelectCountry: (String?) -> Unit,
     onOpenChannel: (MobileChannel) -> Unit,
     onToggleFavorite: (MobileChannel) -> Unit,
+    onRefreshMix: () -> Unit,
+    onPlayRandomMix: () -> Unit,
+    onDismissMixIntro: () -> Unit,
     onImportUrl: (name: String, url: String) -> Unit,
     onImportFile: (Uri) -> Unit,
     onTogglePlaylist: (LocalPlaylist, Boolean) -> Unit,
@@ -154,6 +160,15 @@ fun MainMobileScreen(
                     label = { Text(strings.tabChannels) },
                 )
                 NavigationBarItem(
+                    selected = selectedTab == 4,
+                    onClick = {
+                        selectedTab = 4
+                        onRefreshMix()
+                    },
+                    icon = { Icon(Icons.Default.Shuffle, contentDescription = null) },
+                    label = { Text(strings.tabMix) },
+                )
+                NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
@@ -186,6 +201,14 @@ fun MainMobileScreen(
                     onSelectCountry = onSelectCountry,
                     onOpenChannel = onOpenChannel,
                     onToggleFavorite = onToggleFavorite,
+                    onGoToPlaylists = { selectedTab = 2 },
+                )
+                4 -> MixTab(
+                    channels = state.mixChannels,
+                    onOpenChannel = onOpenChannel,
+                    onToggleFavorite = onToggleFavorite,
+                    onPlayRandom = onPlayRandomMix,
+                    onShuffle = onRefreshMix,
                     onGoToPlaylists = { selectedTab = 2 },
                 )
                 1 -> FavoritesTab(
@@ -260,6 +283,106 @@ fun MainMobileScreen(
                 }
             },
         )
+    }
+
+    if (state.showMixIntro) {
+        AlertDialog(
+            onDismissRequest = onDismissMixIntro,
+            title = { Text(strings.mixIntroTitle) },
+            text = { Text(strings.mixIntroBody) },
+            confirmButton = {
+                Button(onClick = onDismissMixIntro) {
+                    Text(strings.mixIntroOk)
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun MixTab(
+    channels: List<MobileChannel>,
+    onOpenChannel: (MobileChannel) -> Unit,
+    onToggleFavorite: (MobileChannel) -> Unit,
+    onPlayRandom: () -> Unit,
+    onShuffle: () -> Unit,
+    onGoToPlaylists: () -> Unit,
+) {
+    val strings = LocalMobileStrings.current
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Button(
+                onClick = onPlayRandom,
+                enabled = channels.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.Shuffle, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(strings.mixPlayRandom, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            OutlinedButton(
+                onClick = onShuffle,
+                enabled = channels.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(strings.mixShuffleAgain, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+
+        if (channels.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.Shuffle,
+                        contentDescription = null,
+                        modifier = Modifier.size(52.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = strings.noChannels,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = strings.emptyChannelsHint,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = onGoToPlaylists) {
+                        Text(strings.loadM3uButton)
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(channels, key = { "mix_${it.id}" }) { channel ->
+                    ChannelRowCard(
+                        channel = channel,
+                        onClick = { onOpenChannel(channel) },
+                        onToggleFavorite = { onToggleFavorite(channel) },
+                    )
+                }
+            }
+        }
     }
 }
 

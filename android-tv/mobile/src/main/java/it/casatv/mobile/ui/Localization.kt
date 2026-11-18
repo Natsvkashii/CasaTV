@@ -52,9 +52,15 @@ class MobileStrings(val lang: String) {
     }
 
     val tabChannels get() = get("tab_channels")
+    val tabMix get() = get("tab_mix")
     val tabFavorites get() = get("tab_favorites")
     val tabPlaylists get() = get("tab_playlists")
     val tabSettings get() = get("tab_settings")
+    val mixPlayRandom get() = get("mix_play_random")
+    val mixShuffleAgain get() = get("mix_shuffle_again")
+    val mixIntroTitle get() = get("mix_intro_title")
+    val mixIntroBody get() = get("mix_intro_body")
+    val mixIntroOk get() = get("mix_intro_ok")
     val modeServerWifi get() = get("mode_server_wifi")
     val modeSearchingWifi get() = get("mode_searching_wifi")
     val modeAutonomous get() = get("mode_autonomous")
@@ -120,6 +126,12 @@ class MobileStrings(val lang: String) {
     companion object {
         private val EN = mapOf(
             "tab_channels" to "Channels",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Random channel",
+            "mix_shuffle_again" to "Shuffle again",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "In this section, channels and countries from all saved playlists are shown in completely random order and change every time you open it.",
+            "mix_intro_ok" to "Got it",
             "tab_favorites" to "Favorites",
             "tab_playlists" to "M3U Lists",
             "tab_settings" to "Settings",
@@ -188,6 +200,12 @@ class MobileStrings(val lang: String) {
 
         private val IT = mapOf(
             "tab_channels" to "Canali",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Canale casuale",
+            "mix_shuffle_again" to "Mescola di nuovo",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "In questa sezione i canali e i paesi di tutte le playlist salvate vengono mostrati in ordine totalmente casuale e cambiano ogni volta che la apri.",
+            "mix_intro_ok" to "Ho capito",
             "tab_favorites" to "Preferiti",
             "tab_playlists" to "Liste M3U",
             "tab_settings" to "Impostazioni",
@@ -256,6 +274,12 @@ class MobileStrings(val lang: String) {
 
         private val ES = mapOf(
             "tab_channels" to "Canales",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Canal aleatorio",
+            "mix_shuffle_again" to "Mezclar de nuevo",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "En esta sección los canales y países de todas las listas guardadas se muestran de forma totalmente aleatoria y cambian cada vez que la abres.",
+            "mix_intro_ok" to "Entendido",
             "tab_favorites" to "Favoritos",
             "tab_playlists" to "Listas M3U",
             "tab_settings" to "Ajustes",
@@ -324,6 +348,12 @@ class MobileStrings(val lang: String) {
 
         private val FR = mapOf(
             "tab_channels" to "Chaînes",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Chaîne aléatoire",
+            "mix_shuffle_again" to "Mélanger",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "Dans cette section, les chaînes et pays de toutes vos listes enregistrées sont affichés aléatoirement à chaque ouverture.",
+            "mix_intro_ok" to "Compris",
             "tab_favorites" to "Favoris",
             "tab_playlists" to "Listes M3U",
             "tab_settings" to "Paramètres",
@@ -392,6 +422,12 @@ class MobileStrings(val lang: String) {
 
         private val DE = mapOf(
             "tab_channels" to "Sender",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Zufälliger Sender",
+            "mix_shuffle_again" to "Neu mischen",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "In diesem Bereich werden Sender und Länder aller gespeicherten Listen bei jedem Öffnen völlig zufällig gemischt.",
+            "mix_intro_ok" to "Verstanden",
             "tab_favorites" to "Favoriten",
             "tab_playlists" to "M3U-Listen",
             "tab_settings" to "Einstellungen",
@@ -460,6 +496,12 @@ class MobileStrings(val lang: String) {
 
         private val PT = mapOf(
             "tab_channels" to "Canais",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Canal aleatório",
+            "mix_shuffle_again" to "Baralhar",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "Nesta secção, os canais e países de todas as listas guardadas são mostrados de forma totalmente aleatória sempre que a abre.",
+            "mix_intro_ok" to "Entendido",
             "tab_favorites" to "Favoritos",
             "tab_playlists" to "Listas M3U",
             "tab_settings" to "Definições",
@@ -528,6 +570,12 @@ class MobileStrings(val lang: String) {
 
         private val NL = mapOf(
             "tab_channels" to "Kanalen",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Willekeurig kanaal",
+            "mix_shuffle_again" to "Opnieuw schudden",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "In dit gedeelte worden kanalen en landen uit alle opgeslagen lijsten telkens willekeurig weergegeven.",
+            "mix_intro_ok" to "Begrepen",
             "tab_favorites" to "Favorieten",
             "tab_playlists" to "M3U-lijsten",
             "tab_settings" to "Instellingen",
@@ -596,6 +644,12 @@ class MobileStrings(val lang: String) {
 
         private val PL = mapOf(
             "tab_channels" to "Kanały",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Losowy kanał",
+            "mix_shuffle_again" to "Wymieszaj",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "W tej sekcji kanały i kraje ze wszystkich zapisanych list są wyświetlane w całkowicie losowej kolejności przy każdym otwarciu.",
+            "mix_intro_ok" to "Rozumiem",
             "tab_favorites" to "Ulubione",
             "tab_playlists" to "Listy M3U",
             "tab_settings" to "Ustawienia",
@@ -664,6 +718,12 @@ class MobileStrings(val lang: String) {
 
         private val RO = mapOf(
             "tab_channels" to "Canale",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Canal aleatoriu",
+            "mix_shuffle_again" to "Amestecă",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "În această secțiune, canalele și țările din toate listele salvate sunt afișate complet aleatoriu de fiecare dată.",
+            "mix_intro_ok" to "Am înțeles",
             "tab_favorites" to "Favorite",
             "tab_playlists" to "Liste M3U",
             "tab_settings" to "Setări",
@@ -732,6 +792,12 @@ class MobileStrings(val lang: String) {
 
         private val RU = mapOf(
             "tab_channels" to "Каналы",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "Случайный канал",
+            "mix_shuffle_again" to "Перемешать",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "В этом разделе каналы и страны из всех сохраненных списков отображаются в случайном порядке каждый раз при открытии.",
+            "mix_intro_ok" to "Понятно",
             "tab_favorites" to "Избранное",
             "tab_playlists" to "Списки M3U",
             "tab_settings" to "Настройки",
@@ -800,6 +866,12 @@ class MobileStrings(val lang: String) {
 
         private val AR = mapOf(
             "tab_channels" to "القنوات",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "قناة عشوائية",
+            "mix_shuffle_again" to "خلط مجدداً",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "في هذا القسم يتم عرض القنوات والدول من جميع القوائم المحفوظة بترتيب عشوائي تماماً يتغير في كل مرة.",
+            "mix_intro_ok" to "فهمت",
             "tab_favorites" to "المفضلة",
             "tab_playlists" to "قوائم M3U",
             "tab_settings" to "الإعدادات",
@@ -868,6 +940,12 @@ class MobileStrings(val lang: String) {
 
         private val ZH = mapOf(
             "tab_channels" to "频道",
+            "tab_mix" to "Mix",
+            "mix_play_random" to "随机频道",
+            "mix_shuffle_again" to "重新打乱",
+            "mix_intro_title" to "Mix",
+            "mix_intro_body" to "在此版块中，所有已保存列表的频道和国家/地区每次打开都会完全随机排列。",
+            "mix_intro_ok" to "知道了",
             "tab_favorites" to "收藏",
             "tab_playlists" to "M3U列表",
             "tab_settings" to "设置",

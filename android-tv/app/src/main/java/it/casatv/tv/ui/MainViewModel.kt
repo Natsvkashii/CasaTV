@@ -94,7 +94,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _serverUrl = MutableStateFlow(prefs.getString(KEY_SERVER_URL, null))
     val serverUrl: StateFlow<String?> = _serverUrl.asStateFlow()
 
-    private val _config = MutableStateFlow<ServerConfig?>(null)
+    val offlineCache = OfflineCache(application)
+
+    private val _config = MutableStateFlow<ServerConfig?>(
+        offlineCache.cachedData.config ?: ServerConfig(
+            name = "CasaTV",
+            baseUrl = _serverUrl.value.orEmpty(),
+        ),
+    )
     val config: StateFlow<ServerConfig?> = _config.asStateFlow()
 
     private val _connecting = MutableStateFlow(false)
@@ -103,10 +110,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _connectionError = MutableStateFlow<String?>(null)
     val connectionError: StateFlow<String?> = _connectionError.asStateFlow()
 
-    val offlineCache = OfflineCache(application)
-
     private val _isServerDisconnected = MutableStateFlow(false)
     val isServerDisconnected: StateFlow<Boolean> = _isServerDisconnected.asStateFlow()
+    private var serverConnectedLive = false
     private var reconnectJob: Job? = null
 
     private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
@@ -129,7 +135,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val discovering: StateFlow<Boolean> = discovery.discovering
     val discoveryError: StateFlow<String?> = discovery.error
 
-    private val _profiles = MutableStateFlow<List<Profile>>(emptyList())
+    private val _profiles = MutableStateFlow(
+        sortProfiles(offlineCache.cachedData.profiles).ifEmpty {
+            listOf(
+                Profile(
+                    id = "guest",
+                    name = "Ospite",
+                    avatar = "👤",
+                    language = "it",
+                    country = "IT",
+                    isGuest = true,
+                ),
+            )
+        },
+    )
     val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
 
     private val _profileAvatars = MutableStateFlow(DEFAULT_AVATARS)
@@ -138,7 +157,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _profileLanguages = MutableStateFlow(DEFAULT_LANGUAGES)
     val profileLanguages: StateFlow<List<ProfileLanguage>> = _profileLanguages.asStateFlow()
 
-    private val _activeProfile = MutableStateFlow<Profile?>(null)
+    private val _activeProfile = MutableStateFlow<Profile?>(
+        offlineCache.cachedData.let { cached ->
+            val savedId = prefs.getString(KEY_PROFILE_ID, null) ?: cached.activeProfileId
+            cached.profiles.firstOrNull { it.id == savedId } ?: cached.profiles.firstOrNull()
+        },
+    )
     val activeProfile: StateFlow<Profile?> = _activeProfile.asStateFlow()
 
     private val _profileGate = MutableStateFlow(true)
@@ -170,7 +194,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _homeError = MutableStateFlow<String?>(null)
     val homeError: StateFlow<String?> = _homeError.asStateFlow()
 
-    private val _zapQueue = MutableStateFlow<List<Channel>>(emptyList())
+    private val _zapQueue = MutableStateFlow(offlineCache.cachedData.channels)
     val zapQueue: StateFlow<List<Channel>> = _zapQueue.asStateFlow()
 
     private val _tvLoading = MutableStateFlow(false)
@@ -183,8 +207,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tvFallback = MutableStateFlow(false)
     val tvFallback: StateFlow<Boolean> = _tvFallback.asStateFlow()
 
-    private val _tvInitialized = MutableStateFlow(false)
+    private val _tvInitialized = MutableStateFlow(offlineCache.cachedData.channels.isNotEmpty())
     val tvInitialized: StateFlow<Boolean> = _tvInitialized.asStateFlow()
+
+    private val _mixChannels = MutableStateFlow<List<Channel>>(emptyList())
+    val mixChannels: StateFlow<List<Channel>> = _mixChannels.asStateFlow()
+
+    private val _mixLoading = MutableStateFlow(false)
+    val mixLoading: StateFlow<Boolean> = _mixLoading.asStateFlow()
+
+    private val _showMixIntro = MutableStateFlow(false)
+    val showMixIntro: StateFlow<Boolean> = _showMixIntro.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -294,7 +327,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _browse = MutableStateFlow(BrowseState())
     val browse: StateFlow<BrowseState> = _browse.asStateFlow()
 
-    private val _favorites = MutableStateFlow<List<Channel>>(emptyList())
+    private val _favorites = MutableStateFlow(offlineCache.cachedData.favorites)
     val favorites: StateFlow<List<Channel>> = _favorites.asStateFlow()
 
     private val _favoritesLoading = MutableStateFlow(false)
@@ -335,7 +368,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Autonomous server connection: automatically connect to discovered server without user action
         viewModelScope.launch {
             discoveredServers.collect { servers ->
-                if (_config.value == null && !_connecting.value && servers.isNotEmpty()) {
+                if (!serverConnectedLive && !_connecting.value && servers.isNotEmpty()) {
                     val savedTarget = _serverUrl.value
                     val target = servers.firstOrNull { it.url == savedTarget } ?: servers.first()
                     android.util.Log.i("CasaTV", "Selezione autonoma server: ${target.name} (${target.url})")
@@ -346,7 +379,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startDiscovery() {
-        if (_config.value == null) discovery.start()
+        if (!serverConnectedLive) discovery.start()
     }
 
     fun stopDiscovery() = discovery.stop()
@@ -405,6 +438,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _config.value = serverConfig
                 _serverUrl.value = normalized
                 _isServerDisconnected.value = false
+                serverConnectedLive = true
                 prefs.edit().putString(KEY_SERVER_URL, normalized).apply()
                 discovery.stop()
                 if (selected != null) {
@@ -483,11 +517,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         api.use(previousUrl)
                         api.useProfile(previousProfileId)
                     }
-                    _connectionError.value = humanError(error)
+                    _isServerDisconnected.value = true
+                    _connectionError.value = null
+                    startReconnectionPoll()
                     discovery.start()
-                    if (!automatic && prefs.getString(KEY_SERVER_URL, null) == null) {
-                        _serverUrl.value = null
-                    }
                 }
             } finally {
                 _connecting.value = false
@@ -924,6 +957,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun reloadTv() {
         _tvInitialized.value = false
         loadZapQueue()
+    }
+
+    fun openMixSection() {
+        if (!prefs.getBoolean(KEY_MIX_INTRO_SHOWN, false)) {
+            _showMixIntro.value = true
+        }
+        refreshMixChannels()
+    }
+
+    fun dismissMixIntro() {
+        prefs.edit().putBoolean(KEY_MIX_INTRO_SHOWN, true).apply()
+        _showMixIntro.value = false
+    }
+
+    fun refreshMixChannels() {
+        viewModelScope.launch {
+            _mixLoading.value = true
+            try {
+                val remote = runCatching {
+                    api.channels(country = null, limit = 2500, sort = "number").items
+                }.getOrNull().orEmpty()
+                val cached = offlineCache.cachedData.channels
+                val combined = (remote + cached)
+                    .filter { it.streamUrl.isNotBlank() }
+                    .distinctBy { it.streamUrl }
+                    .shuffled()
+                _mixChannels.value = combined
+            } finally {
+                _mixLoading.value = false
+            }
+        }
+    }
+
+    fun playRandomMixChannel() {
+        val pool = _mixChannels.value.ifEmpty { offlineCache.cachedData.channels }
+            .filter { it.streamUrl.isNotBlank() }
+            .shuffled()
+        if (pool.isNotEmpty()) {
+            _mixChannels.value = pool
+            startPlayback(pool.first(), pool)
+        } else {
+            refreshMixChannels()
+        }
     }
 
     fun loadFavorites(showLoading: Boolean = true) {
@@ -1758,6 +1834,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_ASPECT_RATIO_MODE = "aspect_ratio_mode"
         private const val KEY_MULTI_TV_SYNC = "multi_tv_sync"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_MIX_INTRO_SHOWN = "mix_intro_shown"
         private const val BROWSE_PAGE_SIZE = 120
 
         private val DEFAULT_AVATARS = listOf(

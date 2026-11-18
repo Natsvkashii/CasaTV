@@ -47,7 +47,6 @@ import it.casatv.tv.ui.components.BackgroundGlow
 import it.casatv.tv.ui.screens.PlayerScreen
 import it.casatv.tv.ui.screens.ProfileGateScreen
 import it.casatv.tv.ui.screens.SettingsScreen
-import it.casatv.tv.ui.screens.SetupScreen
 import it.casatv.tv.ui.screens.TvModeScreen
 import it.casatv.tv.ui.theme.CasaAmber
 import it.casatv.tv.ui.theme.CasaBackground
@@ -108,32 +107,28 @@ fun CasaTvApp(vm: MainViewModel) {
                 .fillMaxSize()
                 .background(CasaBackground),
         ) {
-            if (config == null) {
-                SetupScreen(vm)
+            BackgroundGlow()
+            if (profileGate) {
+                ProfileGateScreen(vm)
+            } else if (playback != null) {
+                PlayerScreen(vm)
+            } else if (inSettings) {
+                SettingsScreen(
+                    vm = vm,
+                    onBack = { inSettings = false },
+                )
             } else {
-                BackgroundGlow()
-                if (profileGate) {
-                    ProfileGateScreen(vm)
-                } else if (playback != null) {
-                    PlayerScreen(vm)
-                } else if (inSettings) {
-                    SettingsScreen(
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = 10.dp, bottom = 10.dp),
+                ) {
+                    TvModeScreen(
                         vm = vm,
-                        onBack = { inSettings = false },
+                        initialSubTab = tvSubTab,
+                        onOpenSettings = { inSettings = true },
+                        onOpenUpdate = { vm.checkForUpdates(silent = false) },
                     )
-                } else {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .padding(top = 10.dp, bottom = 10.dp),
-                    ) {
-                        TvModeScreen(
-                            vm = vm,
-                            initialSubTab = tvSubTab,
-                            onOpenSettings = { inSettings = true },
-                            onOpenUpdate = { vm.checkForUpdates(silent = false) },
-                        )
-                    }
                 }
             }
 

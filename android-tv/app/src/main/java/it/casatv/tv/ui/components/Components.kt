@@ -56,7 +56,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -1218,17 +1220,40 @@ fun TvUniversalSearchBar(
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
-    var isFocused by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+    var fieldHadFocus by remember { mutableStateOf(false) }
+    val fieldFocus = remember { FocusRequester() }
+    val rowInteraction = remember { MutableInteractionSource() }
+    val rowFocused by rowInteraction.collectIsFocusedAsState()
+    val highlighted = isEditing || rowFocused
+
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            fieldHadFocus = false
+            delay(40)
+            runCatching { fieldFocus.requestFocus() }
+            keyboard?.show()
+        } else {
+            fieldHadFocus = false
+            keyboard?.hide()
+        }
+    }
 
     Row(
         modifier = modifier
             .height(40.dp)
             .clip(RoundedCornerShape(50))
-            .background(if (isFocused) CasaSurfaceHigh else CasaSurface.copy(alpha = 0.85f))
+            .background(if (highlighted) CasaSurfaceHigh else CasaSurface.copy(alpha = 0.85f))
             .border(
-                1.dp,
-                if (isFocused) CasaGreen else CasaBorder,
+                if (highlighted) 2.dp else 1.dp,
+                if (highlighted) CasaGreen else CasaBorder,
                 RoundedCornerShape(50),
+            )
+            .clickable(
+                enabled = !isEditing,
+                interactionSource = rowInteraction,
+                indication = null,
+                onClick = { isEditing = true },
             )
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1236,7 +1261,7 @@ fun TvUniversalSearchBar(
         Icon(
             imageVector = Icons.Filled.Search,
             contentDescription = null,
-            tint = if (isFocused) CasaGreen else CasaDim,
+            tint = if (highlighted) CasaGreen else CasaDim,
             modifier = Modifier.size(17.dp),
         )
         Spacer(Modifier.width(10.dp))
@@ -1244,34 +1269,52 @@ fun TvUniversalSearchBar(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart,
         ) {
-            if (query.isEmpty()) {
+            if (isEditing) {
+                if (query.isEmpty()) {
+                    Text(
+                        text = placeholderText,
+                        color = CasaDim,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = CasaText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                    ),
+                    cursorBrush = SolidColor(CasaGreen),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        isEditing = false
+                        keyboard?.hide()
+                        onSearch()
+                    }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(fieldFocus)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                fieldHadFocus = true
+                            } else if (fieldHadFocus) {
+                                isEditing = false
+                            }
+                        },
+                )
+            } else {
                 Text(
-                    text = placeholderText,
-                    color = CasaDim,
+                    text = query.ifEmpty { placeholderText },
+                    color = if (query.isEmpty()) CasaDim else CasaText,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle = TextStyle(
-                    color = CasaText,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Normal,
-                ),
-                cursorBrush = SolidColor(CasaGreen),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {
-                    keyboard?.hide()
-                    onSearch()
-                }),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { isFocused = it.isFocused },
-            )
         }
         if (loading) {
             Spacer(Modifier.width(8.dp))
@@ -1287,7 +1330,10 @@ fun TvUniversalSearchBar(
                     .size(22.dp)
                     .clip(CircleShape)
                     .background(Color(0x33FFFFFF))
-                    .clickable { onClear() },
+                    .clickable {
+                        isEditing = false
+                        onClear()
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(

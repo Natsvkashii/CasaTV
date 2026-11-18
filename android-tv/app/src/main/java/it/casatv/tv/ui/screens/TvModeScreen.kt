@@ -61,11 +61,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.casatv.tv.data.Facet
 import it.casatv.tv.data.GlobalSearchResult
 import it.casatv.tv.ui.LocalAppStrings
-import it.casatv.tv.ui.MainTab
 import it.casatv.tv.ui.MainViewModel
 import it.casatv.tv.ui.TvSubTab
 import it.casatv.tv.ui.buildCountryCatalog
@@ -73,6 +73,7 @@ import it.casatv.tv.ui.components.EmptyBox
 import it.casatv.tv.ui.components.ErrorBox
 import it.casatv.tv.ui.components.GridChannelCard
 import it.casatv.tv.ui.components.LoadingBox
+import it.casatv.tv.ui.components.TvButton
 import it.casatv.tv.ui.components.TvUniversalSearchBar
 import it.casatv.tv.ui.components.UniversalSearchResultCard
 import it.casatv.tv.ui.components.channelCountLabel
@@ -108,6 +109,9 @@ fun TvModeScreen(
     val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
     val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
     val lastPlayedId by vm.lastPlayedChannelId.collectAsStateWithLifecycle()
+    val mixChannels by vm.mixChannels.collectAsStateWithLifecycle()
+    val mixLoading by vm.mixLoading.collectAsStateWithLifecycle()
+    val showMixIntro by vm.showMixIntro.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val scale = rememberTvUiScale()
     val targetIndex = remember(queue, lastPlayedId) {
@@ -223,6 +227,7 @@ fun TvModeScreen(
                     } else {
                         when (subTab) {
                             TvSubTab.Channels -> channelCountLabel(queue.size)
+                            TvSubTab.Mix -> channelCountLabel(mixChannels.size)
                             TvSubTab.Favorites -> strings.t("Preferiti", "Favorites", "Favoritos")
                         }
                     },
@@ -428,6 +433,82 @@ fun TvModeScreen(
                 }
 
 
+                TvSubTab.Mix -> {
+                    LaunchedEffect(Unit) {
+                        vm.openMixSection()
+                    }
+                    val mixTargetIndex = remember(mixChannels, lastPlayedId) {
+                        mixChannels.indexOfFirst { it.id == lastPlayedId }.takeIf { it >= 0 } ?: 0
+                    }
+                    val mixGridState = rememberLazyGridState(initialFirstVisibleItemIndex = mixTargetIndex)
+                    val mixFirstFocus = remember { FocusRequester() }
+                    LaunchedEffect(mixChannels.isNotEmpty(), showMixIntro, mixTargetIndex) {
+                        if (!showMixIntro && mixChannels.isNotEmpty()) {
+                            runCatching { mixGridState.scrollToItem(mixTargetIndex) }
+                            delay(140)
+                            runCatching { mixFirstFocus.requestFocus() }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TvButton(
+                            text = strings.t("Canale casuale", "Random channel", "Canal aleatorio"),
+                            onClick = { vm.playRandomMixChannel() },
+                            primary = true,
+                        )
+                        TvButton(
+                            text = strings.t("Mescola di nuovo", "Shuffle again", "Mezclar de nuevo"),
+                            onClick = { vm.refreshMixChannels() },
+                            primary = false,
+                        )
+                    }
+
+                    when {
+                        mixLoading && mixChannels.isEmpty() -> LoadingBox(
+                            text = strings.t("Caricamento Mix…", "Loading Mix…", "Cargando Mix…"),
+                            modifier = Modifier.weight(1f),
+                        )
+                        mixChannels.isEmpty() -> EmptyBox(
+                            title = strings.t("Nessun canale disponibile", "No channels available", "Sin canales disponibles"),
+                            message = strings.t(
+                                "Carica una playlist per scoprire canali casuali da tutti i paesi.",
+                                "Load a playlist to discover random channels across all countries.",
+                                "Carga una lista para descubrir canales aleatorios de todos los países.",
+                            ),
+                            modifier = Modifier.weight(1f),
+                            actionLabel = strings.t("Ricarica", "Reload", "Recargar"),
+                            onAction = { vm.refreshMixChannels() },
+                        )
+                        else -> LazyVerticalGrid(
+                            state = mixGridState,
+                            columns = GridCells.Adaptive(scale.gridMinCardWidth),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 32.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            itemsIndexed(mixChannels, key = { _, channel -> "mix_${channel.id}" }) { index, channel ->
+                                GridChannelCard(
+                                    channel = channel,
+                                    onClick = { vm.startPlayback(channel, mixChannels) },
+                                    onFavorite = { vm.toggleFavorite(channel) },
+                                    modifier = if (index == mixTargetIndex) {
+                                        Modifier.focusRequester(mixFirstFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
                 TvSubTab.Favorites -> {
                     Box(
                         modifier = Modifier
@@ -460,6 +541,47 @@ fun TvModeScreen(
             },
             onClose = { pickerOpen = false },
         )
+    }
+
+    if (showMixIntro) {
+        val introFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) {
+            delay(100)
+            runCatching { introFocus.requestFocus() }
+        }
+        Dialog(onDismissRequest = { vm.dismissMixIntro() }) {
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(CasaSurfaceHigh)
+                    .border(1.dp, CasaBorder, RoundedCornerShape(18.dp))
+                    .padding(24.dp),
+            ) {
+                Text(
+                    text = "Mix",
+                    color = CasaText,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = strings.t(
+                        "In questa sezione i canali e i paesi di tutte le playlist salvate vengono mostrati in ordine totalmente casuale e cambiano ogni volta che la apri.",
+                        "In this section, channels and countries from all saved playlists are shown in completely random order and change every time you open it.",
+                        "En esta sección los canales y países de todas las listas guardadas se muestran de forma totalmente aleatoria y cambian cada vez que la abres.",
+                    ),
+                    color = CasaMuted,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(18.dp))
+                TvButton(
+                    text = strings.t("Ho capito", "Got it", "Entendido"),
+                    onClick = { vm.dismissMixIntro() },
+                    primary = true,
+                    modifier = Modifier.focusRequester(introFocus),
+                )
+            }
+        }
     }
 }
 
