@@ -937,15 +937,24 @@ class CasaHttpServer(
     private fun version(session: IHTTPSession): Response =
         jsonResponse(updateJson(session.header("x-app-version"), session))
 
-    private fun updateJson(current: String, session: IHTTPSession? = null): JsonObject {
+    private fun validDynamicTvApk(): Pair<File, String>? {
         val file = java.io.File(context.filesDir, "updates/casatv-tv.apk")
-        val dynamicVersion = if (file.exists()) {
-            runCatching {
-                context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)?.versionName
-            }.getOrNull()
-        } else null
-        val latest = dynamicVersion?.takeIf { it.isNotBlank() && compareVersions(it, TV_LATEST_VERSION) >= 0 } ?: TV_LATEST_VERSION
-        val hasApk = file.exists() || runCatching {
+        if (!file.exists()) return null
+        val pkgInfo = runCatching {
+            context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        }.getOrNull()
+        val versionName = pkgInfo?.versionName?.takeIf { it.isNotBlank() }
+        if (pkgInfo?.packageName != "it.casatv.tv" || versionName == null || compareVersions(versionName, TV_LATEST_VERSION) < 0) {
+            runCatching { file.delete() }
+            return null
+        }
+        return file to versionName
+    }
+
+    private fun updateJson(current: String, session: IHTTPSession? = null): JsonObject {
+        val dynamic = validDynamicTvApk()
+        val latest = dynamic?.second ?: TV_LATEST_VERSION
+        val hasApk = dynamic != null || runCatching {
             context.assets.open("updates/casatv-tv.apk").close()
             true
         }.getOrDefault(false)
@@ -970,6 +979,13 @@ class CasaHttpServer(
                 ?: files.entries.firstOrNull { it.key != "postData" }?.value
                 ?: return errorResponse(Response.Status.BAD_REQUEST, "Nessun file ricevuto")
             val temp = File(path)
+            val pkgInfo = runCatching {
+                context.packageManager.getPackageArchiveInfo(temp.absolutePath, 0)
+            }.getOrNull()
+            if (pkgInfo?.packageName != "it.casatv.tv") {
+                temp.delete()
+                return errorResponse(Response.Status.BAD_REQUEST, "APK non valido per Android TV (${pkgInfo?.packageName ?: "sconosciuto"})")
+            }
             val updateDir = File(context.filesDir, "updates")
             updateDir.mkdirs()
             val target = File(updateDir, "casatv-tv.apk")
@@ -984,14 +1000,14 @@ class CasaHttpServer(
     }
 
     private fun serveUpdateApk(session: IHTTPSession): Response {
-        val file = java.io.File(context.filesDir, "updates/casatv-tv.apk")
-        if (file.exists()) {
-            val input = file.inputStream()
+        val dynamic = validDynamicTvApk()?.first
+        if (dynamic != null && dynamic.exists()) {
+            val input = dynamic.inputStream()
             return newFixedLengthResponse(
                 Response.Status.OK,
                 "application/vnd.android.package-archive",
                 input,
-                file.length(),
+                dynamic.length(),
             ).apply {
                 addHeader("Content-Disposition", "attachment; filename=\"casatv-tv.apk\"")
                 addHeader("Access-Control-Allow-Origin", "*")
@@ -1585,7 +1601,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.011"
+        const val TV_LATEST_VERSION = "26.11.012"
     }
 }
 

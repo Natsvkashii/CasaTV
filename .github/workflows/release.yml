@@ -33,6 +33,7 @@ jobs:
           mkdir -p server/src/main/assets/updates
           cp app/build/outputs/apk/release/app-release.apk server/src/main/assets/updates/casatv-tv.apk
           cp app/build/outputs/apk/release/app-release.apk "../casatv-android-tv-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "../casatv-tv-${GITHUB_REF_NAME}.apk"
 
       - name: Build Server & Mobile APKs
         working-directory: android-tv
@@ -48,5 +49,6 @@ jobs:
           generate_release_notes: true
           files: |
             casatv-android-tv-${{ github.ref_name }}.apk
+            casatv-tv-${{ github.ref_name }}.apk
             casatv-server-${{ github.ref_name }}.apk
             casatv-mobile-${{ github.ref_name }}.apk
