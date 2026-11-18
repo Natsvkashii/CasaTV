@@ -73,7 +73,11 @@ class GitHubUpdater(context: Context) {
                     return@runCatching null
                 }
                 val asset = release.assets.firstOrNull {
-                    it.name.contains("tv", ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true)
+                    (it.name.contains("-tv-", ignoreCase = true) ||
+                        (!it.name.contains("mobile", ignoreCase = true) &&
+                            !it.name.contains("server", ignoreCase = true) &&
+                            it.name.contains("tv", ignoreCase = true))) &&
+                        it.name.endsWith(".apk", ignoreCase = true)
                 } ?: return@runCatching null
                 return@runCatching UpdateInfo(
                     latest = remoteVersion,
@@ -104,7 +108,7 @@ class GitHubUpdater(context: Context) {
                 latest = remoteVersion,
                 current = BuildConfig.VERSION_NAME,
                 updateAvailable = true,
-                downloadUrl = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/$tag/casatv-tv-$tag.apk",
+                downloadUrl = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/$tag/casatv-android-tv-$tag.apk",
                 changelog = "Aggiornamento CasaTV TV v$remoteVersion da GitHub",
             )
         }.getOrNull()
