@@ -5,7 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -23,19 +23,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,9 +51,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,14 +78,14 @@ import it.casatv.tv.data.SystemStatus
 import it.casatv.tv.ui.LocalAppStrings
 import it.casatv.tv.ui.MainViewModel
 import it.casatv.tv.ui.buildCountryCatalog
-import it.casatv.tv.ui.components.ScreenHeader
-import it.casatv.tv.ui.components.TvButton
 import it.casatv.tv.ui.countryFacet
+import it.casatv.tv.ui.components.TvButton
 import it.casatv.tv.ui.formatNumber
 import it.casatv.tv.ui.relativeTime
 import it.casatv.tv.update.TvUpdateFrequency
 import it.casatv.tv.ui.theme.CasaAmber
 import it.casatv.tv.ui.theme.CasaBackground
+import it.casatv.tv.ui.theme.CasaBlue
 import it.casatv.tv.ui.theme.CasaBorder
 import it.casatv.tv.ui.theme.CasaDim
 import it.casatv.tv.ui.theme.CasaGreen
@@ -151,15 +160,53 @@ private fun LocalTvM3uCard(vm: MainViewModel) {
     }
 }
 
-private enum class SettingsSection {
-    Profile,
-    Connection,
-    Playlists,
-    System,
-    Catalog,
-    Maintenance,
-    MultiTv,
-    Remote,
+private val LocalSettingsScale = compositionLocalOf { 1f }
+
+private enum class SettingsSection(
+    val icon: ImageVector,
+    val titleIt: String,
+    val titleEn: String,
+    val titleEs: String,
+    val subtitleIt: String,
+    val subtitleEn: String,
+    val subtitleEs: String,
+) {
+    ProfileAndAppearance(
+        icon = Icons.Filled.Person,
+        titleIt = "Profilo & Aspetto",
+        titleEn = "Profile & Appearance",
+        titleEs = "Perfil y Aspecto",
+        subtitleIt = "Utente, lingua, tema e Multi-TV",
+        subtitleEn = "User, language, theme & Multi-TV",
+        subtitleEs = "Usuario, idioma, tema y Multi-TV",
+    ),
+    SourcesAndPlaylists(
+        icon = Icons.Filled.PlayArrow,
+        titleIt = "Sorgenti & Playlist",
+        titleEn = "Sources & Playlists",
+        titleEs = "Fuentes y Listas",
+        subtitleIt = "Liste M3U, catalogo e file locali",
+        subtitleEn = "M3U lists, catalog & local files",
+        subtitleEs = "Listas M3U, catálogo y archivos",
+    ),
+    ServerAndSystem(
+        icon = Icons.Filled.Settings,
+        titleIt = "Server & Sistema",
+        titleEn = "Server & System",
+        titleEs = "Servidor y Sistema",
+        subtitleIt = "Rete, risorse e aggiornamenti",
+        subtitleEn = "Network, resources & updates",
+        subtitleEs = "Red, recursos y actualizaciones",
+    ),
+    ControlsAndAbout(
+        icon = Icons.Filled.Info,
+        titleIt = "Guida & Info",
+        titleEn = "Guide & Info",
+        titleEs = "Guía e Info",
+        subtitleIt = "Tasti telecomando e versione",
+        subtitleEn = "Remote keys & app version",
+        subtitleEs = "Teclas del mando y versión",
+    ),
 }
 
 @Composable
@@ -176,12 +223,27 @@ fun SettingsScreen(
     val systemBusy by vm.systemBusy.collectAsStateWithLifecycle()
     val multiTvSync by vm.multiTvSync.collectAsStateWithLifecycle()
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
+    val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
+    val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     var confirmDisconnect by remember { mutableStateOf(false) }
     var countryPicker by remember { mutableStateOf(false) }
     var serverPicker by remember { mutableStateOf(false) }
-    var activeSection by remember { mutableStateOf(SettingsSection.Profile) }
-    val firstActionFocus = remember { FocusRequester() }
+    var activeSection by remember { mutableStateOf(SettingsSection.ProfileAndAppearance) }
+    val rightPaneFirstFocus = remember { FocusRequester() }
+    val detailScroll = rememberScrollState()
+    val sidebarNavScroll = rememberScrollState()
+    val configuration = LocalConfiguration.current
+    val s = remember(configuration.screenWidthDp, configuration.screenHeightDp) {
+        minOf(
+            configuration.screenWidthDp / 1280f,
+            configuration.screenHeightDp / 720f,
+        ).coerceIn(0.75f, 1.35f)
+    }
+
+    LaunchedEffect(activeSection) {
+        detailScroll.scrollTo(0)
+    }
 
     BackHandler {
         onBack()
@@ -193,75 +255,117 @@ fun SettingsScreen(
     val tvCountryFacet = countryFacet(tvCountry, countries)
         ?: countryFacet(profile?.country, countries)
 
+    CompositionLocalProvider(LocalSettingsScale provides s) {
     Box(Modifier.fillMaxSize()) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 32.dp),
+                .padding(horizontal = (26 * s).dp, vertical = (16 * s).dp),
+            horizontalArrangement = Arrangement.spacedBy((18 * s).dp),
         ) {
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            // Left Sidebar: clear cognitive grouping into 4 structured sections + pinned server footer
+            val sidebarShape = RoundedCornerShape((20 * s).dp)
+            Column(
+                modifier = Modifier
+                    .width((276 * s).dp.coerceAtLeast(224.dp))
+                    .fillMaxHeight()
+                    .clip(sidebarShape)
+                    .background(CasaSurface)
+                    .border(1.dp, CasaBorder, sidebarShape)
+                    .padding((14 * s).dp),
             ) {
                 TvButton(
-                    text = strings.t("← Canali", "← Channels", "← Canales"),
+                    text = strings.t("← Torna alla TV", "← Back to TV", "← Volver a TV"),
                     onClick = onBack,
                     primary = false,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                TvButton(
-                    text = strings.t("Profilo", "Profile", "Perfil"),
-                    onClick = { activeSection = SettingsSection.Profile },
-                    primary = activeSection == SettingsSection.Profile,
+                Spacer(Modifier.height((12 * s).dp))
+                Text(
+                    text = strings.t("IMPOSTAZIONI", "SETTINGS", "AJUSTES"),
+                    color = CasaDim,
+                    fontSize = (9.5f * s).sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.3.sp,
+                    modifier = Modifier.padding(horizontal = (6 * s).dp),
                 )
-                TvButton(
-                    text = strings.t("Connessione", "Connection", "Conexión"),
-                    onClick = { activeSection = SettingsSection.Connection },
-                    primary = activeSection == SettingsSection.Connection,
-                )
-                TvButton(
-                    text = strings.t("Playlist", "Playlists", "Listas"),
-                    onClick = { activeSection = SettingsSection.Playlists },
-                    primary = activeSection == SettingsSection.Playlists,
-                )
-                TvButton(
-                    text = strings.t("Sistema", "System", "Sistema"),
-                    onClick = { activeSection = SettingsSection.System },
-                    primary = activeSection == SettingsSection.System,
-                )
-                TvButton(
-                    text = strings.t("Catalogo & EPG", "Catalog & EPG", "Catálogo y EPG"),
-                    onClick = { activeSection = SettingsSection.Catalog },
-                    primary = activeSection == SettingsSection.Catalog,
-                )
-                TvButton(
-                    text = strings.t("Manutenzione", "Maintenance", "Mantenimiento"),
-                    onClick = { activeSection = SettingsSection.Maintenance },
-                    primary = activeSection == SettingsSection.Maintenance,
-                )
-                TvButton(
-                    text = strings.t("Multi-TV", "Multi-TV", "Multi-TV"),
-                    onClick = { activeSection = SettingsSection.MultiTv },
-                    primary = activeSection == SettingsSection.MultiTv,
-                )
-                TvButton(
-                    text = strings.t("Telecomando", "Remote", "Mando"),
-                    onClick = { activeSection = SettingsSection.Remote },
-                    primary = activeSection == SettingsSection.Remote,
-                )
-            }
-            Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height((6 * s).dp))
 
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(sidebarNavScroll),
+                    verticalArrangement = Arrangement.spacedBy((6 * s).dp),
+                ) {
+                    val canJumpRight = activeSection != SettingsSection.ControlsAndAbout &&
+                        (activeSection != SettingsSection.ProfileAndAppearance || profile != null)
+                    SettingsSection.entries.forEach { section ->
+                        SettingsNavItem(
+                            section = section,
+                            selected = activeSection == section,
+                            language = strings.language,
+                            onClick = { activeSection = section },
+                            rightFocus = if (canJumpRight) rightPaneFirstFocus else null,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height((8 * s).dp))
+
+                // Quick live server status summary anchored at bottom of sidebar (never clipped)
+                val footerShape = RoundedCornerShape((12 * s).dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(footerShape)
+                        .background(CasaBackground.copy(alpha = 0.65f))
+                        .border(1.dp, CasaBorder, footerShape)
+                        .padding(horizontal = (11 * s).dp, vertical = (8.5f * s).dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size((8 * s).dp)
+                            .clip(CircleShape)
+                            .background(if (isServerDisconnected) CasaAmber else CasaGreen),
+                    )
+                    Spacer(Modifier.width((8 * s).dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = config?.name ?: "CasaTV Server",
+                            color = CasaText,
+                            fontSize = (11.5f * s).sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = if (isServerDisconnected) {
+                                strings.t("Modalità offline", "Offline mode", "Modo sin conexión")
+                            } else {
+                                serverUrl.orEmpty().removePrefix("http://").ifBlank { "Online" }
+                            },
+                            color = CasaMuted,
+                            fontSize = (9.5f * s).sp,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+
+            // Right Detail Pane: spacious, cleanly structured cards scaled to screen size
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .fillMaxHeight()
+                    .verticalScroll(detailScroll),
+                verticalArrangement = Arrangement.spacedBy((12 * s).dp),
             ) {
                 when (activeSection) {
-                    SettingsSection.Profile -> {
+                    SettingsSection.ProfileAndAppearance -> {
                         val active = profile
                         if (active != null) {
                             ProfileCard(
@@ -279,93 +383,70 @@ fun SettingsScreen(
                                     ) {}
                                 },
                                 onChangeCountry = { countryPicker = true },
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            ThemeSettingsCard(
-                                currentTheme = themeMode,
-                                onSelectTheme = { vm.setThemeMode(it) },
+                                firstActionFocus = rightPaneFirstFocus,
                             )
                         }
-                    }
-                    SettingsSection.Connection -> {
-                        ConnectionCard(
-                            config = config,
-                            serverUrl = serverUrl.orEmpty(),
-                            onChangeServer = {
-                                vm.refreshDiscovery()
-                                serverPicker = true
-                            },
-                        )
-                    }
-                    SettingsSection.Playlists -> {
-                        LocalTvM3uCard(vm = vm)
-                        PlaylistsSettingsCard(
-                            vm = vm,
-                            strings = strings,
-                        )
-                    }
-                    SettingsSection.System -> {
-                        SystemCard(
-                            system = system,
-                            busy = systemBusy,
-                            onRefresh = { vm.refreshSystem() },
+                        ThemeSettingsCard(
+                            currentTheme = themeMode,
+                            onSelectTheme = { vm.setThemeMode(it) },
                         )
                         SettingsCard(
-                            title = strings.t("Informazioni", "About", "Información"),
-                            subtitle = null,
+                            title = strings.t("Sincronizzazione Multi-TV", "Multi-TV Synchronization", "Sincronización Multi-TV"),
+                            subtitle = strings.t(
+                                "Allinea automaticamente audio e video quando più TV in casa guardano lo stesso canale.",
+                                "Automatically aligns audio and video when multiple TVs watch the same channel.",
+                                "Alinea automáticamente audio y vídeo cuando varias TV ven el mismo canal.",
+                            ),
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        text = strings.t("CasaTV per Android TV", "CasaTV for Android TV", "CasaTV para Android TV"),
-                                        color = CasaText,
+                                        text = if (multiTvSync) {
+                                            strings.t("Sincronizzazione automatica attiva", "Automatic sync enabled", "Sincronización automática activa")
+                                        } else {
+                                            strings.t("Sincronizzazione disattivata", "Sync disabled", "Sincronización desactivada")
+                                        },
+                                        color = if (multiTvSync) CasaGreen else CasaMuted,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     Spacer(Modifier.height(3.dp))
                                     Text(
                                         text = strings.t(
-                                            "Versione app ${BuildConfig.VERSION_NAME} · Server ${config?.version ?: "—"}",
-                                            "App version ${BuildConfig.VERSION_NAME} · Server ${config?.version ?: "—"}",
-                                            "Versión de la app ${BuildConfig.VERSION_NAME} · Servidor ${config?.version ?: "—"}",
+                                            "Riduce l'eco tra televisori vicini regolando il flusso in tempo reale.",
+                                            "Reduces echo between nearby TVs by aligning playback in real-time.",
+                                            "Reduce el eco entre televisores cercanos alineando la reproducción.",
                                         ),
                                         color = CasaDim,
                                         fontSize = 11.sp,
                                     )
-                                    val update = system?.update
-                                    if (update?.updateAvailable == true) {
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            text = strings.t(
-                                                "Aggiornamento disponibile: v${update.latest}",
-                                                "Update available: v${update.latest}",
-                                                "Actualización disponible: v${update.latest}",
-                                            ),
-                                            color = CasaAmber,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    }
                                 }
-                                Text(
-                                    text = strings.t(
-                                        "Catalogo iptv-org · Proxy HLS locale",
-                                        "iptv-org catalog · Local HLS proxy",
-                                        "Catálogo iptv-org · Proxy HLS local",
-                                    ),
-                                    color = CasaDim,
-                                    fontSize = 10.sp,
+                                Spacer(Modifier.width(16.dp))
+                                TvButton(
+                                    text = if (multiTvSync) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
+                                    onClick = { vm.setMultiTvSync(!multiTvSync) },
+                                    primary = !multiTvSync,
                                 )
                             }
                         }
                     }
-                    SettingsSection.Catalog -> {
+
+                    SettingsSection.SourcesAndPlaylists -> {
+                        PlaylistsSettingsCard(
+                            vm = vm,
+                            strings = strings,
+                            firstActionFocus = rightPaneFirstFocus,
+                        )
                         SettingsCard(
-                            title = strings.t("Catalogo", "Catalog", "Catálogo"),
+                            title = strings.t("Panoramica Catalogo", "Catalog Overview", "Resumen del Catálogo"),
                             subtitle = strings.t(
-                                "Dati indicizzati dal server CasaTV",
-                                "Data indexed by the CasaTV server",
-                                "Datos indexados por el servidor CasaTV",
+                                "Canali e statistiche attualmente disponibili sul server CasaTV.",
+                                "Channels and statistics currently available on the CasaTV server.",
+                                "Canales y estadísticas actualmente disponibles en el servidor CasaTV.",
                             ),
                         ) {
                             val stats = config?.stats ?: ServerStats()
@@ -384,37 +465,40 @@ fun SettingsScreen(
                                     "Online",
                                     formatNumber(stats.onlineStreams, strings.language),
                                     Modifier.weight(1f),
+                                    accent = true,
                                 )
                                 StatCell(
                                     strings.t("Paesi", "Countries", "Países"),
                                     formatNumber(stats.countries, strings.language),
                                     Modifier.weight(1f),
                                 )
-                            }
-                            Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 StatCell(
                                     strings.t("Preferiti", "Favorites", "Favoritos"),
                                     formatNumber(stats.favorites, strings.language),
                                     Modifier.weight(1f),
                                 )
-                                StatCell(
-                                    strings.t("Nascosti", "Hidden", "Ocultos"),
-                                    formatNumber(stats.hidden, strings.language),
-                                    Modifier.weight(1f),
-                                )
                             }
                         }
+                        LocalTvM3uCard(vm = vm)
                     }
-                    SettingsSection.Maintenance -> {
+
+                    SettingsSection.ServerAndSystem -> {
+                        ConnectionCard(
+                            config = config,
+                            serverUrl = serverUrl.orEmpty(),
+                            onChangeServer = {
+                                vm.refreshDiscovery()
+                                serverPicker = true
+                            },
+                            firstActionFocus = rightPaneFirstFocus,
+                        )
                         SettingsCard(
-                            title = strings.t("Manutenzione", "Maintenance", "Mantenimiento"),
+                            title = strings.t("Aggiornamenti & Azioni Server", "Updates & Server Actions", "Actualizaciones y Acciones"),
                             subtitle = strings.t(
-                                "Le operazioni vengono eseguite dal server in background.",
-                                "Operations are performed by the server in the background.",
-                                "Las operaciones las realiza el servidor en segundo plano.",
+                                "Cerca nuove versioni su GitHub Releases (${BuildConfig.GITHUB_REPO}) o sincronizza il server.",
+                                "Check for new versions on GitHub Releases (${BuildConfig.GITHUB_REPO}) or sync the server.",
+                                "Busca nuevas versiones en GitHub Releases (${BuildConfig.GITHUB_REPO}) o sincroniza el servidor.",
                             ),
-                            firstActionFocus = firstActionFocus,
                         ) {
                             val source = config?.catalog?.source.orEmpty()
                             if (source.isNotBlank()) {
@@ -434,7 +518,6 @@ fun SettingsScreen(
                                     onClick = { vm.reloadServer() },
                                     primary = false,
                                     icon = Icons.Filled.Refresh,
-                                    modifier = Modifier.focusRequester(firstActionFocus),
                                 )
                                 TvButton(
                                     text = strings.t("Aggiorna catalogo", "Update catalog", "Actualizar catálogo"),
@@ -443,19 +526,13 @@ fun SettingsScreen(
                                     icon = Icons.Filled.Refresh,
                                 )
                                 TvButton(
-                                    text = strings.t("Verifica aggiornamenti", "Check for updates", "Buscar actualizaciones"),
+                                    text = strings.t("Verifica aggiornamenti", "Check updates", "Buscar actualizaciones"),
                                     onClick = { vm.checkForUpdates(silent = false) },
-                                    primary = false,
+                                    primary = true,
                                     icon = Icons.Filled.Refresh,
                                 )
-                            }
-                            Spacer(Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
-                            ) {
                                 TvButton(
-                                    text = strings.t("Cambia server", "Change server", "Cambiar servidor"),
+                                    text = strings.t("Scollega", "Disconnect", "Desconectar"),
                                     onClick = { confirmDisconnect = true },
                                     primary = false,
                                 )
@@ -463,9 +540,13 @@ fun SettingsScreen(
                             Spacer(Modifier.height(14.dp))
                             val updateFreq by vm.updateFrequency.collectAsStateWithLifecycle()
                             Text(
-                                text = "Frequenza controllo aggiornamenti GitHub",
+                                text = strings.t(
+                                    "Frequenza controllo automatico aggiornamenti",
+                                    "Automatic update check frequency",
+                                    "Frecuencia de búsqueda automática de actualizaciones",
+                                ),
                                 color = CasaMuted,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                             )
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -478,67 +559,85 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                        SystemCard(
+                            system = system,
+                            busy = systemBusy,
+                            onRefresh = { vm.refreshSystem() },
+                        )
                     }
-                    SettingsSection.MultiTv -> {
+
+                    SettingsSection.ControlsAndAbout -> {
                         SettingsCard(
-                            title = strings.t("Sincronizzazione Multi-TV", "Multi-TV Synchronization", "Sincronización Multi-TV"),
+                            title = strings.t("Guida al Telecomando", "Remote Control Guide", "Guía del Mando"),
                             subtitle = strings.t(
-                                "Sincronizza automaticamente audio e video quando più TV in casa guardano lo stesso canale.",
-                                "Automatically synchronizes audio and video when multiple TVs watch the same channel.",
-                                "Sincroniza automáticamente audio y vídeo cuando varias TV ven el mismo canal.",
+                                "Tasti rapidi per navigare e guardare la TV senza sforzo.",
+                                "Shortcuts for fast navigation and watching TV.",
+                                "Atajos para navegar y ver la TV cómodamente.",
                             ),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
+                            RemoteRow("◀", strings.t("Apre il menù rapido canali laterale con anteprima live", "Opens the quick left-side channel drawer with live preview", "Abre el menú rápido lateral de canales con vista previa"))
+                            RemoteRow("▲ ▼", strings.t("Cambia canale (o scorre il menù laterale)", "Changes channel (or browses the left drawer)", "Cambia de canal (o explora el menú lateral)"))
+                            RemoteRow("OK", strings.t("Mostra/nasconde barra o sintonizza il canale selezionato", "Toggles overlay or tunes the highlighted channel", "Muestra/oculta barra o sintoniza el canal elegido"))
+                            RemoteRow("0 – 9", strings.t("Digita direttamente il numero del canale", "Type a channel number directly", "Introduce el número de canal directamente"))
+                            RemoteRow("MENU", strings.t("Apre opzioni audio/sottotitoli o aggiunge ai Preferiti", "Opens audio/subtitle options or toggles Favorite", "Abre opciones de audio/subtítulos o Favoritos"))
+                            RemoteRow("INFO", strings.t("Cambia paese della modalità TV (o regioni del Mix)", "Changes TV country (or Mix world regions)", "Cambia el país del modo TV (o regiones del Mix)"))
+                            RemoteRow("BACK", strings.t("Chiude il menù aperto o esce dal player", "Closes the open menu or exits playback", "Cierra el menú abierto o sale del reproductor"))
+                        }
+                        SettingsCard(
+                            title = strings.t("Informazioni su CasaTV", "About CasaTV", "Acerca de CasaTV"),
+                            subtitle = null,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        text = if (multiTvSync) {
-                                            strings.t("Sincronizzazione automatica attiva", "Automatic sync enabled", "Sincronización automática activa")
-                                        } else {
-                                            strings.t("Sincronizzazione disattivata", "Sync disabled", "Sincronización desactivada")
-                                        },
-                                        color = if (multiTvSync) CasaGreen else CasaMuted,
-                                        fontSize = 14.sp,
+                                        text = strings.t("CasaTV per Android TV", "CasaTV for Android TV", "CasaTV para Android TV"),
+                                        color = CasaText,
+                                        fontSize = 15.sp,
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Text(
                                         text = strings.t(
-                                            "Elimina l'eco e il ritardo tra TV nello stesso ambiente allineando frame e flusso audio in tempo reale.",
-                                            "Eliminates echo and delay between TVs in the same room by aligning frames and audio in real-time.",
-                                            "Elimina el eco y retraso entre televisores alineando audio y vídeo en tiempo real.",
+                                            "Versione app ${BuildConfig.VERSION_NAME} · Server ${config?.version ?: "—"}",
+                                            "App version ${BuildConfig.VERSION_NAME} · Server ${config?.version ?: "—"}",
+                                            "Versión de la app ${BuildConfig.VERSION_NAME} · Servidor ${config?.version ?: "—"}",
+                                        ),
+                                        color = CasaMuted,
+                                        fontSize = 12.sp,
+                                    )
+                                    val update = updateInfo ?: system?.update?.takeIf { it.updateAvailable }
+                                    if (update?.updateAvailable == true) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = strings.t(
+                                                "Aggiornamento disponibile (GitHub): v${update.latest}",
+                                                "Update available (GitHub): v${update.latest}",
+                                                "Actualización disponible (GitHub): v${update.latest}",
+                                            ),
+                                            color = CasaAmber,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = strings.t(
+                                            "Catalogo iptv-org · Streaming locale",
+                                            "iptv-org catalog · Local streaming",
+                                            "Catálogo iptv-org · Streaming local",
                                         ),
                                         color = CasaDim,
                                         fontSize = 11.sp,
                                     )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = "GitHub Releases · ${BuildConfig.GITHUB_REPO}",
+                                        color = CasaDim,
+                                        fontSize = 10.sp,
+                                    )
                                 }
-                                Spacer(Modifier.width(16.dp))
-                                TvButton(
-                                    text = if (multiTvSync) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
-                                    onClick = { vm.setMultiTvSync(!multiTvSync) },
-                                    primary = !multiTvSync,
-                                )
                             }
-                        }
-                    }
-                    SettingsSection.Remote -> {
-                        SettingsCard(
-                            title = strings.t("Telecomando", "Remote", "Mando a distancia"),
-                            subtitle = strings.t(
-                                "Comandi disponibili durante la navigazione e la visione.",
-                                "Keys available while browsing and watching.",
-                                "Teclas disponibles durante la navegación y la reproducción.",
-                            ),
-                        ) {
-                            RemoteRow("▲ ▼", strings.t("Cambia canale durante la visione", "Change channel while watching", "Cambiar canal durante la reproducción"))
-                            RemoteRow("OK", strings.t("Mostra o nascondi le informazioni sul canale", "Show or hide channel information", "Mostrar u ocultar la información del canal"))
-                            RemoteRow("0 – 9", strings.t("Digita il numero del canale e premi OK per andare", "Type the channel number and press OK to tune", "Escribe el número del canal y pulsa OK para sintonizar"))
-                            RemoteRow("MENU", strings.t("Aggiunge o rimuove il canale dai preferiti", "Add or remove the channel from favorites", "Añadir o quitar el canal de favoritos"))
-                            RemoteRow("INFO", strings.t("Cambia il paese della modalità TV", "Change the TV mode country", "Cambiar el país del modo TV"))
-                            RemoteRow("BACK", strings.t("Torna indietro o chiude il canale in visione", "Go back or close the playing channel", "Volver atrás o cerrar el canal en reproducción"))
                         }
                     }
                 }
@@ -621,6 +720,116 @@ fun SettingsScreen(
             onDismiss = { serverPicker = false },
         )
     }
+    }
+}
+
+@Composable
+private fun SettingsNavItem(
+    section: SettingsSection,
+    selected: Boolean,
+    language: String,
+    onClick: () -> Unit,
+    rightFocus: FocusRequester? = null,
+) {
+    val s = LocalSettingsScale.current
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val shape = RoundedCornerShape((13 * s).dp)
+
+    val bg = when {
+        focused -> if (isLight) CasaBlue else Color.White
+        selected -> if (isLight) Color(0x1F0070F3) else Color(0x26FFFFFF)
+        else -> Color.Transparent
+    }
+    val titleCol = when {
+        focused -> if (isLight) Color.White else Color.Black
+        selected -> if (isLight) CasaBlue else Color.White
+        else -> CasaText
+    }
+    val subCol = when {
+        focused -> if (isLight) Color(0xCCFFFFFF) else Color(0x99000000)
+        selected -> if (isLight) CasaBlue.copy(alpha = 0.8f) else CasaMuted
+        else -> CasaDim
+    }
+    val borderCol = when {
+        focused -> if (isLight) CasaBlue else Color.White
+        selected -> if (isLight) Color(0x550070F3) else CasaGreen.copy(alpha = 0.65f)
+        else -> Color.Transparent
+    }
+
+    val title = when (language.lowercase().take(2)) {
+        "en" -> section.titleEn
+        "es" -> section.titleEs
+        else -> section.titleIt
+    }
+    val subtitle = when (language.lowercase().take(2)) {
+        "en" -> section.subtitleEn
+        "es" -> section.subtitleEs
+        else -> section.subtitleIt
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(bg)
+            .border(if (focused) 2.dp else 1.dp, borderCol, shape)
+            .then(
+                if (rightFocus != null) {
+                    Modifier.focusProperties { right = rightFocus }
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = (11 * s).dp, vertical = (9 * s).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size((32 * s).dp)
+                .clip(RoundedCornerShape((9 * s).dp))
+                .background(
+                    when {
+                        focused -> if (isLight) Color(0x28FFFFFF) else Color(0x16000000)
+                        selected -> if (isLight) Color(0x220070F3) else CasaGreen.copy(alpha = 0.16f)
+                        else -> if (isLight) Color(0x0E000000) else Color(0x14FFFFFF)
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = section.icon,
+                contentDescription = null,
+                tint = if (selected && !focused) (if (isLight) CasaBlue else CasaGreen) else titleCol,
+                modifier = Modifier.size((17 * s).dp),
+            )
+        }
+        Spacer(Modifier.width((10 * s).dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = titleCol,
+                fontSize = (12.5f * s).sp,
+                fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height((2 * s).dp))
+            Text(
+                text = subtitle,
+                color = subCol,
+                fontSize = (9.5f * s).sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 @Composable
@@ -631,8 +840,10 @@ private fun ProfileCard(
     onSwitchProfile: () -> Unit,
     onLanguage: (String) -> Unit,
     onChangeCountry: () -> Unit,
+    firstActionFocus: FocusRequester? = null,
 ) {
     val strings = LocalAppStrings.current
+    val s = LocalSettingsScale.current
     SettingsCard(
         title = strings.t("Profilo e preferenze", "Profile and preferences", "Perfil y preferencias"),
         subtitle = strings.t(
@@ -642,31 +853,32 @@ private fun ProfileCard(
         ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            val avatarShape = RoundedCornerShape((15 * s).dp)
             Box(
                 modifier = Modifier
-                    .size(58.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size((54 * s).dp)
+                    .clip(avatarShape)
                     .background(CasaBackground.copy(alpha = 0.8f))
-                    .border(1.dp, CasaBorder, RoundedCornerShape(16.dp)),
+                    .border(1.dp, CasaBorder, avatarShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = profile.avatar, fontSize = 30.sp)
+                Text(text = profile.avatar, fontSize = (28 * s).sp)
             }
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width((12 * s).dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = profile.name,
                     color = CasaText,
-                    fontSize = 18.sp,
+                    fontSize = (17 * s).sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(3.dp))
+                Spacer(Modifier.height((3 * s).dp))
                 Text(
                     text = "${profile.flag} ${profile.countryName} · ${profile.displayLanguage}",
                     color = CasaMuted,
-                    fontSize = 11.sp,
+                    fontSize = (10.5f * s).sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -675,15 +887,16 @@ private fun ProfileCard(
                 text = strings.t("Cambia profilo", "Switch profile", "Cambiar perfil"),
                 onClick = onSwitchProfile,
                 primary = false,
+                modifier = if (firstActionFocus != null) Modifier.focusRequester(firstActionFocus) else Modifier,
             )
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height((14 * s).dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = strings.t("LINGUA DELL’APP", "APP LANGUAGE", "IDIOMA DE LA APP"),
                 color = CasaDim,
-                fontSize = 9.sp,
+                fontSize = (9 * s).sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.1.sp,
                 modifier = Modifier.weight(1f),
@@ -693,26 +906,26 @@ private fun ProfileCard(
                     text = entry.name,
                     onClick = { if (entry.code != profile.language) onLanguage(entry.code) },
                     primary = entry.code == profile.language,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.padding(start = (8 * s).dp),
                 )
             }
         }
 
-        Spacer(Modifier.height(15.dp))
+        Spacer(Modifier.height((13 * s).dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     text = strings.t("PAESE PREFERITO", "PREFERRED COUNTRY", "PAÍS PREFERIDO"),
                     color = CasaDim,
-                    fontSize = 9.sp,
+                    fontSize = (9 * s).sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.1.sp,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height((4 * s).dp))
                 Text(
                     text = "${profile.flag} ${profile.countryName}",
                     color = CasaText,
-                    fontSize = 13.sp,
+                    fontSize = (12.5f * s).sp,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -752,27 +965,24 @@ private fun ThemeSettingsCard(
     onSelectTheme: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current
+    val s = LocalSettingsScale.current
     val isLight = currentTheme == "light"
     SettingsCard(
-        title = strings.t("Tema e visibilità", "Theme and visibility", "Tema y visibilidad"),
-        subtitle = strings.t(
-            "Scegli il tema dell'interfaccia. Il tema chiaro migliora notevolmente il contrasto e la leggibilità su TV.",
-            "Choose interface theme. Light theme significantly improves contrast and readability on TV.",
-            "Elige el tema de la interfaz. El tema claro mejora notablemente el contraste y la legibilidad en TV.",
-        ),
+        title = strings.t("Tema", "Theme", "Tema"),
+        subtitle = null,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy((14 * s).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TvButton(
-                text = strings.t("☀️ Tema Chiaro (Alta Leggibilità)", "☀️ Light Theme (High Contrast)", "☀️ Tema Claro (Alta Legibilidad)"),
+                text = strings.t("CHIARO", "LIGHT", "CLARO"),
                 onClick = { onSelectTheme("light") },
                 primary = isLight,
             )
             TvButton(
-                text = strings.t("🌙 Tema Scuro", "🌙 Dark Theme", "🌙 Tema Oscuro"),
+                text = strings.t("SCURO", "DARK", "OSCURO"),
                 onClick = { onSelectTheme("dark") },
                 primary = !isLight,
             )
@@ -785,6 +995,7 @@ private fun ConnectionCard(
     config: ServerConfig?,
     serverUrl: String,
     onChangeServer: () -> Unit,
+    firstActionFocus: FocusRequester? = null,
 ) {
     val strings = LocalAppStrings.current
     SettingsCard(
@@ -874,6 +1085,7 @@ private fun ConnectionCard(
                 onClick = onChangeServer,
                 primary = true,
                 icon = Icons.Filled.Refresh,
+                modifier = if (firstActionFocus != null) Modifier.focusRequester(firstActionFocus) else Modifier,
             )
         }
     }
@@ -1135,64 +1347,40 @@ private fun ResourceBar(label: String, percent: Double, language: String) {
 private fun SettingsCard(
     title: String,
     subtitle: String?,
-    focusable: Boolean = false,
-    firstActionFocus: FocusRequester? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
+    val s = LocalSettingsScale.current
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
-    val cardBg = if (isLight) {
-        if (focusable && focused) it.casatv.tv.ui.theme.CasaSurfaceHigh else it.casatv.tv.ui.theme.CasaSurface
-    } else {
-        if (focusable && focused) Color(0x33FFFFFF) else Color(0x14FFFFFF)
-    }
-    val cardBorder = if (isLight) {
-        if (focusable && focused) it.casatv.tv.ui.theme.CasaBlue else it.casatv.tv.ui.theme.CasaBorder
-    } else {
-        if (focusable && focused) Color.White else Color(0x24FFFFFF)
-    }
+    val cardShape = RoundedCornerShape((18 * s).dp)
+    val cardBg = if (isLight) it.casatv.tv.ui.theme.CasaSurface else Color(0x14FFFFFF)
+    val cardBorder = if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x24FFFFFF)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(cardShape)
             .background(cardBg)
             .border(
-                width = if (focusable && focused) 2.dp else 1.dp,
+                width = 1.dp,
                 color = cardBorder,
-                shape = RoundedCornerShape(20.dp),
+                shape = cardShape,
             )
-            .then(
-                if (firstActionFocus != null) {
-                    Modifier.focusProperties { down = firstActionFocus }
-                } else {
-                    Modifier
-                },
-            )
-            .then(
-                if (focusable) {
-                    Modifier.focusable(interactionSource = interaction)
-                } else {
-                    Modifier
-                },
-            )
-            .padding(horizontal = 22.dp, vertical = 18.dp),
+            .padding(horizontal = (20 * s).dp, vertical = (16 * s).dp),
     ) {
         Text(
             text = title,
             color = CasaText,
-            fontSize = 16.sp,
+            fontSize = (15.5f * s).sp,
             fontWeight = FontWeight.SemiBold,
         )
         if (!subtitle.isNullOrBlank()) {
-            Spacer(Modifier.height(3.dp))
+            Spacer(Modifier.height((3 * s).dp))
             Text(
                 text = subtitle,
                 color = CasaDim,
-                fontSize = 11.sp,
+                fontSize = (10.5f * s).sp,
             )
         }
-        Spacer(Modifier.height(13.dp))
+        Spacer(Modifier.height((12 * s).dp))
         content()
     }
 }
@@ -1204,27 +1392,30 @@ private fun StatCell(
     modifier: Modifier = Modifier,
     accent: Boolean = false,
 ) {
+    val s = LocalSettingsScale.current
+    val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val cellShape = RoundedCornerShape((13 * s).dp)
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0x14FFFFFF))
-            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(14.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .clip(cellShape)
+            .background(if (isLight) CasaBackground.copy(alpha = 0.7f) else Color(0x14FFFFFF))
+            .border(1.dp, CasaBorder, cellShape)
+            .padding(horizontal = (13 * s).dp, vertical = (9 * s).dp),
     ) {
         Text(
             text = label,
             color = CasaDim,
-            fontSize = 9.sp,
+            fontSize = (9 * s).sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 0.8.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height((4 * s).dp))
         Text(
             text = value,
-            color = if (accent) Color(0xFF64D2FF) else CasaText,
-            fontSize = 17.sp,
+            color = if (accent) (if (isLight) CasaBlue else CasaGreen) else CasaText,
+            fontSize = (16.5f * s).sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
@@ -1233,34 +1424,37 @@ private fun StatCell(
 
 @Composable
 private fun RemoteRow(key: String, action: String) {
+    val s = LocalSettingsScale.current
+    val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val keyShape = RoundedCornerShape((9 * s).dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = (3.5f * s).dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .width(92.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0x1FFFFFFF))
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(10.dp))
-                .padding(vertical = 5.dp),
+                .width((88 * s).dp)
+                .clip(keyShape)
+                .background(if (isLight) CasaBackground else Color(0x1FFFFFFF))
+                .border(1.dp, CasaBorder, keyShape)
+                .padding(vertical = (4.5f * s).dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = key,
-                color = Color(0xFFFF9F0A),
-                fontSize = 11.sp,
+                color = if (isLight) CasaBlue else Color(0xFFFF9F0A),
+                fontSize = (10.5f * s).sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
             )
         }
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width((12 * s).dp))
         Text(
             text = action,
             color = CasaMuted,
-            fontSize = 12.sp,
+            fontSize = (11.5f * s).sp,
         )
     }
 }
@@ -1476,6 +1670,7 @@ private fun ServerPickerDialog(
 private fun PlaylistsSettingsCard(
     vm: MainViewModel,
     strings: it.casatv.tv.ui.AppStrings,
+    firstActionFocus: FocusRequester? = null,
 ) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
@@ -1512,6 +1707,7 @@ private fun PlaylistsSettingsCard(
                 onClick = { showAddDialog = true },
                 primary = true,
                 icon = Icons.Filled.Add,
+                modifier = if (firstActionFocus != null) Modifier.focusRequester(firstActionFocus) else Modifier,
             )
         }
 
@@ -1676,7 +1872,7 @@ private fun AddPlaylistDialog(
                 primary = false,
             )
         },
-        containerColor = Color(0xFF1E1E24),
+        containerColor = CasaSurfaceHigh,
         shape = RoundedCornerShape(16.dp),
     )
 }

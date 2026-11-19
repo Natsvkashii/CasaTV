@@ -5,7 +5,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -46,11 +45,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
@@ -98,11 +99,20 @@ fun ProfileGateScreen(vm: MainViewModel) {
         buildCountryCatalog(config?.facets?.countries.orEmpty(), strings.language)
     }
     val focusRequester = remember { FocusRequester() }
+    var firstProfileFocused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(creating, editing) {
+    LaunchedEffect(creating, editing, profiles.firstOrNull()?.id, profiles.size) {
         if (!creating && editing == null && profiles.isNotEmpty()) {
-            delay(150)
+            withFrameNanos { }
             runCatching { focusRequester.requestFocus() }
+            delay(80)
+            if (!firstProfileFocused) {
+                runCatching { focusRequester.requestFocus() }
+                delay(100)
+                if (!firstProfileFocused) {
+                    runCatching { focusRequester.requestFocus() }
+                }
+            }
         }
     }
 
@@ -180,22 +190,13 @@ fun ProfileGateScreen(vm: MainViewModel) {
                 )
                 Spacer(Modifier.height(40.dp))
 
-                val sortedProfiles = remember(profiles) {
-                    profiles.sortedWith(
-                        compareBy(
-                            { it.id == "guest" || it.isGuest || it.name.equals("Ospite", ignoreCase = true) || it.name.equals("Guest", ignoreCase = true) },
-                            { it.createdAt },
-                        ),
-                    )
-                }
-
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 48.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    rowItemsIndexed(sortedProfiles, key = { _, profile -> profile.id }) { index, profile ->
+                    rowItemsIndexed(profiles, key = { _, profile -> profile.id }) { index, profile ->
                         val isActive = activeProfile?.id == profile.id
                         AppleProfileTile(
                             profile = profile,
@@ -218,10 +219,10 @@ fun ProfileGateScreen(vm: MainViewModel) {
                                     vm.selectProfile(profile)
                                 }
                             },
-                            modifier = if (
-                                (activeProfile == null && index == 0) || isActive
-                            ) {
-                                Modifier.focusRequester(focusRequester)
+                            modifier = if (index == 0) {
+                                Modifier
+                                    .focusRequester(focusRequester)
+                                    .onFocusChanged { firstProfileFocused = it.isFocused }
                             } else {
                                 Modifier
                             },
@@ -299,7 +300,6 @@ private fun AppleProfileTile(
     Column(
         modifier = modifier
             .width(134.dp)
-            .focusable(interactionSource = interaction)
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -308,14 +308,10 @@ private fun AppleProfileTile(
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val tileBg = if (isLight) {
-            if (focused) it.casatv.tv.ui.theme.CasaSurfaceHigh else it.casatv.tv.ui.theme.CasaSurface
-        } else {
-            if (focused) Color(0xFF2C2C2E) else Color(0xFF1C1C1E)
-        }
+        val tileBg = if (focused) CasaSurfaceHigh else CasaSurface
         val tileBorder = when {
             focused -> Color.White
-            else -> if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x26FFFFFF)
+            else -> CasaBorder
         }
         Box(
             modifier = Modifier
@@ -371,7 +367,6 @@ private fun AppleNewProfileTile(
     Column(
         modifier = modifier
             .width(134.dp)
-            .focusable(enabled = enabled, interactionSource = interaction)
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
@@ -381,16 +376,8 @@ private fun AppleNewProfileTile(
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val tileBg = if (isLight) {
-            if (focused) it.casatv.tv.ui.theme.CasaSurfaceHigh else it.casatv.tv.ui.theme.CasaSurface
-        } else {
-            if (focused) Color(0xFF2C2C2E) else Color(0xFF141416)
-        }
-        val tileBorder = if (focused) {
-            Color.White
-        } else {
-            if (isLight) it.casatv.tv.ui.theme.CasaBorder else Color(0x26FFFFFF)
-        }
+        val tileBg = if (focused) CasaSurfaceHigh else CasaSurface
+        val tileBorder = if (focused) Color.White else CasaBorder
         Box(
             modifier = Modifier
                 .size(118.dp)
@@ -547,7 +534,7 @@ private fun ProfileEditor(
                             deleteEnabled = false,
                             onDelete = { confirmDelete = true },
                         )
-                        EditorAvatars(
+                        AvatarRows(
                             avatars = avatars,
                             selected = avatar,
                             onSelect = { avatar = it },
@@ -810,23 +797,6 @@ private fun DeleteProfileButton(
         onClick = onClick,
         primary = false,
         enabled = enabled,
-    )
-}
-
-@Composable
-private fun EditorAvatars(
-    avatars: List<String>,
-    selected: String,
-    onSelect: (String) -> Unit,
-    columns: Int,
-    focusRequester: FocusRequester,
-) {
-    AvatarRows(
-        avatars = avatars,
-        selected = selected,
-        onSelect = onSelect,
-        columns = columns,
-        focusRequester = focusRequester,
     )
 }
 

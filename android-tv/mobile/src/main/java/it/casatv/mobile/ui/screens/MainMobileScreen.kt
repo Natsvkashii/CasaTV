@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
@@ -43,7 +42,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -74,7 +72,10 @@ import it.casatv.mobile.data.CountryFacet
 import it.casatv.mobile.data.LocalPlaylist
 import it.casatv.mobile.data.MobileChannel
 import it.casatv.mobile.ui.LocalMobileStrings
+import it.casatv.mobile.ui.MixRegion
+import it.casatv.mobile.ui.MixRegionPickerDialog
 import it.casatv.mobile.ui.MobileUiState
+import it.casatv.mobile.ui.computeMixRegionCounts
 import it.casatv.mobile.update.UpdateFrequency
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,9 +86,10 @@ fun MainMobileScreen(
     onSelectCountry: (String?) -> Unit,
     onOpenChannel: (MobileChannel) -> Unit,
     onToggleFavorite: (MobileChannel) -> Unit,
-    onRefreshMix: () -> Unit,
-    onPlayRandomMix: () -> Unit,
-    onDismissMixIntro: () -> Unit,
+    onOpenMixPicker: () -> Unit,
+    onToggleMixRegion: (MixRegion) -> Unit,
+    onStartMixFromRegions: () -> Unit,
+    onDismissMixPicker: () -> Unit,
     onImportUrl: (name: String, url: String) -> Unit,
     onImportFile: (Uri) -> Unit,
     onTogglePlaylist: (LocalPlaylist, Boolean) -> Unit,
@@ -98,6 +100,8 @@ fun MainMobileScreen(
     onSetDarkTheme: (Boolean) -> Unit,
     onSetAutoServer: (Boolean) -> Unit,
     onSetAutoSaveServerM3u: (Boolean) -> Unit,
+    onSetBackgroundPlay: (Boolean) -> Unit,
+    onSetPipOnLeave: (Boolean) -> Unit,
     onSearchServerNow: () -> Unit,
     onSetUpdateFrequency: (UpdateFrequency) -> Unit,
     onCheckUpdatesNow: () -> Unit,
@@ -160,11 +164,8 @@ fun MainMobileScreen(
                     label = { Text(strings.tabChannels) },
                 )
                 NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = {
-                        selectedTab = 4
-                        onRefreshMix()
-                    },
+                    selected = false,
+                    onClick = onOpenMixPicker,
                     icon = { Icon(Icons.Default.Shuffle, contentDescription = null) },
                     label = { Text(strings.tabMix) },
                 )
@@ -195,22 +196,6 @@ fun MainMobileScreen(
                 .padding(innerPadding),
         ) {
             when (selectedTab) {
-                0 -> ChannelsTab(
-                    state = state,
-                    onSearchChange = onSearchChange,
-                    onSelectCountry = onSelectCountry,
-                    onOpenChannel = onOpenChannel,
-                    onToggleFavorite = onToggleFavorite,
-                    onGoToPlaylists = { selectedTab = 2 },
-                )
-                4 -> MixTab(
-                    channels = state.mixChannels,
-                    onOpenChannel = onOpenChannel,
-                    onToggleFavorite = onToggleFavorite,
-                    onPlayRandom = onPlayRandomMix,
-                    onShuffle = onRefreshMix,
-                    onGoToPlaylists = { selectedTab = 2 },
-                )
                 1 -> FavoritesTab(
                     favorites = state.favoriteChannels,
                     onOpenChannel = onOpenChannel,
@@ -231,10 +216,20 @@ fun MainMobileScreen(
                     onSetDarkTheme = onSetDarkTheme,
                     onSetAutoServer = onSetAutoServer,
                     onSetAutoSaveServerM3u = onSetAutoSaveServerM3u,
+                    onSetBackgroundPlay = onSetBackgroundPlay,
+                    onSetPipOnLeave = onSetPipOnLeave,
                     onSearchServerNow = onSearchServerNow,
                     onSetUpdateFrequency = onSetUpdateFrequency,
                     onCheckUpdatesNow = onCheckUpdatesNow,
                     onInstallUpdate = onInstallUpdate,
+                )
+                else -> ChannelsTab(
+                    state = state,
+                    onSearchChange = onSearchChange,
+                    onSelectCountry = onSelectCountry,
+                    onOpenChannel = onOpenChannel,
+                    onToggleFavorite = onToggleFavorite,
+                    onGoToPlaylists = { selectedTab = 2 },
                 )
             }
         }
@@ -285,104 +280,19 @@ fun MainMobileScreen(
         )
     }
 
-    if (state.showMixIntro) {
-        AlertDialog(
-            onDismissRequest = onDismissMixIntro,
-            title = { Text(strings.mixIntroTitle) },
-            text = { Text(strings.mixIntroBody) },
-            confirmButton = {
-                Button(onClick = onDismissMixIntro) {
-                    Text(strings.mixIntroOk)
-                }
-            },
+    if (state.showMixRegionPicker) {
+        val regionCounts = remember(state.allChannels) {
+            computeMixRegionCounts(state.allChannels)
+        }
+        MixRegionPickerDialog(
+            language = state.language,
+            selectedRegions = state.selectedMixRegions,
+            regionCounts = regionCounts,
+            totalChannels = state.allChannels.size,
+            onToggleRegion = onToggleMixRegion,
+            onStartMix = onStartMixFromRegions,
+            onDismiss = onDismissMixPicker,
         )
-    }
-}
-
-@Composable
-private fun MixTab(
-    channels: List<MobileChannel>,
-    onOpenChannel: (MobileChannel) -> Unit,
-    onToggleFavorite: (MobileChannel) -> Unit,
-    onPlayRandom: () -> Unit,
-    onShuffle: () -> Unit,
-    onGoToPlaylists: () -> Unit,
-) {
-    val strings = LocalMobileStrings.current
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Button(
-                onClick = onPlayRandom,
-                enabled = channels.isNotEmpty(),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Default.Shuffle, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(strings.mixPlayRandom, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            OutlinedButton(
-                onClick = onShuffle,
-                enabled = channels.isNotEmpty(),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(strings.mixShuffleAgain, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-
-        if (channels.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.Shuffle,
-                        contentDescription = null,
-                        modifier = Modifier.size(52.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = strings.noChannels,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = strings.emptyChannelsHint,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Button(onClick = onGoToPlaylists) {
-                        Text(strings.loadM3uButton)
-                    }
-                }
-            }
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(channels, key = { "mix_${it.id}" }) { channel ->
-                    ChannelRowCard(
-                        channel = channel,
-                        onClick = { onOpenChannel(channel) },
-                        onToggleFavorite = { onToggleFavorite(channel) },
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -740,6 +650,7 @@ private fun ChannelRowCard(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            var logoFailed by remember(channel.logo, channel.id) { mutableStateOf(false) }
             Box(
                 modifier = Modifier
                     .size(46.dp)
@@ -747,7 +658,7 @@ private fun ChannelRowCard(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!channel.logo.isNullOrBlank()) {
+                if (!channel.logo.isNullOrBlank() && !logoFailed) {
                     AsyncImage(
                         model = channel.logo,
                         contentDescription = channel.name,
@@ -755,6 +666,7 @@ private fun ChannelRowCard(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(4.dp),
+                        onError = { logoFailed = true },
                     )
                 } else {
                     Text(

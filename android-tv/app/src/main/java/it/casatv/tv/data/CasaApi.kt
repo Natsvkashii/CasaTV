@@ -36,6 +36,15 @@ class CasaApi {
         .retryOnConnectionFailure(true)
         .build()
 
+    private val probeClient = OkHttpClient.Builder()
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(2500, TimeUnit.MILLISECONDS)
+        .callTimeout(4000, TimeUnit.MILLISECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(false)
+        .build()
+
     @Volatile
     var baseUrl: String = ""
         private set
@@ -146,16 +155,100 @@ class CasaApi {
     suspend fun channelSources(id: String): ChannelSources =
         getJson(baseUrl, "/api/channels/${encodePath(id)}/streams")
 
-    suspend fun isStreamAvailable(streamUrl: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val req = Request.Builder()
-                .url(streamUrl)
-                .head()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                resp.isSuccessful
+    private data class ProbeSample(
+        val finalUrl: HttpUrl,
+        val contentType: String,
+        val bytes: ByteArray,
+    )
+
+    private fun fetchProbeSample(
+        url: String,
+        maxBytes: Int,
+        job: kotlinx.coroutines.Job?,
+    ): ProbeSample? {
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", EXO_USER_AGENT)
+            .get()
+            .build()
+        val call = probeClient.newCall(req)
+        val handle = job?.invokeOnCompletion { call.cancel() }
+        return try {
+            call.execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val stream = resp.body?.byteStream() ?: return null
+                val buffer = ByteArray(maxBytes)
+                var total = 0
+                while (total < maxBytes) {
+                    val read = stream.read(buffer, total, maxBytes - total)
+                    if (read <= 0) break
+                    total += read
+                }
+                if (total <= 0) return null
+                ProbeSample(
+                    finalUrl = resp.request.url,
+                    contentType = resp.header("Content-Type").orEmpty(),
+                    bytes = buffer.copyOf(total),
+                )
             }
-        }.getOrDefault(false)
+        } finally {
+            handle?.dispose()
+        }
+    }
+
+    /**
+     * Quickly verifies whether [streamUrl] responds with a playable HLS manifest
+     * or non-HTML media stream. For HLS playlists, also probes the first child
+     * variant/segment URL so dead manifests are filtered out.
+     */
+    suspend fun isStreamAvailable(streamUrl: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = streamUrl.trim()
+        val scheme = clean.substringBefore("://", "").lowercase()
+        if (scheme != "http" && scheme != "https") return@withContext false
+
+        val job = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+        try {
+            val sample = fetchProbeSample(clean, 4096, job) ?: return@withContext false
+            val text = sample.bytes.toString(Charsets.UTF_8)
+            val isDash = clean.contains(".mpd", ignoreCase = true) ||
+                sample.finalUrl.toString().contains(".mpd", ignoreCase = true) ||
+                sample.contentType.contains("dash+xml", ignoreCase = true) ||
+                text.contains("<MPD", ignoreCase = true)
+
+            if (isDash) {
+                return@withContext text.contains("<MPD", ignoreCase = true)
+            }
+
+            val isHls = clean.contains(".m3u8", ignoreCase = true) ||
+                sample.finalUrl.toString().contains(".m3u8", ignoreCase = true) ||
+                sample.contentType.contains("mpegurl", ignoreCase = true) ||
+                text.trimStart().startsWith("#EXTM3U")
+
+            if (!isHls) {
+                return@withContext !sample.contentType.contains("text/html", ignoreCase = true) &&
+                    sample.bytes.size >= 188
+            }
+
+            if (!text.contains("#EXTM3U")) return@withContext false
+            val firstEntry = text.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                ?: return@withContext true
+
+            val childUrl = sample.finalUrl.resolve(firstEntry) ?: return@withContext false
+            val childSample = fetchProbeSample(childUrl.toString(), 1024, job) ?: return@withContext false
+            val childIsM3u8 = childUrl.toString().contains(".m3u8", ignoreCase = true) ||
+                childSample.contentType.contains("mpegurl", ignoreCase = true)
+            if (childIsM3u8) {
+                childSample.bytes.toString(Charsets.UTF_8).contains("#EXTM3U")
+            } else {
+                !childSample.contentType.contains("text/html", ignoreCase = true)
+            }
+        } catch (err: kotlinx.coroutines.CancellationException) {
+            throw err
+        } catch (_: Exception) {
+            false
+        }
     }
 
     suspend fun home(limit: Int = 22): HomeResponse =
@@ -432,6 +525,8 @@ class CasaApi {
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val EMPTY_BODY = ByteArray(0).toRequestBody(null)
+        private const val EXO_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         fun normalizeBaseUrl(input: String): String {
             var raw = input.trim()

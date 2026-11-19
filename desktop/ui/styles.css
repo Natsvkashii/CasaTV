@@ -1,13 +1,13 @@
 :root {
-  --bg-main: #0b1118;
-  --bg-card: #121a24;
-  --bg-card-hover: #172230;
-  --border: #1f2c3d;
-  --text-main: #edf4fa;
-  --text-muted: #8e9fab;
-  --accent: #3ddc84;
-  --accent-hover: #32c473;
-  --accent-dim: rgba(61, 220, 132, 0.15);
+  --bg-main: #060B14;
+  --bg-card: #0A1322;
+  --bg-card-hover: #102036;
+  --border: #1E3A5F;
+  --text-main: #F8FAFC;
+  --text-muted: #94A3B8;
+  --accent: #00D4FF;
+  --accent-hover: #0EA5E9;
+  --accent-dim: rgba(0, 212, 255, 0.15);
   --danger: #ef4444;
   --danger-hover: #dc2626;
   --danger-dim: rgba(239, 68, 68, 0.15);
@@ -46,7 +46,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  background-color: #0e1520;
+  background-color: var(--bg-card);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
 }
@@ -93,7 +93,7 @@ body {
 .status-badge.running {
   background-color: var(--accent-dim);
   color: var(--accent);
-  border: 1px solid rgba(61, 220, 132, 0.3);
+  border: 1px solid rgba(0, 212, 255, 0.3);
 }
 
 .status-badge.stopped {
@@ -195,7 +195,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #0b1118;
+  background-color: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
@@ -323,7 +323,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #0b1118;
+  background-color: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -376,14 +376,14 @@ body {
   padding: 18px 12px;
   color: var(--text-muted);
   font-size: 12.5px;
-  background-color: #0e1620;
+  background-color: var(--bg-card);
   border-radius: 6px;
   border: 1px dashed var(--border);
 }
 
 /* Add Playlist Form */
 .add-form {
-  background-color: #0b1118;
+  background-color: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;

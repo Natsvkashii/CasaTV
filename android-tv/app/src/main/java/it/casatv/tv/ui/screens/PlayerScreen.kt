@@ -5,15 +5,20 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -23,6 +28,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -85,8 +92,11 @@ import it.casatv.tv.data.Facet
 import it.casatv.tv.data.SyncStateResponse
 import it.casatv.tv.ui.LocalAppStrings
 import it.casatv.tv.ui.MainViewModel
+import it.casatv.tv.ui.MixRegionPickerDialog
 import it.casatv.tv.ui.buildCountryCatalog
+import it.casatv.tv.ui.components.ChannelLivePreviewBox
 import it.casatv.tv.ui.components.ChannelLogo
+import it.casatv.tv.ui.computeMixRegionCounts
 import it.casatv.tv.ui.components.OsdAudioTrack
 import it.casatv.tv.ui.components.OsdSubtitleTrack
 import it.casatv.tv.ui.components.PlayerOsdMenu
@@ -197,8 +207,14 @@ fun PlayerScreen(vm: MainViewModel) {
     var tracksState by remember { mutableStateOf(Tracks.EMPTY) }
     var videoSizeState by remember { mutableStateOf(VideoSize.UNKNOWN) }
     val multiTvSyncEnabled by vm.multiTvSync.collectAsStateWithLifecycle()
+    val showMixRegionPicker by vm.showMixRegionPicker.collectAsStateWithLifecycle()
+    val selectedMixRegions by vm.selectedMixRegions.collectAsStateWithLifecycle()
     var syncState by remember { mutableStateOf<SyncStateResponse?>(null) }
     var inSyncByDelta by remember { mutableStateOf(false) }
+    var lastZapTimeMs by remember { mutableLongStateOf(0L) }
+    var quickDrawerOpen by remember { mutableStateOf(false) }
+    var quickDrawerIndex by remember { mutableIntStateOf(0) }
+    var lastDrawerMoveMs by remember { mutableLongStateOf(0L) }
 
     val audioTracks = remember(tracksState) { extractOsdAudioTracks(tracksState) }
     val subtitleTracks = remember(tracksState) { extractOsdSubtitleTracks(tracksState) }
@@ -219,6 +235,16 @@ fun PlayerScreen(vm: MainViewModel) {
         tuneJob?.cancel()
         tuneJob = null
         numberEntry = ""
+    }
+
+    fun openQuickDrawer(): Boolean {
+        if (session.queue.isEmpty()) return false
+        cancelNumberEntry()
+        quickDrawerIndex = session.index.coerceIn(0, (session.queue.size - 1).coerceAtLeast(0))
+        quickDrawerOpen = true
+        controlsVisible = true
+        hideTick++
+        return true
     }
 
     fun openCountryPicker() {
@@ -269,6 +295,14 @@ fun PlayerScreen(vm: MainViewModel) {
         cancelNumberEntry()
         wakeControls()
         vm.playRelative(offset)
+    }
+
+    fun handleZapKey(offset: Int, repeated: Boolean): Boolean {
+        val now = System.currentTimeMillis()
+        if (repeated && now - lastZapTimeMs < 180L) return true
+        lastZapTimeMs = now
+        zap(offset)
+        return true
     }
 
     fun selectCountry() {
@@ -602,11 +636,19 @@ fun PlayerScreen(vm: MainViewModel) {
         cancelNumberEntry()
         countryPickerOpen = false
         osdMenuOpen = false
+        quickDrawerOpen = false
         wakeControls()
     }
 
-    LaunchedEffect(controlsVisible, hideTick, numberEntry, countryPickerOpen, osdMenuOpen) {
-        if (controlsVisible && numberEntry.isEmpty() && !countryPickerOpen && !osdMenuOpen) {
+    LaunchedEffect(showMixRegionPicker) {
+        if (!showMixRegionPicker) {
+            delay(80)
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(controlsVisible, hideTick, numberEntry, countryPickerOpen, osdMenuOpen, quickDrawerOpen, showMixRegionPicker) {
+        if (controlsVisible && numberEntry.isEmpty() && !countryPickerOpen && !osdMenuOpen && !quickDrawerOpen && !showMixRegionPicker) {
             delay(6000)
             controlsVisible = false
         }
@@ -619,6 +661,7 @@ fun PlayerScreen(vm: MainViewModel) {
 
     BackHandler {
         when {
+            quickDrawerOpen -> quickDrawerOpen = false
             countryPickerOpen -> countryPickerOpen = false
             osdMenuOpen -> osdMenuOpen = false
             numberEntry.isNotEmpty() -> {
@@ -645,10 +688,51 @@ fun PlayerScreen(vm: MainViewModel) {
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (showMixRegionPicker) return@onPreviewKeyEvent false
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val native = event.nativeKeyEvent
                 val code = native.keyCode
                 val repeated = native.repeatCount > 0
+
+                if (quickDrawerOpen) {
+                    val lastIdx = (session.queue.size - 1).coerceAtLeast(0)
+                    val now = System.currentTimeMillis()
+                    when (code) {
+                        AndroidKeyEvent.KEYCODE_BACK,
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
+                        -> {
+                            quickDrawerOpen = false
+                            wakeControls()
+                        }
+
+                        AndroidKeyEvent.KEYCODE_DPAD_UP,
+                        AndroidKeyEvent.KEYCODE_CHANNEL_UP,
+                        -> {
+                            if (repeated && now - lastDrawerMoveMs < 65L) return@onPreviewKeyEvent true
+                            lastDrawerMoveMs = now
+                            quickDrawerIndex = (quickDrawerIndex - 1).coerceAtLeast(0)
+                        }
+
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+                        AndroidKeyEvent.KEYCODE_CHANNEL_DOWN,
+                        -> {
+                            if (repeated && now - lastDrawerMoveMs < 65L) return@onPreviewKeyEvent true
+                            lastDrawerMoveMs = now
+                            quickDrawerIndex = (quickDrawerIndex + 1).coerceAtMost(lastIdx)
+                        }
+
+                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                        AndroidKeyEvent.KEYCODE_ENTER,
+                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                        -> {
+                            val chosen = quickDrawerIndex
+                            quickDrawerOpen = false
+                            vm.playChannelAtQueueIndex(chosen)
+                            wakeControls()
+                        }
+                    }
+                    return@onPreviewKeyEvent true
+                }
 
                 // The country picker is driven by the remote itself, so it never
                 // steals focus from channel zapping.
@@ -767,7 +851,11 @@ fun PlayerScreen(vm: MainViewModel) {
                     code == AndroidKeyEvent.KEYCODE_GUIDE ||
                     code == AndroidKeyEvent.KEYCODE_PROG_RED
                 ) {
-                    openCountryPicker()
+                    if (session.isMixMode) {
+                        vm.openMixSection()
+                    } else {
+                        openCountryPicker()
+                    }
                     return@onPreviewKeyEvent true
                 }
 
@@ -840,19 +928,19 @@ fun PlayerScreen(vm: MainViewModel) {
                         AndroidKeyEvent.KEYCODE_DPAD_UP,
                         AndroidKeyEvent.KEYCODE_CHANNEL_UP,
                         AndroidKeyEvent.KEYCODE_MEDIA_NEXT,
-                        -> {
-                            if (repeated) return@onPreviewKeyEvent true
-                            zap(1)
-                            true
-                        }
+                        -> handleZapKey(1, repeated)
 
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                         AndroidKeyEvent.KEYCODE_CHANNEL_DOWN,
                         AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
-                        -> {
-                            if (repeated) return@onPreviewKeyEvent true
-                            zap(-1)
-                            true
+                        -> handleZapKey(-1, repeated)
+
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (session.isMixMode) handleZapKey(1, repeated) else false
+                        }
+
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                            openQuickDrawer()
                         }
 
                         else -> false
@@ -861,20 +949,12 @@ fun PlayerScreen(vm: MainViewModel) {
                     AndroidKeyEvent.KEYCODE_DPAD_UP,
                     AndroidKeyEvent.KEYCODE_CHANNEL_UP,
                     AndroidKeyEvent.KEYCODE_MEDIA_NEXT,
-                    -> {
-                        if (repeated) return@onPreviewKeyEvent true
-                        zap(1)
-                        true
-                    }
+                    -> handleZapKey(1, repeated)
 
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                     AndroidKeyEvent.KEYCODE_CHANNEL_DOWN,
                     AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
-                    -> {
-                        if (repeated) return@onPreviewKeyEvent true
-                        zap(-1)
-                        true
-                    }
+                    -> handleZapKey(-1, repeated)
 
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER,
                     AndroidKeyEvent.KEYCODE_ENTER,
@@ -890,13 +970,19 @@ fun PlayerScreen(vm: MainViewModel) {
                     }
 
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                        wakeControls()
+                        if (!openQuickDrawer()) {
+                            wakeControls()
+                        }
                         true
                     }
 
                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                        wakeControls()
-                        true
+                        if (session.isMixMode) {
+                            handleZapKey(1, repeated)
+                        } else {
+                            wakeControls()
+                            true
+                        }
                     }
 
                     else -> false
@@ -943,7 +1029,7 @@ fun PlayerScreen(vm: MainViewModel) {
         }
 
         AnimatedVisibility(
-            visible = controlsVisible && errorMessage == null && !osdMenuOpen,
+            visible = controlsVisible && errorMessage == null && !osdMenuOpen && !quickDrawerOpen,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -952,6 +1038,28 @@ fun PlayerScreen(vm: MainViewModel) {
                 channel = channel,
                 syncState = syncState,
                 inSync = inSyncByDelta,
+                isMixMode = session.isMixMode,
+                mixPosition = session.index + 1,
+                mixTotal = session.queue.size,
+            )
+        }
+
+        AnimatedVisibility(
+            visible = quickDrawerOpen && session.queue.isNotEmpty(),
+            enter = fadeIn(tween(220)) + slideInHorizontally { -it },
+            exit = fadeOut(tween(180)) + slideOutHorizontally { -it },
+            modifier = Modifier.align(Alignment.CenterStart),
+        ) {
+            QuickChannelDrawer(
+                queue = session.queue,
+                selectedIndex = quickDrawerIndex,
+                playingChannelId = channel.id,
+                isMixMode = session.isMixMode,
+                onSelectChannel = { chosenIdx ->
+                    quickDrawerOpen = false
+                    vm.playChannelAtQueueIndex(chosenIdx)
+                    wakeControls()
+                },
             )
         }
 
@@ -1005,6 +1113,225 @@ fun PlayerScreen(vm: MainViewModel) {
                 selectedIndex = countryIndex,
             )
         }
+
+        if (showMixRegionPicker) {
+            val regionCounts = remember(config?.facets?.countries) {
+                computeMixRegionCounts(config?.facets?.countries.orEmpty())
+            }
+            val totalAllChannels = remember(config?.stats?.channels, session.queue.size) {
+                config?.stats?.channels ?: session.queue.size
+            }
+            MixRegionPickerDialog(
+                selectedRegions = selectedMixRegions,
+                regionCounts = regionCounts,
+                totalChannels = totalAllChannels,
+                onToggleRegion = { vm.toggleMixRegion(it) },
+                onStartMix = { vm.startMixFromSelectedRegions() },
+                onDismiss = { vm.dismissMixRegionPicker() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickChannelDrawer(
+    queue: List<Channel>,
+    selectedIndex: Int,
+    playingChannelId: String,
+    isMixMode: Boolean,
+    onSelectChannel: (Int) -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        if (queue.isNotEmpty() && selectedIndex in queue.indices) {
+            val targetScroll = (selectedIndex - 2).coerceAtLeast(0)
+            runCatching { listState.scrollToItem(targetScroll) }
+        }
+    }
+
+    LaunchedEffect(selectedIndex, queue.size) {
+        if (queue.isEmpty() || selectedIndex !in queue.indices) return@LaunchedEffect
+        val layoutInfo = listState.layoutInfo
+        val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        if (itemInfo == null) {
+            val targetScroll = (selectedIndex - 2).coerceAtLeast(0)
+            runCatching { listState.scrollToItem(targetScroll) }
+            return@LaunchedEffect
+        }
+        val marginPx = (itemInfo.size * 0.45f).toInt()
+        val minVisibleTop = layoutInfo.viewportStartOffset + marginPx
+        val maxVisibleBottom = layoutInfo.viewportEndOffset - marginPx
+        val delta = when {
+            itemInfo.offset < minVisibleTop -> (itemInfo.offset - minVisibleTop).toFloat()
+            itemInfo.offset + itemInfo.size > maxVisibleBottom ->
+                (itemInfo.offset + itemInfo.size - maxVisibleBottom).toFloat()
+            else -> 0f
+        }
+        if (delta != 0f) {
+            runCatching { listState.animateScrollBy(delta, tween(durationMillis = 120)) }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .width(380.dp)
+            .fillMaxHeight()
+            .background(Color(0xF207101C))
+            .border(1.dp, Color(0xFF1E3A5F), RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp))
+            .clip(RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp))
+            .padding(top = 20.dp, bottom = 18.dp, start = 16.dp, end = 14.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = if (isMixMode) {
+                    strings.t("MIX · VISITATI", "MIX · HISTORY", "MIX · HISTORIAL")
+                } else {
+                    strings.t("CANALI RAPIDI", "QUICK CHANNELS", "CANALES RÁPIDOS")
+                },
+                color = CasaGreen,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.4.sp,
+            )
+            Text(
+                text = "${(selectedIndex + 1).coerceAtMost(queue.size)} / ${queue.size}",
+                color = Color(0xCCEBEBF5),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = strings.t(
+                "▲ ▼ sfoglia · OK sintonizza · ▶ chiudi",
+                "▲ ▼ browse · OK tune · ▶ close",
+                "▲ ▼ explorar · OK sintonizar · ▶ cerrar",
+            ),
+            color = Color(0x99EBEBF5),
+            fontSize = 10.sp,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            itemsIndexed(queue, key = { idx, item -> "qd_${idx}_${item.id}" }) { index, item ->
+                val isCursor = index == selectedIndex
+                val isPlaying = item.id == playingChannelId
+                val cardShape = RoundedCornerShape(14.dp)
+                val cardBg = if (isCursor) Color(0xFF132944) else Color(0xFF0A1422)
+                val cardBorder = if (isCursor) Color(0xFF00D4FF) else Color(0xFF1A2E47)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .clip(cardShape)
+                        .background(cardBg)
+                        .border(if (isCursor) 2.dp else 1.dp, cardBorder, cardShape)
+                        .clickable { onSelectChannel(index) }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(96.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(Color(0xFF060A10)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ChannelLogo(
+                            channel = item,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
+                        )
+                        ChannelLivePreviewBox(
+                            streamUrl = item.streamUrl,
+                            active = isCursor && !isPlaying,
+                            dwellMs = 850L,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (item.number != null) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(4.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xCC04080D))
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                            ) {
+                                Text(
+                                    text = item.number.toString(),
+                                    color = CasaGreen,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = item.name,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = if (isCursor || isPlaying) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (item.favorite) {
+                                Spacer(Modifier.width(5.dp))
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = null,
+                                    tint = CasaGreen,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        val subtitle = when {
+                            isPlaying -> strings.t("In onda ora", "Now playing", "En emisión")
+                            item.now != null -> item.now.title
+                            else -> listOfNotNull(
+                                item.flag.takeIf { it.isNotBlank() },
+                                item.categoryNames.firstOrNull() ?: item.countryName.takeIf { it.isNotBlank() },
+                                item.quality.takeIf { it.isNotBlank() },
+                            ).joinToString(" · ")
+                        }
+                        Text(
+                            text = subtitle,
+                            color = if (isPlaying) CasaGreen else Color(0x99EBEBF5),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1016,34 +1343,58 @@ private fun PlayerBottomStrip(
     channel: Channel,
     syncState: SyncStateResponse? = null,
     inSync: Boolean = false,
+    isMixMode: Boolean = false,
+    mixPosition: Int = 1,
+    mixTotal: Int = 1,
 ) {
     val strings = LocalAppStrings.current
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
 
-    val containerBg = if (isLight) Color(0xF5FFFFFF) else Color(0xF0141416)
-    val containerBorder = if (isLight) CasaBorder else Color(0x33FFFFFF)
-    val textColor = if (isLight) CasaText else Color.White
-    val textMuted = if (isLight) CasaMuted else Color(0xCCEBEBF5)
-    val textDim = if (isLight) CasaDim else Color(0x99EBEBF5)
+    val containerBg = if (isLight) Color(0xF5FFFFFF) else Color(0xF208111E)
+    val containerBorder = if (isLight) CasaBorder else Color(0xFF1E3A5F)
+    val textColor = if (isLight) CasaText else Color(0xFFF8FAFC)
+    val textDim = if (isLight) CasaDim else Color(0xFF94A3B8)
 
     Box(
         modifier = Modifier
+            .fillMaxWidth()
             .padding(bottom = 32.dp, start = 40.dp, end = 40.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .height(54.dp)
+            .clip(RoundedCornerShape(18.dp))
             .background(containerBg)
-            .border(1.dp, containerBorder, RoundedCornerShape(20.dp))
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .border(1.dp, containerBorder, RoundedCornerShape(18.dp))
+            .padding(horizontal = 20.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            // Channel Info
+            // Channel Info (fixed flex slot so long channel names truncate cleanly)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             ) {
+                if (isMixMode) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0284C7))
+                            .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "MIX · $mixPosition/$mixTotal",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
                 if (channel.number != null) {
                     Box(
                         modifier = Modifier
@@ -1053,10 +1404,12 @@ private fun PlayerBottomStrip(
                     ) {
                         Text(
                             text = channel.number.toString(),
-                            color = Color(0xFF04150C),
+                            color = if (isLight) Color.White else Color(0xFF04101A),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            softWrap = false,
                         )
                     }
                     Spacer(Modifier.width(10.dp))
@@ -1067,7 +1420,9 @@ private fun PlayerBottomStrip(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (channel.favorite) {
                     Spacer(Modifier.width(6.dp))
@@ -1084,6 +1439,9 @@ private fun PlayerBottomStrip(
                         text = listOfNotNull(channel.flag, channel.quality).joinToString(" · "),
                         color = textDim,
                         fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
                     )
                 }
             }
@@ -1093,8 +1451,9 @@ private fun PlayerBottomStrip(
             // Key Hints
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                Hint("◀", strings.t("Lista", "List", "Lista"), isLight)
                 Hint("▲ ▼", strings.t("Canali", "Channels", "Canales"), isLight)
                 Hint("0-9", strings.t("Numero", "Number", "Número"), isLight)
                 Hint("MENU", strings.t("Opzioni", "Options", "Opciones"), isLight)
@@ -1119,6 +1478,8 @@ private fun PlayerBottomStrip(
                     color = textColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }
@@ -1132,8 +1493,8 @@ private fun Hint(key: String, action: String, isLight: Boolean) {
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
-                .background(if (isLight) Color(0x14000000) else Color(0x26FFFFFF))
-                .border(1.dp, if (isLight) Color(0x29000000) else Color(0x33FFFFFF), RoundedCornerShape(6.dp))
+                .background(if (isLight) Color(0x14000000) else Color(0x1E38BDF8))
+                .border(1.dp, if (isLight) Color(0x29000000) else Color(0x4038BDF8), RoundedCornerShape(6.dp))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
         ) {
             Text(
@@ -1142,13 +1503,17 @@ private fun Hint(key: String, action: String, isLight: Boolean) {
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                softWrap = false,
             )
         }
         Spacer(Modifier.width(6.dp))
         Text(
             text = action,
-            color = if (isLight) CasaMuted else Color(0xCCEBEBF5),
+            color = if (isLight) CasaMuted else Color(0xFFCBD5E1),
             fontSize = 11.sp,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -1164,14 +1529,14 @@ private fun NumberEntryOverlay(entry: String) {
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(24.dp))
-                .background(if (isLight) Color(0xF5FFFFFF) else Color(0xEB2C2C2E))
-                .border(1.dp, if (isLight) CasaBorder else Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+                .background(if (isLight) Color(0xF5FFFFFF) else Color(0xF20A1424))
+                .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), RoundedCornerShape(24.dp))
                 .padding(horizontal = 48.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = strings.t("VAI AL CANALE", "GO TO CHANNEL", "IR AL CANAL"),
-                color = CasaBlue,
+                color = if (isLight) CasaBlue else CasaGreen,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp,
@@ -1192,7 +1557,7 @@ private fun NumberEntryOverlay(entry: String) {
                     "Wait or press OK to confirm",
                     "Espera o pulsa OK para confirmar",
                 ),
-                color = if (isLight) CasaMuted else Color(0xCCEBEBF5),
+                color = if (isLight) CasaMuted else Color(0xFFCBD5E1),
                 fontSize = 11.sp,
             )
         }
@@ -1216,20 +1581,34 @@ private fun PlaybackErrorScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (isLight) it.casatv.tv.ui.theme.CasaBackground else Color.Black),
+            .then(
+                if (isLight) {
+                    Modifier.background(it.casatv.tv.ui.theme.CasaBackground)
+                } else {
+                    Modifier.background(
+                        Brush.radialGradient(
+                            listOf(Color(0xFF0C1D33), Color(0xFF050A12)),
+                        ),
+                    )
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 48.dp),
+            modifier = Modifier
+                .clip(RoundedCornerShape(22.dp))
+                .background(if (isLight) Color(0xF5FFFFFF) else Color(0xCC0A1424))
+                .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), RoundedCornerShape(22.dp))
+                .padding(horizontal = 48.dp, vertical = 34.dp),
         ) {
             Icon(
                 imageVector = Icons.Filled.Warning,
                 contentDescription = null,
-                tint = if (isLight) it.casatv.tv.ui.theme.CasaRed else CasaAmber.copy(alpha = 0.85f),
-                modifier = Modifier.size(32.dp),
+                tint = if (isLight) it.casatv.tv.ui.theme.CasaRed else CasaAmber.copy(alpha = 0.9f),
+                modifier = Modifier.size(34.dp),
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
                 text = strings.t("Canale non disponibile", "Channel unavailable", "Canal no disponible"),
                 color = if (isLight) CasaText else Color.White,
@@ -1246,19 +1625,19 @@ private fun PlaybackErrorScreen(
             Spacer(Modifier.height(10.dp))
             Text(
                 text = message,
-                color = if (isLight) CasaMuted else Color(0xCCEBEBF5),
+                color = if (isLight) CasaMuted else Color(0xFFCBD5E1),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(0.7f),
             )
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(24.dp))
             Text(
                 text = strings.t(
                     "▲ ▼  cambia canale      OK  riprova      BACK  esci",
                     "▲ ▼  change channel      OK  retry      BACK  exit",
                     "▲ ▼  cambiar canal      OK  reintentar      BACK  salir",
                 ),
-                color = if (isLight) CasaDim else Color(0x99EBEBF5),
+                color = if (isLight) CasaDim else Color(0xFF94A3B8),
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
             )
@@ -1269,7 +1648,7 @@ private fun PlaybackErrorScreen(
                     "INFO  change TV country · now: ${country?.name ?: countryCode}",
                     "INFO  cambiar país TV · ahora: ${country?.name ?: countryCode}",
                 ),
-                color = if (isLight) it.casatv.tv.ui.theme.CasaBlue else CasaGreen.copy(alpha = 0.75f),
+                color = if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color(0xFF7DD3FC),
                 fontSize = 10.sp,
             )
         }
@@ -1311,8 +1690,8 @@ private fun CountrySelectorOverlay(
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(18.dp))
-                .background(if (isLight) Color(0xF5FFFFFF) else Color(0xF20A1218))
-                .border(1.dp, if (isLight) CasaBorder else CasaGreen.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+                .background(if (isLight) Color(0xF5FFFFFF) else Color(0xF208111E))
+                .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), RoundedCornerShape(18.dp))
                 .padding(horizontal = 30.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -61,14 +61,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.casatv.tv.data.Facet
 import it.casatv.tv.data.GlobalSearchResult
 import it.casatv.tv.ui.LocalAppStrings
 import it.casatv.tv.ui.MainViewModel
+import it.casatv.tv.ui.MixRegionPickerDialog
 import it.casatv.tv.ui.TvSubTab
 import it.casatv.tv.ui.buildCountryCatalog
+import it.casatv.tv.ui.computeMixRegionCounts
 import it.casatv.tv.ui.components.EmptyBox
 import it.casatv.tv.ui.components.ErrorBox
 import it.casatv.tv.ui.components.GridChannelCard
@@ -109,9 +110,8 @@ fun TvModeScreen(
     val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
     val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
     val lastPlayedId by vm.lastPlayedChannelId.collectAsStateWithLifecycle()
-    val mixChannels by vm.mixChannels.collectAsStateWithLifecycle()
-    val mixLoading by vm.mixLoading.collectAsStateWithLifecycle()
-    val showMixIntro by vm.showMixIntro.collectAsStateWithLifecycle()
+    val showMixRegionPicker by vm.showMixRegionPicker.collectAsStateWithLifecycle()
+    val selectedMixRegions by vm.selectedMixRegions.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val scale = rememberTvUiScale()
     val targetIndex = remember(queue, lastPlayedId) {
@@ -154,7 +154,6 @@ fun TvModeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .focusProperties { canFocus = !pickerOpen }
             .padding(horizontal = scale.paddingHorizontal),
     ) {
         Spacer(Modifier.height(8.dp))
@@ -163,12 +162,19 @@ fun TvModeScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // 1. Barra canali, guida tv e preferiti
+            // 1. Barra Canali e Preferiti + pulsante separato Mix a destra di Preferiti
             TvSubTabSelector(
                 selected = subTab,
                 onSelect = {
-                    subTab = it
                     if (searchQuery.isNotBlank()) vm.clearSearch()
+                    subTab = it
+                },
+            )
+
+            TvMixButton(
+                onClick = {
+                    if (searchQuery.isNotBlank()) vm.clearSearch()
+                    vm.openMixSection()
                 },
             )
 
@@ -200,10 +206,11 @@ fun TvModeScreen(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
+                    .height(40.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(CasaSurface.copy(alpha = 0.8f))
+                    .background(CasaSurface.copy(alpha = 0.85f))
                     .border(1.dp, CasaBorder, RoundedCornerShape(50))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 13.dp),
             ) {
                 Box(
                     Modifier
@@ -227,7 +234,6 @@ fun TvModeScreen(
                     } else {
                         when (subTab) {
                             TvSubTab.Channels -> channelCountLabel(queue.size)
-                            TvSubTab.Mix -> channelCountLabel(mixChannels.size)
                             TvSubTab.Favorites -> strings.t("Preferiti", "Favorites", "Favoritos")
                         }
                     },
@@ -433,82 +439,6 @@ fun TvModeScreen(
                 }
 
 
-                TvSubTab.Mix -> {
-                    LaunchedEffect(Unit) {
-                        vm.openMixSection()
-                    }
-                    val mixTargetIndex = remember(mixChannels, lastPlayedId) {
-                        mixChannels.indexOfFirst { it.id == lastPlayedId }.takeIf { it >= 0 } ?: 0
-                    }
-                    val mixGridState = rememberLazyGridState(initialFirstVisibleItemIndex = mixTargetIndex)
-                    val mixFirstFocus = remember { FocusRequester() }
-                    LaunchedEffect(mixChannels.isNotEmpty(), showMixIntro, mixTargetIndex) {
-                        if (!showMixIntro && mixChannels.isNotEmpty()) {
-                            runCatching { mixGridState.scrollToItem(mixTargetIndex) }
-                            delay(140)
-                            runCatching { mixFirstFocus.requestFocus() }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TvButton(
-                            text = strings.t("Canale casuale", "Random channel", "Canal aleatorio"),
-                            onClick = { vm.playRandomMixChannel() },
-                            primary = true,
-                        )
-                        TvButton(
-                            text = strings.t("Mescola di nuovo", "Shuffle again", "Mezclar de nuevo"),
-                            onClick = { vm.refreshMixChannels() },
-                            primary = false,
-                        )
-                    }
-
-                    when {
-                        mixLoading && mixChannels.isEmpty() -> LoadingBox(
-                            text = strings.t("Caricamento Mix…", "Loading Mix…", "Cargando Mix…"),
-                            modifier = Modifier.weight(1f),
-                        )
-                        mixChannels.isEmpty() -> EmptyBox(
-                            title = strings.t("Nessun canale disponibile", "No channels available", "Sin canales disponibles"),
-                            message = strings.t(
-                                "Carica una playlist per scoprire canali casuali da tutti i paesi.",
-                                "Load a playlist to discover random channels across all countries.",
-                                "Carga una lista para descubrir canales aleatorios de todos los países.",
-                            ),
-                            modifier = Modifier.weight(1f),
-                            actionLabel = strings.t("Ricarica", "Reload", "Recargar"),
-                            onAction = { vm.refreshMixChannels() },
-                        )
-                        else -> LazyVerticalGrid(
-                            state = mixGridState,
-                            columns = GridCells.Adaptive(scale.gridMinCardWidth),
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 32.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            itemsIndexed(mixChannels, key = { _, channel -> "mix_${channel.id}" }) { index, channel ->
-                                GridChannelCard(
-                                    channel = channel,
-                                    onClick = { vm.startPlayback(channel, mixChannels) },
-                                    onFavorite = { vm.toggleFavorite(channel) },
-                                    modifier = if (index == mixTargetIndex) {
-                                        Modifier.focusRequester(mixFirstFocus)
-                                    } else {
-                                        Modifier
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-
                 TvSubTab.Favorites -> {
                     Box(
                         modifier = Modifier
@@ -543,45 +473,21 @@ fun TvModeScreen(
         )
     }
 
-    if (showMixIntro) {
-        val introFocus = remember { FocusRequester() }
-        LaunchedEffect(Unit) {
-            delay(100)
-            runCatching { introFocus.requestFocus() }
+    if (showMixRegionPicker) {
+        val regionCounts = remember(config?.facets?.countries) {
+            computeMixRegionCounts(config?.facets?.countries.orEmpty())
         }
-        Dialog(onDismissRequest = { vm.dismissMixIntro() }) {
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(CasaSurfaceHigh)
-                    .border(1.dp, CasaBorder, RoundedCornerShape(18.dp))
-                    .padding(24.dp),
-            ) {
-                Text(
-                    text = "Mix",
-                    color = CasaText,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = strings.t(
-                        "In questa sezione i canali e i paesi di tutte le playlist salvate vengono mostrati in ordine totalmente casuale e cambiano ogni volta che la apri.",
-                        "In this section, channels and countries from all saved playlists are shown in completely random order and change every time you open it.",
-                        "En esta sección los canales y países de todas las listas guardadas se muestran de forma totalmente aleatoria y cambian cada vez que la abres.",
-                    ),
-                    color = CasaMuted,
-                    fontSize = 13.sp,
-                )
-                Spacer(Modifier.height(18.dp))
-                TvButton(
-                    text = strings.t("Ho capito", "Got it", "Entendido"),
-                    onClick = { vm.dismissMixIntro() },
-                    primary = true,
-                    modifier = Modifier.focusRequester(introFocus),
-                )
-            }
+        val totalAllChannels = remember(config?.stats?.channels, queue.size) {
+            config?.stats?.channels ?: queue.size
         }
+        MixRegionPickerDialog(
+            selectedRegions = selectedMixRegions,
+            regionCounts = regionCounts,
+            totalChannels = totalAllChannels,
+            onToggleRegion = { vm.toggleMixRegion(it) },
+            onStartMix = { vm.startMixFromSelectedRegions() },
+            onDismiss = { vm.dismissMixRegionPicker() },
+        )
     }
 }
 
@@ -594,6 +500,7 @@ fun TvSubTabSelector(
     val strings = LocalAppStrings.current
     Row(
         modifier = modifier
+            .height(40.dp)
             .clip(RoundedCornerShape(50))
             .background(CasaSurface.copy(alpha = 0.85f))
             .border(1.dp, CasaBorder, RoundedCornerShape(50))
@@ -612,20 +519,26 @@ fun TvSubTabSelector(
                 else -> Color.Transparent
             }
             val textCol = when {
-                focused -> Color.White
+                focused -> if (isLight) Color.White else Color.Black
                 isSelected -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
                 else -> CasaMuted
             }
+            val borderCol = when {
+                focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
+                else -> Color.Transparent
+            }
             Box(
                 modifier = Modifier
+                    .fillMaxHeight()
                     .clip(RoundedCornerShape(50))
                     .background(bg)
+                    .border(if (focused) 1.5.dp else 0.dp, borderCol, RoundedCornerShape(50))
                     .clickable(
                         interactionSource = interaction,
                         indication = null,
                         onClick = { onSelect(tab) },
                     )
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -636,6 +549,62 @@ fun TvSubTabSelector(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun TvMixButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val shape = RoundedCornerShape(50)
+    val bg = when {
+        focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
+        else -> if (isLight) Color(0x140070F3) else Color(0x1800D4FF)
+    }
+    val borderCol = when {
+        focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
+        else -> if (isLight) Color(0x440070F3) else Color(0x5500D4FF)
+    }
+    val textCol = when {
+        focused -> if (isLight) Color.White else Color.Black
+        else -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color(0xFF7DD3FC)
+    }
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .clip(shape)
+            .background(bg)
+            .border(if (focused) 2.dp else 1.dp, borderCol, shape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 15.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        focused -> if (isLight) Color.White else Color(0xFF0070F3)
+                        else -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color(0xFF00D4FF)
+                    },
+                ),
+        )
+        Text(
+            text = "Mix",
+            color = textCol,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -651,6 +620,7 @@ private fun TvModeCountryButton(
     val shape = RoundedCornerShape(9999.dp)
     Row(
         modifier = Modifier
+            .height(40.dp)
             .clip(shape)
             .background(if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else if (isLight) CasaSurface else Color(0x1FFFFFFF))
             .border(
@@ -663,7 +633,7 @@ private fun TvModeCountryButton(
                 indication = null,
                 onClick = onClick,
             )
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = country?.flag ?: "🌍", fontSize = 16.sp)

@@ -13,8 +13,8 @@ android {
         applicationId = "it.casatv.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2611012
-        versionName = "26.11.012"
+        versionCode = 2611013
+        versionName = "26.11.013"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
     }
 
@@ -77,11 +77,19 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
+
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-svg:2.7.0")
 }

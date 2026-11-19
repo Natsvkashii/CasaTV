@@ -16,14 +16,11 @@ import okhttp3.Request
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import it.casatv.tv.data.ApiException
-import it.casatv.tv.data.BrowseFilter
 import it.casatv.tv.data.CasaApi
 import it.casatv.tv.data.OfflineCache
 import kotlinx.coroutines.Dispatchers
 import it.casatv.tv.data.Channel
-import it.casatv.tv.data.ChannelPage
 import it.casatv.tv.data.GlobalSearchResult
-import it.casatv.tv.data.HomeRow
 import it.casatv.tv.data.Presence
 import it.casatv.tv.data.Profile
 import it.casatv.tv.data.ProfileLanguage
@@ -37,7 +34,10 @@ import it.casatv.tv.discovery.MdnsDiscovery
 import it.casatv.tv.service.CasaTvService
 import java.io.IOException
 import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -48,17 +48,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class BrowseState(
-    val filter: BrowseFilter = BrowseFilter(),
-    val items: List<Channel> = emptyList(),
-    val total: Int = 0,
-    val loading: Boolean = false,
-    val loadingMore: Boolean = false,
-    val error: String? = null,
-    val hasMore: Boolean = false,
-    val initialized: Boolean = false,
-)
-
 data class PlaybackSession(
     val channel: Channel,
     val queue: List<Channel> = listOf(channel),
@@ -66,6 +55,7 @@ data class PlaybackSession(
     val sources: List<StreamSource> = emptyList(),
     val sourceIndex: Int = -1,
     val playToken: Int = 0,
+    val isMixMode: Boolean = false,
 ) {
     val activeStreamUrl: String
         get() = sources.getOrNull(sourceIndex)?.url?.takeIf { it.isNotBlank() } ?: channel.streamUrl
@@ -185,15 +175,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tvCountry = MutableStateFlow<String?>(null)
     val tvCountry: StateFlow<String?> = _tvCountry.asStateFlow()
 
-    private val _homeRows = MutableStateFlow<List<HomeRow>>(emptyList())
-    val homeRows: StateFlow<List<HomeRow>> = _homeRows.asStateFlow()
-
-    private val _homeLoading = MutableStateFlow(false)
-    val homeLoading: StateFlow<Boolean> = _homeLoading.asStateFlow()
-
-    private val _homeError = MutableStateFlow<String?>(null)
-    val homeError: StateFlow<String?> = _homeError.asStateFlow()
-
     private val _zapQueue = MutableStateFlow(offlineCache.cachedData.channels)
     val zapQueue: StateFlow<List<Channel>> = _zapQueue.asStateFlow()
 
@@ -216,8 +197,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _mixLoading = MutableStateFlow(false)
     val mixLoading: StateFlow<Boolean> = _mixLoading.asStateFlow()
 
-    private val _showMixIntro = MutableStateFlow(false)
-    val showMixIntro: StateFlow<Boolean> = _showMixIntro.asStateFlow()
+    private val _showMixRegionPicker = MutableStateFlow(false)
+    val showMixRegionPicker: StateFlow<Boolean> = _showMixRegionPicker.asStateFlow()
+
+    private val _selectedMixRegions = MutableStateFlow(setOf(MixRegion.ALL_WORLD))
+    val selectedMixRegions: StateFlow<Set<MixRegion>> = _selectedMixRegions.asStateFlow()
+
+    private val mixHistory = mutableListOf<Channel>()
+    private var mixIndex: Int = -1
+    private val deadMixChannelIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+    @Volatile
+    private var verifiedNextMixChannel: Channel? = null
+    private var mixPreloadJob: Job? = null
+    private var mixPoolJob: Job? = null
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -324,9 +316,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         segmentDurationMs = segmentDurationMs,
     )
 
-    private val _browse = MutableStateFlow(BrowseState())
-    val browse: StateFlow<BrowseState> = _browse.asStateFlow()
-
     private val _favorites = MutableStateFlow(offlineCache.cachedData.favorites)
     val favorites: StateFlow<List<Channel>> = _favorites.asStateFlow()
 
@@ -336,14 +325,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _favoritesError = MutableStateFlow<String?>(null)
     val favoritesError: StateFlow<String?> = _favoritesError.asStateFlow()
 
-
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
+    private val localM3uHttpClient by lazy { OkHttpClient() }
     private val favoriteBusy = mutableSetOf<String>()
     private var connectJob: Job? = null
-    private var homeJob: Job? = null
-    private var browseJob: Job? = null
     private var favoritesJob: Job? = null
     private var systemJob: Job? = null
     private var zapJob: Job? = null
@@ -364,6 +351,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             CasaTvService.start(application)
             connect(saved, automatic = true)
         }
+        checkForUpdates(silent = true)
 
         // Autonomous server connection: automatically connect to discovered server without user action
         viewModelScope.launch {
@@ -445,10 +433,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _activeProfile.value = serverConfig.activeProfile ?: selected
                     val country = preferredTvCountry(selected)
                     _tvCountry.value = country
-                    _browse.value = BrowseState(
-                        filter = BrowseFilter(country = country.takeIf { it.isNotBlank() }),
-                    )
-                    loadHome(showLoading = true)
                     loadZapQueue(country)
                     loadFavorites()
                 }
@@ -496,15 +480,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (cached.channels.isNotEmpty()) {
                         _zapQueue.value = cached.channels
                         _tvInitialized.value = true
-                        _browse.value = BrowseState(
-                            filter = BrowseFilter(country = country.takeIf { it.isNotBlank() }),
-                            items = cached.channels,
-                            total = cached.channels.size,
-                            initialized = true,
-                        )
-                    }
-                    if (cached.homeRows.isNotEmpty()) {
-                        _homeRows.value = cached.homeRows
                     }
                     if (cached.favorites.isNotEmpty()) {
                         _favorites.value = cached.favorites
@@ -571,7 +546,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _config.value = newConfig
                         offlineCache.update(config = newConfig, primaryServerUrl = reconnectedUrl)
                     } catch (_: Exception) {}
-                    loadHome(showLoading = false)
                     loadZapQueue()
                     loadFavorites(showLoading = false)
                     showMessage(
@@ -590,8 +564,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() {
         connectJob?.cancel()
-        homeJob?.cancel()
-        browseJob?.cancel()
         favoritesJob?.cancel()
         searchJob?.cancel()
         zapJob?.cancel()
@@ -614,18 +586,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _profileGate.value = false
         _profileBusy.value = false
         _tvCountry.value = null
-        _homeRows.value = emptyList()
-        _homeError.value = null
         _zapQueue.value = emptyList()
         _tvLoading.value = false
         _tvError.value = null
         _tvFallback.value = false
         _tvInitialized.value = false
         _playback.value = null
-        _browse.value = BrowseState()
+        resetMixState(clearPool = true)
         _favorites.value = emptyList()
         _favoritesError.value = null
-        _homeLoading.value = false
     }
 
     fun selectProfile(profile: Profile) {
@@ -772,8 +741,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             api.useProfile(previousProfileId)
             throw error
         }
-        homeJob?.cancel()
-        browseJob?.cancel()
         favoritesJob?.cancel()
         searchJob?.cancel()
         zapJob?.cancel()
@@ -801,8 +768,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _tvCountry.value = country
         _profileGate.value = false
         _playback.value = null
-        _homeRows.value = emptyList()
-        _homeError.value = null
+        resetMixState(clearPool = true)
         _zapQueue.value = emptyList()
         _tvLoading.value = false
         _tvError.value = null
@@ -810,10 +776,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _tvInitialized.value = false
         _favorites.value = emptyList()
         _favoritesError.value = null
-        _browse.value = BrowseState(
-            filter = BrowseFilter(country = country.takeIf { it.isNotBlank() }),
-        )
-        loadHome(showLoading = true)
         loadZapQueue(country)
         loadFavorites()
     }
@@ -843,36 +805,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun countryDisplayName(code: String): String = countryName(code, language)
-
-    fun loadHome(showLoading: Boolean = true) {
-        if (_config.value == null || _activeProfile.value == null) return
-        homeJob?.cancel()
-        homeJob = viewModelScope.launch {
-            if (showLoading) _homeLoading.value = true
-            _homeError.value = null
-            try {
-                val response = api.home()
-                val rows = response.rows.filter { it.channels.isNotEmpty() }
-                _homeRows.value = rows
-                _isServerDisconnected.value = false
-                viewModelScope.launch(Dispatchers.IO) {
-                    offlineCache.update(homeRows = rows)
-                }
-            } catch (error: Exception) {
-                _isServerDisconnected.value = true
-                startReconnectionPoll()
-                val cached = offlineCache.cachedData.homeRows
-                if (cached.isNotEmpty()) {
-                    _homeRows.value = cached
-                    _homeError.value = null
-                } else {
-                    _homeError.value = humanError(error)
-                }
-            } finally {
-                _homeLoading.value = false
-            }
-        }
-    }
 
     fun loadZapQueue(country: String = _tvCountry.value ?: _activeProfile.value?.country.orEmpty()) {
         if (_config.value == null || _activeProfile.value == null) return
@@ -916,7 +848,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch(Dispatchers.IO) {
                     offlineCache.update(channels = items)
                 }
-                _playback.value?.let { session ->
+                ensureMixPoolLoaded()
+                _playback.value?.takeIf { !it.isMixMode }?.let { session ->
                     val index = items.indexOfFirst { it.id == session.channel.id }
                     if (index >= 0) {
                         _playback.value = session.copy(queue = items, index = index)
@@ -938,6 +871,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _zapQueue.value = fallbackItems
                     _tvInitialized.value = true
                     _tvError.value = null
+                    ensureMixPoolLoaded()
                 } else {
                     _tvError.value = humanError(error)
                     _tvInitialized.value = true
@@ -959,46 +893,356 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadZapQueue()
     }
 
-    fun openMixSection() {
-        if (!prefs.getBoolean(KEY_MIX_INTRO_SHOWN, false)) {
-            _showMixIntro.value = true
+    private var mixPoolFullLoaded: Boolean = false
+
+    private fun resetMixState(clearPool: Boolean = false, resetRegions: Boolean = true) {
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel = null
+        _showMixRegionPicker.value = false
+        synchronized(mixHistory) {
+            mixHistory.clear()
+            mixIndex = -1
         }
-        refreshMixChannels()
+        deadMixChannelIds.clear()
+        if (resetRegions) {
+            _selectedMixRegions.value = setOf(MixRegion.ALL_WORLD)
+        }
+        if (clearPool) {
+            mixPoolJob?.cancel()
+            mixPoolJob = null
+            mixPoolFullLoaded = false
+            _mixChannels.value = emptyList()
+            _mixLoading.value = false
+        }
     }
 
-    fun dismissMixIntro() {
-        prefs.edit().putBoolean(KEY_MIX_INTRO_SHOWN, true).apply()
-        _showMixIntro.value = false
+    @Volatile
+    private var cachedMixSourceRef: List<Channel>? = null
+    @Volatile
+    private var cachedMixHttpAll: List<Channel> = emptyList()
+    @Volatile
+    private var cachedMixBuckets: Map<MixRegion, List<Channel>> = emptyMap()
+
+    private fun isHttpUrl(raw: String): Boolean {
+        val clean = raw.trim().lowercase()
+        return clean.startsWith("http://") || clean.startsWith("https://")
     }
 
-    fun refreshMixChannels() {
-        viewModelScope.launch {
-            _mixLoading.value = true
-            try {
-                val remote = runCatching {
-                    api.channels(country = null, limit = 2500, sort = "number").items
-                }.getOrNull().orEmpty()
-                val cached = offlineCache.cachedData.channels
-                val combined = (remote + cached)
-                    .filter { it.streamUrl.isNotBlank() }
-                    .distinctBy { it.streamUrl }
-                    .shuffled()
+    private fun ensureMixBucketsIndexed() {
+        val rawSource = _mixChannels.value
+            .ifEmpty { _zapQueue.value }
+            .ifEmpty { offlineCache.cachedData.channels }
+        if (rawSource === cachedMixSourceRef) return
+        val httpAll = ArrayList<Channel>(rawSource.size)
+        val buckets = java.util.EnumMap<MixRegion, MutableList<Channel>>(MixRegion::class.java)
+        rawSource.forEach { ch ->
+            if (!isHttpUrl(ch.streamUrl)) return@forEach
+            httpAll.add(ch)
+            resolveMixRegion(ch.country)?.let { region ->
+                buckets.getOrPut(region) { ArrayList() }.add(ch)
+            }
+        }
+        cachedMixHttpAll = httpAll
+        cachedMixBuckets = buckets
+        cachedMixSourceRef = rawSource
+    }
+
+    private fun regionalPoolFor(regions: Set<MixRegion>): List<Channel> {
+        ensureMixBucketsIndexed()
+        if (regions.isEmpty() || MixRegion.ALL_WORLD in regions) return cachedMixHttpAll
+        if (regions.size == 1) return cachedMixBuckets[regions.first()].orEmpty()
+        val combined = ArrayList<Channel>()
+        regions.forEach { region ->
+            cachedMixBuckets[region]?.let { combined.addAll(it) }
+        }
+        return combined
+    }
+
+    private fun currentMixPool(): List<Channel> {
+        val regional = regionalPoolFor(_selectedMixRegions.value)
+        return regional.ifEmpty { cachedMixHttpAll }
+    }
+
+    private fun consumeVerifiedNextMixChannel(): Channel? {
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        val verified = verifiedNextMixChannel
+        verifiedNextMixChannel = null
+        val regions = _selectedMixRegions.value
+        return verified?.takeIf { matchesMixRegions(it.country, regions) }
+    }
+
+    private fun pickRandomUnvisitedMixChannel(pool: List<Channel>): Channel? {
+        if (pool.isEmpty()) return null
+        val currentId = _playback.value?.channel?.id
+        val visitedIds = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.id } }
+        val fresh = pool.filter { it.id !in visitedIds && it.id !in deadMixChannelIds && it.id != currentId }
+        if (fresh.isNotEmpty()) return fresh.random()
+        val unvisited = pool.filter { it.id !in visitedIds && it.id != currentId }
+        if (unvisited.isNotEmpty()) return unvisited.random()
+        val others = pool.filter { it.id != currentId }
+        return (if (others.isNotEmpty()) others else pool).randomOrNull()
+    }
+
+    private suspend fun fetchAllRemoteMixChannels(): List<Channel> {
+        val all = mutableListOf<Channel>()
+        var offset = 0
+        val pageSize = 4000
+        while (offset < 20000) {
+            val page = runCatching {
+                api.channels(country = null, limit = pageSize, offset = offset, sort = "number")
+            }.getOrNull() ?: break
+            if (page.items.isEmpty()) break
+            all.addAll(page.items)
+            offset += page.items.size
+            if (!page.hasMore || page.items.size < pageSize) break
+        }
+        return all
+    }
+
+    private fun ensureMixPoolLoaded() {
+        val localSeed = (_zapQueue.value + offlineCache.cachedData.channels)
+            .filter { isHttpUrl(it.streamUrl) }
+            .distinctBy { it.streamUrl }
+        if (_mixChannels.value.isEmpty() && localSeed.isNotEmpty()) {
+            _mixChannels.value = localSeed.shuffled()
+            if (verifiedNextMixChannel == null) {
+                preverifyNextMixChannel()
+            }
+        }
+        if (mixPoolFullLoaded || mixPoolJob?.isActive == true) return
+        mixPoolJob = viewModelScope.launch {
+            val remote = fetchAllRemoteMixChannels()
+            val combined = (remote + _zapQueue.value + offlineCache.cachedData.channels)
+                .filter { isHttpUrl(it.streamUrl) }
+                .distinctBy { it.streamUrl }
+                .shuffled()
+            if (combined.isNotEmpty()) {
                 _mixChannels.value = combined
-            } finally {
-                _mixLoading.value = false
+                mixPoolFullLoaded = remote.isNotEmpty()
+                if (verifiedNextMixChannel == null) {
+                    preverifyNextMixChannel()
+                }
             }
         }
     }
 
-    fun playRandomMixChannel() {
-        val pool = _mixChannels.value.ifEmpty { offlineCache.cachedData.channels }
-            .filter { it.streamUrl.isNotBlank() }
-            .shuffled()
-        if (pool.isNotEmpty()) {
-            _mixChannels.value = pool
-            startPlayback(pool.first(), pool)
+    private fun preverifyNextMixChannel() {
+        if (verifiedNextMixChannel != null) return
+        mixPreloadJob?.cancel()
+        mixPreloadJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive && verifiedNextMixChannel == null) {
+                val pool = currentMixPool()
+                if (pool.isEmpty()) break
+                val currentId = _playback.value?.channel?.id
+                val visitedIds = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.id } }
+                var candidates = pool.filter { ch ->
+                    ch.id !in visitedIds && ch.id !in deadMixChannelIds && ch.id != currentId
+                }
+                if (candidates.isEmpty()) {
+                    deadMixChannelIds.clear()
+                    candidates = pool.filter { it.id !in visitedIds && it.id != currentId }
+                }
+                if (candidates.isEmpty()) {
+                    candidates = pool.filter { it.id != currentId }.ifEmpty { pool }
+                }
+                val batch = pickRandomCandidates(candidates, 3)
+                if (batch.isEmpty()) break
+
+                val winner = coroutineScope {
+                    val found = CompletableDeferred<Channel>()
+                    val workers = batch.map { candidate ->
+                        launch {
+                            val available = api.isStreamAvailable(candidate.streamUrl)
+                            if (!isActive) return@launch
+                            if (available) {
+                                found.complete(candidate)
+                            } else {
+                                deadMixChannelIds.add(candidate.id)
+                            }
+                        }
+                    }
+                    val awaiter = launch {
+                        workers.forEach { it.join() }
+                        if (!found.isCompleted) {
+                            found.cancel()
+                        }
+                    }
+                    try {
+                        found.await()
+                    } catch (_: CancellationException) {
+                        if (!isActive) throw CancellationException()
+                        null
+                    } finally {
+                        workers.forEach { it.cancel() }
+                        awaiter.cancel()
+                    }
+                }
+
+                if (winner != null) {
+                    verifiedNextMixChannel = winner
+                    break
+                }
+            }
+        }
+    }
+
+    private fun setMixPlaybackChannel(
+        target: Channel,
+        queueSnapshot: List<Channel>,
+        index: Int,
+        sources: List<StreamSource> = emptyList(),
+        sourceIndex: Int = -1,
+        nextToken: Int? = null,
+    ) {
+        // Mix mode intentionally skips watch history (_lastPlayedChannelId and markPlayed).
+        markJob?.cancel()
+        markJob = null
+        val prev = _playback.value
+        _playback.value = PlaybackSession(
+            channel = target,
+            queue = queueSnapshot,
+            index = index,
+            sources = sources,
+            sourceIndex = sourceIndex,
+            playToken = nextToken ?: ((prev?.playToken ?: -1) + 1),
+            isMixMode = true,
+        )
+        Presence.playing(target.name)
+        api.setPlayback("playing", target.name)
+        prefetchSources(target.id)
+    }
+
+    private fun <T> pickRandomCandidates(list: List<T>, count: Int): List<T> {
+        if (list.size <= count) return list
+        val picked = ArrayList<T>(count)
+        val usedIndices = HashSet<Int>(count * 2)
+        while (picked.size < count) {
+            val idx = kotlin.random.Random.nextInt(list.size)
+            if (usedIndices.add(idx)) {
+                picked.add(list[idx])
+            }
+        }
+        return picked
+    }
+
+    fun openMixSection() {
+        if (_playback.value?.isMixMode != true) {
+            resetMixState(clearPool = false, resetRegions = true)
+        }
+        ensureMixPoolLoaded()
+        _showMixRegionPicker.value = true
+    }
+
+    fun dismissMixRegionPicker() {
+        _showMixRegionPicker.value = false
+        if (_playback.value?.isMixMode != true) {
+            resetMixState(clearPool = false, resetRegions = true)
+        }
+    }
+
+    fun toggleMixRegion(region: MixRegion) {
+        val current = _selectedMixRegions.value
+        val next: Set<MixRegion> = if (region == MixRegion.ALL_WORLD) {
+            setOf(MixRegion.ALL_WORLD)
         } else {
-            refreshMixChannels()
+            val withoutWorld = current - MixRegion.ALL_WORLD
+            val toggled = if (region in withoutWorld) withoutWorld - region else withoutWorld + region
+            toggled.ifEmpty { setOf(MixRegion.ALL_WORLD) }
+        }
+        _selectedMixRegions.value = next
+        verifiedNextMixChannel?.let { cand ->
+            if (!matchesMixRegions(cand.country, next)) {
+                mixPreloadJob?.cancel()
+                mixPreloadJob = null
+                verifiedNextMixChannel = null
+            }
+        }
+        if (currentMixPool().isNotEmpty() && verifiedNextMixChannel == null) {
+            preverifyNextMixChannel()
+        }
+    }
+
+    fun startMixFromSelectedRegions() {
+        _showMixRegionPicker.value = false
+        val regions = _selectedMixRegions.value
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel?.let { cand ->
+            if (!matchesMixRegions(cand.country, regions)) {
+                verifiedNextMixChannel = null
+            }
+        }
+        synchronized(mixHistory) {
+            mixHistory.clear()
+            mixIndex = -1
+        }
+        deadMixChannelIds.clear()
+        playRandomMixChannel()
+    }
+
+    fun refreshMixChannels() {
+        ensureMixPoolLoaded()
+    }
+
+    private fun startMixWithPoolChannel(nextChannel: Channel) {
+        val snapshot = synchronized(mixHistory) {
+            mixHistory.add(nextChannel)
+            mixIndex = mixHistory.lastIndex
+            mixHistory.toList() to mixIndex
+        }
+        setMixPlaybackChannel(
+            target = nextChannel,
+            queueSnapshot = snapshot.first,
+            index = snapshot.second,
+        )
+        preverifyNextMixChannel()
+    }
+
+    fun playRandomMixChannel() {
+        val regions = _selectedMixRegions.value
+        val regionalMatches = regionalPoolFor(regions)
+        val existingHttp = cachedMixHttpAll
+
+        if (regionalMatches.isNotEmpty() || (mixPoolFullLoaded && existingHttp.isNotEmpty())) {
+            ensureMixPoolLoaded()
+            val pool = regionalMatches.ifEmpty { existingHttp }
+            val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
+                ?: return
+            startMixWithPoolChannel(nextChannel)
+            return
+        }
+
+        viewModelScope.launch {
+            _mixLoading.value = true
+            try {
+                val remote = fetchAllRemoteMixChannels()
+                val combined = (remote + _zapQueue.value + offlineCache.cachedData.channels)
+                    .filter { isHttpUrl(it.streamUrl) }
+                    .distinctBy { it.streamUrl }
+                    .shuffled()
+                if (combined.isEmpty()) {
+                    showMessage(
+                        localize(
+                            language,
+                            "Nessun canale disponibile",
+                            "No channels available",
+                            "No hay canales disponibles",
+                        ),
+                    )
+                    return@launch
+                }
+                _mixChannels.value = combined
+                mixPoolFullLoaded = remote.isNotEmpty()
+                val pool = combined.filter { matchesMixRegions(it.country, regions) }.ifEmpty { combined }
+                val nextChannel = consumeVerifiedNextMixChannel()
+                    ?: pickRandomUnvisitedMixChannel(pool)
+                    ?: pool.first()
+                startMixWithPoolChannel(nextChannel)
+            } finally {
+                _mixLoading.value = false
+            }
         }
     }
 
@@ -1043,147 +1287,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun ensureBrowseLoaded() {
-        val state = _browse.value
-        if (state.initialized || state.loading) return
-        startBrowseLoad(reset = true, debounceMs = 0)
-    }
-
-    fun setBrowseCountry(country: String?) {
-        updateBrowseFilter(_browse.value.filter.copy(country = country))
-    }
-
-    fun setBrowseCategory(category: String?) {
-        updateBrowseFilter(_browse.value.filter.copy(category = category))
-    }
-
-    fun setBrowseLanguage(language: String?) {
-        updateBrowseFilter(_browse.value.filter.copy(language = language))
-    }
-
-    fun setBrowseQuery(query: String) {
-        updateBrowseFilter(_browse.value.filter.copy(query = query), debounceMs = 320)
-    }
-
-    private fun updateBrowseFilter(
-        filter: BrowseFilter,
-        debounceMs: Long = 0,
-    ) {
-        if (filter == _browse.value.filter) return
-        _browse.value = _browse.value.copy(
-            filter = filter,
-            error = null,
-            loading = true,
-            initialized = false,
-        )
-        startBrowseLoad(reset = true, debounceMs = debounceMs)
-    }
-
-    private fun startBrowseLoad(reset: Boolean, debounceMs: Long = 0) {
-        browseJob?.cancel()
-        browseJob = viewModelScope.launch {
-            if (debounceMs > 0) delay(debounceMs)
-            if (_config.value == null) return@launch
-            if (reset) {
-                _browse.value = _browse.value.copy(loading = true, error = null)
-            } else {
-                _browse.value = _browse.value.copy(loadingMore = true, error = null)
-            }
-            try {
-                val filter = _browse.value.filter
-                val offset = if (reset) 0 else _browse.value.items.size
-                var page = api.channels(
-                    country = filter.country,
-                    category = filter.category,
-                    language = filter.language,
-                    query = filter.query,
-                    limit = BROWSE_PAGE_SIZE,
-                    offset = offset,
-                    sort = "number",
-                )
-                // Custom playlists (the Android server) rarely match the
-                // profile country: fall back once to all countries instead of
-                // showing an empty screen on first open.
-                if (
-                    reset &&
-                    !_browse.value.initialized &&
-                    filter.country != null &&
-                    filter.language == null &&
-                    filter.query.isBlank() &&
-                    page.items.isEmpty()
-                ) {
-                    val fallback = api.channels(
-                        country = null,
-                        category = filter.category,
-                        limit = BROWSE_PAGE_SIZE,
-                        offset = 0,
-                        sort = "number",
-                    )
-                    if (fallback.items.isNotEmpty()) {
-                        page = fallback
-                        _browse.value = _browse.value.copy(filter = filter.copy(country = null))
-                    }
-                }
-                val current = _browse.value
-                val merged = if (reset) {
-                    page.items
-                } else {
-                    (current.items + page.items).distinctBy { it.id }
-                }
-                _browse.value = current.copy(
-                    items = merged,
-                    total = page.total,
-                    hasMore = page.hasMore,
-                    loading = false,
-                    loadingMore = false,
-                    initialized = true,
-                    error = null,
-                )
-            } catch (error: Exception) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                _isServerDisconnected.value = true
-                startReconnectionPoll()
-                val filter = _browse.value.filter
-                val cached = offlineCache.getChannels(
-                    country = filter.country,
-                    category = filter.category,
-                    query = filter.query,
-                )
-                if (cached.isNotEmpty()) {
-                    val current = _browse.value
-                    _browse.value = current.copy(
-                        items = cached,
-                        total = cached.size,
-                        hasMore = false,
-                        loading = false,
-                        loadingMore = false,
-                        initialized = true,
-                        error = null,
-                    )
-                } else {
-                    _browse.value = _browse.value.copy(
-                        loading = false,
-                        loadingMore = false,
-                        error = humanError(error),
-                        initialized = true,
-                    )
-                }
-            }
-        }
-    }
-
-    fun loadMoreBrowse() {
-        val state = _browse.value
-        if (state.loading || state.loadingMore || !state.hasMore || _config.value == null) return
-        startBrowseLoad(reset = false)
-    }
-
-    fun reloadBrowse() {
-        if (_config.value == null) return
-        _browse.value = _browse.value.copy(initialized = false)
-        startBrowseLoad(reset = true)
-    }
-
     fun startPlayback(channel: Channel, queue: List<Channel>) {
         _lastPlayedChannelId.value = channel.id
         if (channel.streamUrl.isBlank()) {
@@ -1226,6 +1329,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playRelative(offset: Int) {
         val session = _playback.value ?: return
+        if (session.isMixMode) {
+            playMixRelative(session, offset)
+            return
+        }
         val playable = session.queue.filter { it.streamUrl.isNotBlank() }
         if (playable.isEmpty()) return
         val currentIdx = playable.indexOfFirst { it.id == session.channel.id }.coerceAtLeast(0)
@@ -1244,6 +1351,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         api.setPlayback("playing", nextChannel.name)
         markPlayed(nextChannel.id)
         prefetchSources(nextChannel.id)
+    }
+
+    private fun playMixRelative(session: PlaybackSession, offset: Int) {
+        if (offset == 0) return
+        if (offset < 0) {
+            val pair = synchronized(mixHistory) {
+                if (mixIndex <= 0 || mixHistory.isEmpty()) return
+                mixIndex = (mixIndex + offset).coerceAtLeast(0)
+                mixHistory[mixIndex] to mixHistory.toList()
+            }
+            setMixPlaybackChannel(
+                target = pair.first,
+                queueSnapshot = pair.second,
+                index = mixIndex,
+                nextToken = session.playToken + 1,
+            )
+            if (verifiedNextMixChannel == null) {
+                preverifyNextMixChannel()
+            }
+            return
+        }
+
+        val existingPair: Pair<Channel, List<Channel>>? = synchronized(mixHistory) {
+            if (mixIndex >= 0 && mixIndex < mixHistory.lastIndex) {
+                mixIndex = (mixIndex + offset).coerceAtMost(mixHistory.lastIndex)
+                mixHistory[mixIndex] to mixHistory.toList()
+            } else {
+                null
+            }
+        }
+        if (existingPair != null) {
+            setMixPlaybackChannel(
+                target = existingPair.first,
+                queueSnapshot = existingPair.second,
+                index = mixIndex,
+                nextToken = session.playToken + 1,
+            )
+            if (verifiedNextMixChannel == null) {
+                preverifyNextMixChannel()
+            }
+            return
+        }
+
+        val pool = currentMixPool()
+        val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
+            ?: return
+        val snapshot = synchronized(mixHistory) {
+            mixHistory.add(nextChannel)
+            mixIndex = mixHistory.lastIndex
+            mixHistory.toList() to mixIndex
+        }
+        setMixPlaybackChannel(
+            target = nextChannel,
+            queueSnapshot = snapshot.first,
+            index = snapshot.second,
+            nextToken = session.playToken + 1,
+        )
+        preverifyNextMixChannel()
+    }
+
+    fun playChannelAtQueueIndex(targetIndex: Int) {
+        val session = _playback.value ?: return
+        val target = session.queue.getOrNull(targetIndex) ?: return
+        if (target.id == session.channel.id && targetIndex == session.index) return
+        if (session.isMixMode) {
+            synchronized(mixHistory) {
+                mixIndex = targetIndex.coerceIn(0, (mixHistory.lastIndex).coerceAtLeast(0))
+            }
+            setMixPlaybackChannel(
+                target = target,
+                queueSnapshot = session.queue,
+                index = targetIndex,
+                nextToken = session.playToken + 1,
+            )
+            if (verifiedNextMixChannel == null) {
+                preverifyNextMixChannel()
+            }
+            return
+        }
+
+        _lastPlayedChannelId.value = target.id
+        _playback.value = session.copy(
+            channel = target,
+            index = targetIndex,
+            sources = emptyList(),
+            sourceIndex = -1,
+            playToken = session.playToken + 1,
+        )
+        Presence.playing(target.name)
+        api.setPlayback("playing", target.name)
+        markPlayed(target.id)
+        prefetchSources(target.id)
     }
 
     suspend fun tuneToNumber(number: Int): Channel? {
@@ -1310,7 +1509,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .orEmpty()
             val latest = _playback.value ?: return false
             if (latest.channel.id != channelId || latest.playToken != token) return false
-            if (loaded.isEmpty()) return false
+            if (loaded.isEmpty()) {
+                if (latest.isMixMode) deadMixChannelIds.add(channelId)
+                return false
+            }
             session = latest.copy(sources = loaded)
         }
         val currentCheck = _playback.value ?: return false
@@ -1325,6 +1527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             next = 1
         }
         if (next >= session.sources.size) {
+            if (session.isMixMode) deadMixChannelIds.add(channelId)
             _playback.value = session
             return false
         }
@@ -1359,7 +1562,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (success) {
                 showMessage("Playlist aggiunta con successo")
                 loadPlaylists()
-                loadHome()
                 reloadTv()
             } else {
                 showMessage("Impossibile scaricare la playlist")
@@ -1374,7 +1576,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (success) {
                 showMessage("Playlist rimossa")
                 loadPlaylists()
-                loadHome()
                 reloadTv()
             }
         }
@@ -1387,7 +1588,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (success) {
                 showMessage("Playlist aggiornata")
                 loadPlaylists()
-                loadHome()
                 reloadTv()
             } else {
                 showMessage("Errore nell'aggiornamento")
@@ -1431,37 +1631,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun applyChannelUpdate(updated: Channel) {
+        val historyMatch = synchronized(mixHistory) {
+            mixHistory.firstOrNull { it.id == updated.id }
+        }
         val merged = mergeChannel(
             _playback.value?.channel?.takeIf { it.id == updated.id }
                 ?: _favorites.value.firstOrNull { it.id == updated.id }
-                ?: _browse.value.items.firstOrNull { it.id == updated.id }
                 ?: _zapQueue.value.firstOrNull { it.id == updated.id }
+                ?: historyMatch
                 ?: updated,
             updated,
-        )
-
-        _homeRows.value = _homeRows.value.mapNotNull { row ->
-            val channels = if (row.id == "favorites") {
-                if (merged.favorite) {
-                    val without = row.channels.filterNot { it.id == merged.id }
-                    (without + merged).sortedWith(channelOrder)
-                } else {
-                    row.channels.filterNot { it.id == merged.id }
-                }
-            } else {
-                row.channels.map { if (it.id == merged.id) mergeChannel(it, updated) else it }
-            }
-            if (channels.isEmpty() && row.id == "favorites") {
-                null
-            } else {
-                row.copy(channels = channels, total = maxOf(row.total, channels.size))
-            }
-        }
-
-        _browse.value = _browse.value.copy(
-            items = _browse.value.items.map {
-                if (it.id == merged.id) mergeChannel(it, updated) else it
-            },
         )
 
         _favorites.value = if (merged.favorite) {
@@ -1472,6 +1651,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _zapQueue.value = _zapQueue.value.map {
             if (it.id == merged.id) mergeChannel(it, updated) else it
+        }
+
+        _mixChannels.value = _mixChannels.value.map {
+            if (it.id == merged.id) mergeChannel(it, updated) else it
+        }
+
+        synchronized(mixHistory) {
+            for (i in mixHistory.indices) {
+                if (mixHistory[i].id == merged.id) {
+                    mixHistory[i] = mergeChannel(mixHistory[i], updated)
+                }
+            }
+        }
+
+        verifiedNextMixChannel?.let { next ->
+            if (next.id == merged.id) {
+                verifiedNextMixChannel = mergeChannel(next, updated)
+            }
         }
 
         _playback.value?.let { session ->
@@ -1505,11 +1702,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopPlayback() {
-        if (_playback.value == null) return
+        val current = _playback.value ?: return
+        markJob?.cancel()
+        markJob = null
         _playback.value = null
         Presence.idle()
         api.setPlayback("idle")
-        loadHome(showLoading = false)
+        if (current.isMixMode) {
+            resetMixState(clearPool = false, resetRegions = true)
+        }
     }
 
     fun startSystemPolling() {
@@ -1560,7 +1761,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val text = withContext(Dispatchers.IO) {
                     val req = Request.Builder().url(clean).build()
-                    OkHttpClient().newCall(req).execute().use { resp ->
+                    localM3uHttpClient.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) error("HTTP ${resp.code}")
                         resp.body?.string() ?: error("Risposta vuota")
                     }
@@ -1596,42 +1797,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _zapQueue.value = channels
         _tvInitialized.value = true
         _tvError.value = null
-        _browse.value = _browse.value.copy(
-            items = channels.take(100),
-            total = channels.size,
-            hasMore = false,
-            error = null,
-        )
         _messages.emit("Caricati ${channels.size} canali M3U in locale")
     }
 
     fun checkForUpdates(silent: Boolean = true) {
         viewModelScope.launch {
             val currentVersion = it.casatv.tv.BuildConfig.VERSION_NAME
-            val lanInfo = try {
-                val info = api.versionInfo()
-                val isNewer = isNewerVersion(info.latest, currentVersion)
-                if ((info.updateAvailable || isNewer) && !info.downloadUrl.isNullOrBlank()) info else null
-            } catch (_: Exception) {
+            val ghInfo = githubUpdater.checkForUpdate(force = !silent)
+            val lanInfo = if (!_serverUrl.value.isNullOrBlank()) {
+                try {
+                    val info = api.versionInfo()
+                    val isNewer = isNewerVersion(info.latest, currentVersion)
+                    if ((info.updateAvailable || isNewer) && !info.downloadUrl.isNullOrBlank()) info else null
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
                 null
             }
-            val ghInfo = githubUpdater.checkForUpdate(force = !silent)
 
             val best = when {
-                lanInfo != null && ghInfo != null ->
-                    if (isNewerVersion(ghInfo.latest, lanInfo.latest)) ghInfo else lanInfo
+                ghInfo != null && lanInfo != null ->
+                    if (isNewerVersion(lanInfo.latest, ghInfo.latest)) lanInfo else ghInfo
                 ghInfo != null -> ghInfo
                 lanInfo != null -> lanInfo
                 else -> null
             }
 
-            if (best != null) {
-                _updateInfo.value = best
-            } else {
-                _updateInfo.value = null
-                if (!silent) {
-                    _messages.emit("L'app è già aggiornata all'ultima versione disponibile ($currentVersion).")
-                }
+            val existing = _updateInfo.value
+            val chosen = when {
+                best != null && existing != null && silent && isNewerVersion(existing.latest, best.latest) -> existing
+                best != null -> best
+                !silent -> null
+                else -> existing
+            }
+            _updateInfo.value = chosen
+            if (chosen == null && !silent) {
+                _messages.emit("L'app è già aggiornata all'ultima versione disponibile ($currentVersion).")
             }
         }
     }
@@ -1652,8 +1854,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val updatesDir = File(getApplication<Application>().cacheDir, "updates").apply { mkdirs() }
                 val apkFile = File(updatesDir, "update.apk")
                 if (apkFile.exists()) apkFile.delete()
-                api.downloadFile(downloadUrl, apkFile) { progress ->
-                    _updateProgress.value = progress
+                if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
+                    githubUpdater.downloadApk(downloadUrl, apkFile) { progress ->
+                        _updateProgress.value = progress
+                    }
+                } else {
+                    api.downloadFile(downloadUrl, apkFile) { progress ->
+                        _updateProgress.value = progress
+                    }
                 }
                 _updateDownloading.value = false
                 launchApkInstaller(apkFile)
@@ -1782,7 +1990,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "Datos del servidor actualizados",
                     ),
                 )
-                loadHome(showLoading = false)
                 loadZapQueue()
                 loadFavorites(showLoading = false)
             } catch (error: Exception) {
@@ -1834,8 +2041,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_ASPECT_RATIO_MODE = "aspect_ratio_mode"
         private const val KEY_MULTI_TV_SYNC = "multi_tv_sync"
         private const val KEY_THEME_MODE = "theme_mode"
-        private const val KEY_MIX_INTRO_SHOWN = "mix_intro_shown"
-        private const val BROWSE_PAGE_SIZE = 120
 
         private val DEFAULT_AVATARS = listOf(
             "🦊", "🐼", "🐯", "🐨", "🦁", "🐸", "🐵", "🐺", "🦄", "🐙",

@@ -14,9 +14,27 @@ import java.util.Locale
  */
 object M3uParser {
 
+    private val QUOTED_ATTR_RE = Regex("""([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"""")
+    private val BARE_ATTR_RE = Regex("""([A-Za-z0-9_-]+)\s*=\s*([^\s"]+)""")
+    private val PAREN_TOKEN_RE = Regex("""[\(\[]([^\)\]]+)[\)\]]""")
+    private val DIACRITICS_RE = Regex("""\p{M}+""")
+    private val NON_ALNUM_RE = Regex("""[^a-z0-9]+""")
+    private val QUALITY_P_RE = Regex("""\b(2160|1080|720|480|360)\s*p\b""", RegexOption.IGNORE_CASE)
+    private val QUALITY_4K_RE = Regex("""\b(4k|uhd)\b""", RegexOption.IGNORE_CASE)
+    private val QUALITY_FHD_RE = Regex("""\bfhd\b""", RegexOption.IGNORE_CASE)
+    private val QUALITY_HD_RE = Regex("""\bhd\b""", RegexOption.IGNORE_CASE)
+
+    private val IGNORED_PAREN_CODES = setOf("SD", "HD", "TV", "FM", "AM", "FHD", "UHD", "4K", "2K", "8K")
+    private val NON_GEO_TLDS = setOf(
+        "com", "net", "org", "tv", "io", "ai", "app", "dev", "me", "co", "info", "biz",
+        "xyz", "live", "stream", "online", "site", "cloud", "cdn", "edu", "gov", "int",
+        "mil", "pro", "cc", "ws", "fm", "am", "to", "ly", "gg", "nu", "sh", "la", "tk",
+        "ml", "ga", "cf", "gq",
+    )
+
     fun parse(text: String, playlistId: String = "default"): List<IptvChannel> {
-        val result = ArrayList<IptvChannel>()
-        val seen = HashSet<String>()
+        val result = ArrayList<IptvChannel>(1024)
+        val seen = HashSet<String>(1024)
         var attrs: Map<String, String> = emptyMap()
         var title = ""
         var group = ""
@@ -38,7 +56,7 @@ object M3uParser {
                 logo = attrs["tvg-logo"]?.trim()?.takeIf { it.startsWith("http") },
                 category = categoryRaw.ifBlank { GENERAL_CATEGORY },
                 language = normalizeLanguage(attrs["tvg-language"].orEmpty()),
-                country = inferCountry(attrs, tvgId, categoryRaw, name),
+                country = inferCountry(attrs, tvgId, categoryRaw, name, cleanUrl),
                 tvgId = tvgId,
                 quality = qualityOf(attrs["tvg-quality"].orEmpty(), name),
                 number = result.size + 1,
@@ -89,12 +107,12 @@ object M3uParser {
     }
 
     private fun parseAttributes(part: String): Map<String, String> {
-        val map = LinkedHashMap<String, String>()
-        val quoted = Regex("""([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"""")
-        quoted.findAll(part).forEach { match -> map[match.groupValues[1].lowercase()] = match.groupValues[2] }
-        val bare = Regex("""([A-Za-z0-9_-]+)\s*=\s*([^\s"]+)""")
-        bare.findAll(part).forEach { match ->
-            val key = match.groupValues[1].lowercase()
+        val map = LinkedHashMap<String, String>(8)
+        QUOTED_ATTR_RE.findAll(part).forEach { match ->
+            map[match.groupValues[1].lowercase(Locale.ROOT)] = match.groupValues[2]
+        }
+        BARE_ATTR_RE.findAll(part).forEach { match ->
+            val key = match.groupValues[1].lowercase(Locale.ROOT)
             if (key !in map) map[key] = match.groupValues[2]
         }
         return map
@@ -104,7 +122,7 @@ object M3uParser {
         url.substringBefore('|').trim()
 
     private fun isPlayable(url: String): Boolean {
-        val lower = url.lowercase()
+        val lower = url.lowercase(Locale.ROOT)
         return lower.startsWith("http://") || lower.startsWith("https://")
     }
 
@@ -112,46 +130,83 @@ object M3uParser {
         value.orEmpty().split(';', ',', '|', '/').firstOrNull { it.isNotBlank() }?.trim().orEmpty()
 
     /**
-     * Country codes in custom playlists are often missing or written as a
-     * country name. Infer them from `tvg-country`, the `tv.id@SD` suffix,
-     * `group-title` (e.g. "Italy") and a trailing "(IT)" in the channel name.
+     * Country codes in playlists may appear in `tvg-country`, `tv.id@SD` suffixes,
+     * `group-title`, parenthesized country names/codes in the title, or stream ccTLD.
      */
     private fun inferCountry(
         attrs: Map<String, String>,
         tvgId: String,
         group: String,
         name: String,
+        url: String,
     ): String {
         parseCountry(attrs["tvg-country"])?.let { return it }
 
-        val baseId = tvgId.substringBefore('@').trim()
-        Regex("""\.([A-Za-z]{2})$""").find(baseId)?.groupValues?.getOrNull(1)
-            ?.let { code -> normalizeCountry(code)?.let { return it } }
+        extractTvgIdCountry(tvgId)?.let { return it }
 
         parseCountry(group)?.let { return it }
 
-        Regex("""[\(\[]([A-Za-z]{2})[\)\]]\s*$""").find(name)?.groupValues?.getOrNull(1)
-            ?.let { code -> normalizeCountry(code)?.let { return it } }
+        PAREN_TOKEN_RE.findAll(name).forEach { match ->
+            parseCountry(match.groupValues[1], skipTechnicalCodes = true)?.let { return it }
+        }
 
-        return ""
+        return extractHostCcTld(url).orEmpty()
     }
 
-    private fun parseCountry(raw: String?): String? {
+    private fun extractTvgIdCountry(tvgId: String): String? {
+        if (tvgId.isEmpty()) return null
+        val atIdx = tvgId.indexOf('@')
+        var end = if (atIdx >= 0) atIdx else tvgId.length
+        while (end > 0 && tvgId[end - 1].isWhitespace()) end--
+        if (end >= 4 && tvgId[end - 3] == '.') {
+            val c1 = tvgId[end - 2].uppercaseChar()
+            val c2 = tvgId[end - 1].uppercaseChar()
+            if (c1 in 'A'..'Z' && c2 in 'A'..'Z') {
+                return normalizeCountry("$c1$c2")
+            }
+        }
+        return null
+    }
+
+    private fun extractHostCcTld(streamUrl: String): String? {
+        val schemeIdx = streamUrl.indexOf("://")
+        if (schemeIdx < 0) return null
+        val hostStart = schemeIdx + 3
+        val slashIdx = streamUrl.indexOf('/', hostStart)
+        val hostEnd = if (slashIdx >= 0) slashIdx else streamUrl.length
+        val colonIdx = streamUrl.indexOf(':', hostStart)
+        val cleanEnd = if (colonIdx in hostStart until hostEnd) colonIdx else hostEnd
+        if (cleanEnd - hostStart < 4) return null
+        val host = streamUrl.substring(hostStart, cleanEnd).lowercase(Locale.ROOT)
+        if (host == "jmp2.uk" || host.endsWith(".jmp2.uk")) return null
+        val dotIdx = host.lastIndexOf('.')
+        if (dotIdx < 0 || host.length - dotIdx - 1 != 2) return null
+        val tld = host.substring(dotIdx + 1)
+        if (tld in NON_GEO_TLDS) return null
+        return normalizeCountry(tld)
+    }
+
+    private fun parseCountry(raw: String?, skipTechnicalCodes: Boolean = false): String? {
         val value = raw?.trim().orEmpty()
         if (value.isBlank()) return null
         value.split(',', ';', '|').forEach { token ->
             val clean = token.trim().trim('"', '\'')
             if (clean.isBlank()) return@forEach
-            normalizeCountry(clean)?.let { return it }
-            COUNTRY_NAMES[normalizeName(clean)]?.let { return it }
+            val upper = clean.uppercase(Locale.ROOT)
+            if (!skipTechnicalCodes || upper !in IGNORED_PAREN_CODES) {
+                normalizeCountry(upper)?.let { return it }
+            }
+            if (clean.length > 2) {
+                COUNTRY_NAMES[normalizeName(clean)]?.let { return it }
+            }
         }
         return null
     }
 
     private fun normalizeCountry(raw: String): String? {
-        val code = raw.trim().uppercase(Locale.ROOT)
-        if (code.length != 2 || ISO_COUNTRIES.none { it == code }) return null
-        return code
+        val trimmed = raw.trim().uppercase(Locale.ROOT)
+        val code = if (trimmed == "UK") "GB" else trimmed
+        return if (code.length == 2 && code in ISO_COUNTRIES) code else null
     }
 
     fun normalizeLanguage(raw: String): String {
@@ -167,21 +222,20 @@ object M3uParser {
 
     private fun normalizeName(value: String): String {
         val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
-        return decomposed
-            .replace(Regex("""\p{M}+"""), "")
+        return DIACRITICS_RE.replace(decomposed, "")
             .lowercase(Locale.ROOT)
-            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .let { NON_ALNUM_RE.replace(it, " ") }
             .trim()
     }
 
     private val ISO_COUNTRIES: Set<String> by lazy {
-        Locale.getISOCountries().toSet()
+        Locale.getISOCountries().toHashSet()
     }
 
     private val COUNTRY_NAMES: Map<String, String> by lazy {
-        val names = HashMap<String, String>()
+        val names = HashMap<String, String>(900)
         val locales = listOf(Locale.ENGLISH, Locale.ITALIAN, Locale.forLanguageTag("es"))
-        Locale.getISOCountries().forEach { code ->
+        ISO_COUNTRIES.forEach { code ->
             names[normalizeName(code)] = code
             locales.forEach { locale ->
                 val label = Locale(locale.language, code).getDisplayCountry(locale)
@@ -223,15 +277,15 @@ object M3uParser {
     private fun qualityOf(attr: String, name: String): String {
         val declared = attr.trim()
         if (declared.isNotBlank()) {
-            return if (declared.endsWith("p", true)) declared.lowercase()
+            return if (declared.endsWith("p", true)) declared.lowercase(Locale.ROOT)
             else if (declared.all { it.isDigit() }) "${declared}p" else declared
         }
-        val match = Regex("""\b(2160|1080|720|480|360)\s*p\b""", RegexOption.IGNORE_CASE).find(name)
+        val match = QUALITY_P_RE.find(name)
         if (match != null) return "${match.groupValues[1]}p"
         return when {
-            Regex("""\b(4k|uhd)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "2160p"
-            Regex("""\bfhd\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "1080p"
-            Regex("""\bhd\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "720p"
+            QUALITY_4K_RE.containsMatchIn(name) -> "2160p"
+            QUALITY_FHD_RE.containsMatchIn(name) -> "1080p"
+            QUALITY_HD_RE.containsMatchIn(name) -> "720p"
             else -> ""
         }
     }

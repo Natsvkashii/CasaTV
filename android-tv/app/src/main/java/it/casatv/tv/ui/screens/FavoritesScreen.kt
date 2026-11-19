@@ -35,7 +35,6 @@ import it.casatv.tv.ui.components.EmptyBox
 import it.casatv.tv.ui.components.ErrorBox
 import it.casatv.tv.ui.components.GridChannelCard
 import it.casatv.tv.ui.components.LoadingBox
-import it.casatv.tv.ui.components.ScreenHeader
 import it.casatv.tv.ui.components.TvButton
 import it.casatv.tv.ui.formatNumber
 import it.casatv.tv.ui.theme.CasaDim

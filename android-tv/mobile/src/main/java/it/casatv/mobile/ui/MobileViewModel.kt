@@ -21,12 +21,23 @@ import it.casatv.mobile.network.MdnsDiscovery
 import it.casatv.mobile.update.AvailableUpdate
 import it.casatv.mobile.update.GitHubUpdater
 import it.casatv.mobile.update.UpdateFrequency
+import java.util.Collections
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 data class MobileUiState(
     val language: String = "en",
@@ -42,8 +53,14 @@ data class MobileUiState(
     val selectedCountry: String? = null,
     val searchQuery: String = "",
     val mixChannels: List<MobileChannel> = emptyList(),
-    val showMixIntro: Boolean = false,
+    val showMixRegionPicker: Boolean = false,
+    val selectedMixRegions: Set<MixRegion> = setOf(MixRegion.ALL_WORLD),
     val activeChannel: MobileChannel? = null,
+    val isMixMode: Boolean = false,
+    val mixIndex: Int = 0,
+    val mixTotal: Int = 0,
+    val backgroundPlayEnabled: Boolean = true,
+    val pipOnLeaveEnabled: Boolean = true,
     val isImporting: Boolean = false,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
@@ -84,6 +101,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             autoConnectWifiServer = prefs.getBoolean(KEY_AUTO_SERVER, true),
             autoSaveServerM3u = prefs.getBoolean(KEY_AUTO_SAVE_SERVER_M3U, true),
             selectedCountry = prefs.getString(KEY_SELECTED_COUNTRY, null),
+            backgroundPlayEnabled = prefs.getBoolean(KEY_BACKGROUND_PLAY, true),
+            pipOnLeaveEnabled = prefs.getBoolean(KEY_PIP_ON_LEAVE, true),
             updateFrequency = updater.getFrequency(),
         ),
     )
@@ -92,6 +111,22 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private var localChannelsCache: List<MobileChannel> = emptyList()
     private var serverChannelsCache: List<MobileChannel> = emptyList()
     private var discoveryJob: Job? = null
+
+    private val probeClient = OkHttpClient.Builder()
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(2500, TimeUnit.MILLISECONDS)
+        .callTimeout(4000, TimeUnit.MILLISECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(false)
+        .build()
+
+    private val mixHistory = mutableListOf<MobileChannel>()
+    private var mixCursor: Int = -1
+    private val deadMixUrls = Collections.synchronizedSet(linkedSetOf<String>())
+    @Volatile
+    private var verifiedNextMixChannel: MobileChannel? = null
+    private var mixPreloadJob: Job? = null
 
     private val connectivityManager =
         application.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -267,6 +302,25 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
             serverChannelsCache = serverChannelsCache.map {
                 if (it.streamUrl == channel.streamUrl) it.copy(favorite = next) else it
+            }
+            synchronized(mixHistory) {
+                for (i in mixHistory.indices) {
+                    if (mixHistory[i].streamUrl == channel.streamUrl) {
+                        mixHistory[i] = mixHistory[i].copy(favorite = next)
+                    }
+                }
+            }
+            verifiedNextMixChannel?.let { cand ->
+                if (cand.streamUrl == channel.streamUrl) {
+                    verifiedNextMixChannel = cand.copy(favorite = next)
+                }
+            }
+            _state.update { current ->
+                if (current.activeChannel?.streamUrl == channel.streamUrl) {
+                    current.copy(activeChannel = current.activeChannel.copy(favorite = next))
+                } else {
+                    current
+                }
             }
             rebuildChannelList()
         }
@@ -448,42 +502,447 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openChannel(channel: MobileChannel) {
-        _state.update { it.copy(activeChannel = channel) }
+        resetMixSession(resetRegions = true)
+        _state.update {
+            it.copy(
+                activeChannel = channel,
+                isMixMode = false,
+                mixIndex = 0,
+                mixTotal = 0,
+            )
+        }
     }
 
     fun closePlayer() {
-        _state.update { it.copy(activeChannel = null) }
+        resetMixSession(resetRegions = true)
+        _state.update {
+            it.copy(
+                activeChannel = null,
+                isMixMode = false,
+                mixIndex = 0,
+                mixTotal = 0,
+            )
+        }
     }
 
     fun clearMessages() {
         _state.update { it.copy(statusMessage = null, errorMessage = null) }
     }
 
-    fun openOrRefreshMix() {
-        val shuffled = _state.value.allChannels.shuffled()
-        val showIntro = !prefs.getBoolean(KEY_MIX_INTRO_SHOWN, false)
-        _state.update {
-            it.copy(
-                mixChannels = shuffled,
-                showMixIntro = if (showIntro) true else it.showMixIntro,
-            )
+    fun setBackgroundPlayEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_BACKGROUND_PLAY, enabled).apply()
+        _state.update { it.copy(backgroundPlayEnabled = enabled) }
+    }
+
+    fun setPipOnLeaveEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PIP_ON_LEAVE, enabled).apply()
+        _state.update { it.copy(pipOnLeaveEnabled = enabled) }
+    }
+
+    private fun resetMixSession(resetRegions: Boolean = true) {
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel = null
+        synchronized(mixHistory) {
+            mixHistory.clear()
+            mixCursor = -1
+        }
+        deadMixUrls.clear()
+        if (resetRegions) {
+            _state.update {
+                it.copy(
+                    selectedMixRegions = setOf(MixRegion.ALL_WORLD),
+                    mixIndex = 0,
+                    mixTotal = 0,
+                )
+            }
         }
     }
 
-    fun dismissMixIntro() {
-        prefs.edit().putBoolean(KEY_MIX_INTRO_SHOWN, true).apply()
-        _state.update { it.copy(showMixIntro = false) }
+    fun openMixRegionPicker() {
+        if (!_state.value.isMixMode) {
+            resetMixSession(resetRegions = true)
+        }
+        _state.update { it.copy(showMixRegionPicker = true) }
+    }
+
+    fun dismissMixRegionPicker() {
+        _state.update { it.copy(showMixRegionPicker = false) }
+        if (!_state.value.isMixMode) {
+            resetMixSession(resetRegions = true)
+        }
+    }
+
+    fun toggleMixRegion(region: MixRegion) {
+        val current = _state.value.selectedMixRegions
+        val next = if (region == MixRegion.ALL_WORLD) {
+            setOf(MixRegion.ALL_WORLD)
+        } else {
+            val withoutWorld = current - MixRegion.ALL_WORLD
+            val toggled = if (region in withoutWorld) withoutWorld - region else withoutWorld + region
+            toggled.ifEmpty { setOf(MixRegion.ALL_WORLD) }
+        }
+        verifiedNextMixChannel?.let { cand ->
+            if (!matchesMixRegions(cand.country, next)) {
+                mixPreloadJob?.cancel()
+                mixPreloadJob = null
+                verifiedNextMixChannel = null
+            }
+        }
+        _state.update { it.copy(selectedMixRegions = next) }
+    }
+
+    fun startMixFromSelectedRegions() {
+        val regions = _state.value.selectedMixRegions
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel?.let { cand ->
+            if (!matchesMixRegions(cand.country, regions)) {
+                verifiedNextMixChannel = null
+            }
+        }
+        synchronized(mixHistory) {
+            mixHistory.clear()
+            mixCursor = -1
+        }
+        deadMixUrls.clear()
+        _state.update { it.copy(showMixRegionPicker = false) }
+        playRandomMixChannel()
+    }
+
+    fun openOrRefreshMix() {
+        openMixRegionPicker()
+    }
+
+    @Volatile
+    private var cachedMixSourceRef: List<MobileChannel>? = null
+    @Volatile
+    private var cachedMixHttpAll: List<MobileChannel> = emptyList()
+    @Volatile
+    private var cachedMixBuckets: Map<MixRegion, List<MobileChannel>> = emptyMap()
+
+    private fun ensureMixBucketsIndexed(channels: List<MobileChannel>) {
+        if (channels === cachedMixSourceRef) return
+        val httpAll = ArrayList<MobileChannel>(channels.size)
+        val buckets = java.util.EnumMap<MixRegion, MutableList<MobileChannel>>(MixRegion::class.java)
+        channels.forEach { ch ->
+            if (!isHttpUrl(ch.streamUrl)) return@forEach
+            httpAll.add(ch)
+            resolveMixRegion(ch.country)?.let { region ->
+                buckets.getOrPut(region) { ArrayList() }.add(ch)
+            }
+        }
+        cachedMixHttpAll = httpAll
+        cachedMixBuckets = buckets
+        cachedMixSourceRef = channels
+    }
+
+    private fun filteredMixPool(channels: List<MobileChannel>): List<MobileChannel> {
+        ensureMixBucketsIndexed(channels)
+        val regions = _state.value.selectedMixRegions
+        if (regions.isEmpty() || MixRegion.ALL_WORLD in regions) return cachedMixHttpAll
+        val regional = if (regions.size == 1) {
+            cachedMixBuckets[regions.first()].orEmpty()
+        } else {
+            ArrayList<MobileChannel>().apply {
+                regions.forEach { region -> cachedMixBuckets[region]?.let(::addAll) }
+            }
+        }
+        return regional.ifEmpty { cachedMixHttpAll }
     }
 
     fun playRandomMixChannel() {
-        val shuffled = _state.value.allChannels.shuffled()
-        if (shuffled.isNotEmpty()) {
+        val pool = filteredMixPool(_state.value.allChannels)
+        if (pool.isEmpty()) return
+        val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
+            ?: return
+        val pair = synchronized(mixHistory) {
+            mixHistory.add(nextChannel)
+            mixCursor = mixHistory.lastIndex
+            mixCursor to mixHistory.size
+        }
+        _state.update {
+            it.copy(
+                activeChannel = nextChannel,
+                isMixMode = true,
+                mixIndex = pair.first,
+                mixTotal = pair.second,
+                showMixRegionPicker = false,
+            )
+        }
+        preverifyNextMixChannel()
+    }
+
+    fun previousChannel() {
+        val currentState = _state.value
+        if (!currentState.isMixMode) {
+            val list = currentState.filteredChannels
+            val active = currentState.activeChannel ?: return
+            if (list.isEmpty()) return
+            val idx = list.indexOfFirst { it.streamUrl == active.streamUrl }.takeIf { it >= 0 } ?: 0
+            val prevIdx = ((idx - 1) % list.size + list.size) % list.size
+            _state.update { it.copy(activeChannel = list[prevIdx]) }
+            return
+        }
+
+        val triple = synchronized(mixHistory) {
+            if (mixCursor <= 0 || mixHistory.isEmpty()) {
+                null
+            } else {
+                mixCursor -= 1
+                Triple(mixHistory[mixCursor], mixCursor, mixHistory.size)
+            }
+        } ?: return
+
+        _state.update {
+            it.copy(
+                activeChannel = triple.first,
+                isMixMode = true,
+                mixIndex = triple.second,
+                mixTotal = triple.third,
+            )
+        }
+        if (verifiedNextMixChannel == null) {
+            preverifyNextMixChannel()
+        }
+    }
+
+    fun nextChannel() {
+        val currentState = _state.value
+        if (!currentState.isMixMode) {
+            val list = currentState.filteredChannels
+            val active = currentState.activeChannel ?: return
+            if (list.isEmpty()) return
+            val idx = list.indexOfFirst { it.streamUrl == active.streamUrl }.takeIf { it >= 0 } ?: 0
+            val nextIdx = (idx + 1) % list.size
+            _state.update { it.copy(activeChannel = list[nextIdx]) }
+            return
+        }
+
+        val existingTriple = synchronized(mixHistory) {
+            if (mixCursor >= 0 && mixCursor < mixHistory.lastIndex) {
+                mixCursor += 1
+                Triple(mixHistory[mixCursor], mixCursor, mixHistory.size)
+            } else {
+                null
+            }
+        }
+        if (existingTriple != null) {
             _state.update {
                 it.copy(
-                    mixChannels = shuffled,
-                    activeChannel = shuffled.first(),
+                    activeChannel = existingTriple.first,
+                    isMixMode = true,
+                    mixIndex = existingTriple.second,
+                    mixTotal = existingTriple.third,
                 )
             }
+            if (verifiedNextMixChannel == null) {
+                preverifyNextMixChannel()
+            }
+            return
+        }
+
+        val pool = filteredMixPool(currentState.allChannels)
+        val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
+            ?: return
+        val pair = synchronized(mixHistory) {
+            mixHistory.add(nextChannel)
+            mixCursor = mixHistory.lastIndex
+            mixCursor to mixHistory.size
+        }
+        _state.update {
+            it.copy(
+                activeChannel = nextChannel,
+                isMixMode = true,
+                mixIndex = pair.first,
+                mixTotal = pair.second,
+            )
+        }
+        preverifyNextMixChannel()
+    }
+
+    private fun isHttpUrl(raw: String): Boolean {
+        val clean = raw.trim().lowercase()
+        return clean.startsWith("http://") || clean.startsWith("https://")
+    }
+
+    private fun consumeVerifiedNextMixChannel(): MobileChannel? {
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        val candidate = verifiedNextMixChannel
+        verifiedNextMixChannel = null
+        return candidate?.takeIf { matchesMixRegions(it.country, _state.value.selectedMixRegions) }
+    }
+
+    private fun pickRandomUnvisitedMixChannel(pool: List<MobileChannel>): MobileChannel? {
+        if (pool.isEmpty()) return null
+        val currentUrl = _state.value.activeChannel?.streamUrl
+        val visitedUrls = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.streamUrl } }
+        val fresh = pool.filter { ch ->
+            ch.streamUrl !in visitedUrls && ch.streamUrl !in deadMixUrls && ch.streamUrl != currentUrl
+        }
+        if (fresh.isNotEmpty()) return fresh.random()
+        val unvisited = pool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
+        if (unvisited.isNotEmpty()) return unvisited.random()
+        val others = pool.filter { it.streamUrl != currentUrl }
+        return (if (others.isNotEmpty()) others else pool).randomOrNull()
+    }
+
+    private fun <T> pickRandomCandidates(list: List<T>, count: Int): List<T> {
+        if (list.size <= count) return list
+        val picked = ArrayList<T>(count)
+        val usedIndices = HashSet<Int>(count * 2)
+        while (picked.size < count) {
+            val idx = kotlin.random.Random.nextInt(list.size)
+            if (usedIndices.add(idx)) {
+                picked.add(list[idx])
+            }
+        }
+        return picked
+    }
+
+    private fun preverifyNextMixChannel() {
+        if (verifiedNextMixChannel != null) return
+        mixPreloadJob?.cancel()
+        mixPreloadJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive && verifiedNextMixChannel == null) {
+                val pool = filteredMixPool(_state.value.allChannels)
+                if (pool.isEmpty()) break
+                val currentUrl = _state.value.activeChannel?.streamUrl
+                val visitedUrls = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.streamUrl } }
+                var candidates = pool.filter { ch ->
+                    ch.streamUrl !in visitedUrls && ch.streamUrl !in deadMixUrls && ch.streamUrl != currentUrl
+                }
+                if (candidates.isEmpty()) {
+                    deadMixUrls.clear()
+                    candidates = pool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
+                }
+                if (candidates.isEmpty()) {
+                    candidates = pool.filter { it.streamUrl != currentUrl }.ifEmpty { pool }
+                }
+                val batch = pickRandomCandidates(candidates, 3)
+                if (batch.isEmpty()) break
+
+                val winner = coroutineScope {
+                    val found = CompletableDeferred<MobileChannel>()
+                    val workers = batch.map { candidate ->
+                        launch {
+                            val ok = isStreamAvailable(candidate.streamUrl)
+                            if (!isActive) return@launch
+                            if (ok) {
+                                found.complete(candidate)
+                            } else {
+                                deadMixUrls.add(candidate.streamUrl)
+                            }
+                        }
+                    }
+                    val awaiter = launch {
+                        workers.forEach { it.join() }
+                        if (!found.isCompleted) {
+                            found.cancel()
+                        }
+                    }
+                    try {
+                        found.await()
+                    } catch (_: CancellationException) {
+                        if (!isActive) throw CancellationException()
+                        null
+                    } finally {
+                        workers.forEach { it.cancel() }
+                        awaiter.cancel()
+                    }
+                }
+
+                if (winner != null) {
+                    verifiedNextMixChannel = winner
+                    break
+                }
+            }
+        }
+    }
+
+    private data class ProbeSample(
+        val finalUrl: HttpUrl,
+        val contentType: String,
+        val bytes: ByteArray,
+    )
+
+    private fun fetchProbeSample(url: String, maxBytes: Int, job: Job?): ProbeSample? {
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", EXO_USER_AGENT)
+            .get()
+            .build()
+        val call = probeClient.newCall(req)
+        val handle = job?.invokeOnCompletion { call.cancel() }
+        return try {
+            call.execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val stream = resp.body?.byteStream() ?: return null
+                val buffer = ByteArray(maxBytes)
+                var total = 0
+                while (total < maxBytes) {
+                    val read = stream.read(buffer, total, maxBytes - total)
+                    if (read <= 0) break
+                    total += read
+                }
+                if (total <= 0) return null
+                ProbeSample(
+                    finalUrl = resp.request.url,
+                    contentType = resp.header("Content-Type").orEmpty(),
+                    bytes = buffer.copyOf(total),
+                )
+            }
+        } finally {
+            handle?.dispose()
+        }
+    }
+
+    private suspend fun isStreamAvailable(streamUrl: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = streamUrl.trim()
+        if (!isHttpUrl(clean)) return@withContext false
+        val job = kotlin.coroutines.coroutineContext[Job]
+        try {
+            val sample = fetchProbeSample(clean, 4096, job) ?: return@withContext false
+            val text = sample.bytes.toString(Charsets.UTF_8)
+            val isDash = clean.contains(".mpd", ignoreCase = true) ||
+                sample.finalUrl.toString().contains(".mpd", ignoreCase = true) ||
+                sample.contentType.contains("dash+xml", ignoreCase = true) ||
+                text.contains("<MPD", ignoreCase = true)
+
+            if (isDash) {
+                return@withContext text.contains("<MPD", ignoreCase = true)
+            }
+
+            val isHls = clean.contains(".m3u8", ignoreCase = true) ||
+                sample.finalUrl.toString().contains(".m3u8", ignoreCase = true) ||
+                sample.contentType.contains("mpegurl", ignoreCase = true) ||
+                text.trimStart().startsWith("#EXTM3U")
+
+            if (!isHls) {
+                return@withContext !sample.contentType.contains("text/html", ignoreCase = true) &&
+                    sample.bytes.size >= 188
+            }
+
+            if (!text.contains("#EXTM3U")) return@withContext false
+            val firstEntry = text.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                ?: return@withContext true
+
+            val childUrl = sample.finalUrl.resolve(firstEntry) ?: return@withContext false
+            val childSample = fetchProbeSample(childUrl.toString(), 1024, job) ?: return@withContext false
+            val childIsM3u8 = childUrl.toString().contains(".m3u8", ignoreCase = true) ||
+                childSample.contentType.contains("mpegurl", ignoreCase = true)
+            if (childIsM3u8) {
+                childSample.bytes.toString(Charsets.UTF_8).contains("#EXTM3U")
+            } else {
+                !childSample.contentType.contains("text/html", ignoreCase = true)
+            }
+        } catch (err: CancellationException) {
+            throw err
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -494,6 +953,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_AUTO_SAVE_SERVER_M3U = "auto_save_server_m3u"
         private const val KEY_SELECTED_COUNTRY = "selected_country"
         private const val KEY_LAST_SERVER_URL = "last_server_url"
-        private const val KEY_MIX_INTRO_SHOWN = "mix_intro_shown"
+        private const val KEY_BACKGROUND_PLAY = "background_play_enabled"
+        private const val KEY_PIP_ON_LEAVE = "pip_on_leave_enabled"
+        private const val EXO_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 }

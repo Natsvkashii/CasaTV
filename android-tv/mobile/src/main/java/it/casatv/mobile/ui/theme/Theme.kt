@@ -6,40 +6,40 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val CasaGreen = Color(0xFF39D353)
-private val CasaGreenDark = Color(0xFF1F9D38)
+private val CasaCyan = Color(0xFF00D4FF)
+private val CasaAzure = Color(0xFF0284C7)
 
 private val DarkColors = darkColorScheme(
-    primary = CasaGreen,
-    onPrimary = Color(0xFF06160A),
-    primaryContainer = Color(0xFF133A1D),
-    onPrimaryContainer = Color(0xFFA7F5B4),
-    secondary = Color(0xFF8FB996),
-    onSecondary = Color(0xFF0E1D12),
-    background = Color(0xFF0C0E10),
-    onBackground = Color(0xFFF2F4F7),
-    surface = Color(0xFF14181C),
-    onSurface = Color(0xFFF2F4F7),
-    surfaceVariant = Color(0xFF1E242B),
-    onSurfaceVariant = Color(0xFF9AA4B2),
-    outline = Color(0xFF2B333D),
+    primary = CasaCyan,
+    onPrimary = Color(0xFF04101A),
+    primaryContainer = Color(0xFF0C3459),
+    onPrimaryContainer = Color(0xFFBAE6FD),
+    secondary = Color(0xFF38BDF8),
+    onSecondary = Color(0xFF04101A),
+    background = Color(0xFF060B14),
+    onBackground = Color(0xFFF0F6FC),
+    surface = Color(0xFF0A1322),
+    onSurface = Color(0xFFF0F6FC),
+    surfaceVariant = Color(0xFF112238),
+    onSurfaceVariant = Color(0xFF94A3B8),
+    outline = Color(0xFF1E3A5F),
     error = Color(0xFFFF5C5C),
 )
 
 private val LightColors = lightColorScheme(
-    primary = CasaGreenDark,
+    primary = CasaAzure,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD6F7DC),
-    onPrimaryContainer = Color(0xFF0A3312),
-    secondary = Color(0xFF47664E),
+    primaryContainer = Color(0xFFE0F2FE),
+    onPrimaryContainer = Color(0xFF075985),
+    secondary = Color(0xFF0369A1),
     onSecondary = Color.White,
-    background = Color(0xFFF4F6F8),
-    onBackground = Color(0xFF111827),
+    background = Color(0xFFF0F6FC),
+    onBackground = Color(0xFF091526),
     surface = Color.White,
-    onSurface = Color(0xFF111827),
-    surfaceVariant = Color(0xFFE7ECF0),
-    onSurfaceVariant = Color(0xFF4B5563),
-    outline = Color(0xFFD1D8E0),
+    onSurface = Color(0xFF091526),
+    surfaceVariant = Color(0xFFE2EDF8),
+    onSurfaceVariant = Color(0xFF334E68),
+    outline = Color(0xFFBFD4E8),
     error = Color(0xFFDC2626),
 )
 

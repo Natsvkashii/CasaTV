@@ -13,8 +13,8 @@ android {
         applicationId = "it.casatv.tv"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2611012
-        versionName = "26.11.012"
+        versionCode = 2611013
+        versionName = "26.11.013"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {
@@ -77,6 +77,9 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

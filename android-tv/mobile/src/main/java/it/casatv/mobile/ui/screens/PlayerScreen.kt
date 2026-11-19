@@ -1,11 +1,15 @@
 package it.casatv.mobile.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.net.Uri
+import android.os.Build
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.appcompat.view.ContextThemeWrapper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,25 +21,34 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -52,15 +65,37 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.mediarouter.app.MediaRouteChooserDialog
+import androidx.mediarouter.app.MediaRouteControllerDialog
+import androidx.mediarouter.media.MediaRouteSelector
+import com.google.android.gms.cast.CastMediaControlIntent
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManagerListener
+import com.google.android.gms.common.images.WebImage
 import it.casatv.mobile.data.MobileChannel
+import it.casatv.mobile.service.MobilePlaybackService
 import it.casatv.mobile.ui.LocalMobileStrings
 import kotlinx.coroutines.delay
 
@@ -68,11 +103,21 @@ import kotlinx.coroutines.delay
 @Composable
 fun PlayerScreen(
     channel: MobileChannel,
+    isMixMode: Boolean = false,
+    mixIndex: Int = 0,
+    mixTotal: Int = 0,
+    isInPipMode: Boolean = false,
+    backgroundPlayEnabled: Boolean = true,
+    onToggleBackgroundPlay: (Boolean) -> Unit = {},
+    onEnterPip: () -> Unit = {},
+    onPreviousChannel: () -> Unit = {},
+    onNextChannel: () -> Unit = {},
     onToggleFavorite: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val lifecycleOwner = LocalLifecycleOwner.current
     val strings = LocalMobileStrings.current
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -82,7 +127,20 @@ fun PlayerScreen(
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var isLandscape by remember { mutableStateOf(false) }
 
-    BackHandler {
+    val castContext = remember(context) {
+        runCatching { CastContext.getSharedInstance(context) }.getOrNull()
+    }
+    var castDeviceName by remember(castContext) {
+        mutableStateOf(
+            runCatching { castContext?.sessionManager?.currentCastSession?.castDevice?.friendlyName }
+                .getOrNull(),
+        )
+    }
+
+    val canGoPrevious = !isMixMode || mixIndex > 0
+
+    BackHandler(enabled = !isInPipMode) {
+        MobilePlaybackService.stop(context)
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         onBack()
     }
@@ -90,16 +148,83 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
+            MobilePlaybackService.stop(context)
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
-    val exoPlayer = remember(channel.streamUrl) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(channel.streamUrl))
-            playWhenReady = true
-            prepare()
+    DisposableEffect(castContext) {
+        val manager = castContext?.sessionManager
+        val listener = object : SessionManagerListener<CastSession> {
+            override fun onSessionStarting(session: CastSession) {}
+            override fun onSessionStarted(session: CastSession, sessionId: String) {
+                castDeviceName = session.castDevice?.friendlyName ?: "Chromecast"
+            }
+            override fun onSessionStartFailed(session: CastSession, error: Int) {
+                castDeviceName = null
+            }
+            override fun onSessionEnding(session: CastSession) {}
+            override fun onSessionEnded(session: CastSession, error: Int) {
+                castDeviceName = null
+            }
+            override fun onSessionResuming(session: CastSession, sessionId: String) {}
+            override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+                castDeviceName = session.castDevice?.friendlyName ?: "Chromecast"
+            }
+            override fun onSessionResumeFailed(session: CastSession, error: Int) {
+                castDeviceName = null
+            }
+            override fun onSessionSuspended(session: CastSession, reason: Int) {}
+        }
+        runCatching { manager?.addSessionManagerListener(listener, CastSession::class.java) }
+        onDispose {
+            runCatching { manager?.removeSessionManagerListener(listener, CastSession::class.java) }
+        }
+    }
+
+    val exoPlayer = remember {
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(10000)
+            .setReadTimeoutMs(20000)
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+        ExoPlayer.Builder(context, renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory))
+            .setAudioAttributes(audioAttributes, true)
+            .build()
+    }
+
+    LaunchedEffect(channel.streamUrl, castDeviceName) {
+        errorText = null
+        showControls = true
+        val activeCast = runCatching { castContext?.sessionManager?.currentCastSession }.getOrNull()
+        if (castDeviceName != null && activeCast != null) {
+            isBuffering = false
+            exoPlayer.pause()
+            exoPlayer.stop()
+            loadChannelOnCast(activeCast, channel)
+        } else {
+            isBuffering = true
+            exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+            exoPlayer.playWhenReady = true
+            exoPlayer.prepare()
+        }
+    }
+
+    LaunchedEffect(channel.name, channel.subtitle, backgroundPlayEnabled, castDeviceName) {
+        if (backgroundPlayEnabled && castDeviceName == null) {
+            MobilePlaybackService.startOrUpdate(context, channel.name, channel.subtitle)
+        } else {
+            MobilePlaybackService.stop(context)
         }
     }
 
@@ -122,14 +247,39 @@ fun PlayerScreen(
             }
         }
         exoPlayer.addListener(listener)
+        exoPlayer.setHandleAudioBecomingNoisy(true)
         onDispose {
             exoPlayer.removeListener(listener)
-            exoPlayer.release()
+            runCatching {
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                exoPlayer.release()
+            }
         }
     }
 
-    LaunchedEffect(showControls, isPlaying) {
-        if (showControls && isPlaying) {
+    DisposableEffect(lifecycleOwner, backgroundPlayEnabled, isInPipMode, castDeviceName) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (!backgroundPlayEnabled && !isInPipMode && castDeviceName == null) {
+                        runCatching { exoPlayer.pause() }
+                    }
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (castDeviceName == null && errorText == null && !exoPlayer.isPlaying) {
+                        runCatching { exoPlayer.play() }
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(showControls, isPlaying, channel.streamUrl, isInPipMode) {
+        if (showControls && isPlaying && !isInPipMode) {
             delay(4000)
             showControls = false
         }
@@ -143,7 +293,7 @@ fun PlayerScreen(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) {
-                showControls = !showControls
+                if (!isInPipMode) showControls = !showControls
             },
     ) {
         AndroidView(
@@ -165,14 +315,45 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (isBuffering && errorText == null) {
+        if (castDeviceName != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xE0050A12))
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CastConnected,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(56.dp),
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = channel.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Chromecast · $castDeviceName",
+                    color = Color(0xFF7DD3FC),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        if (isBuffering && errorText == null && castDeviceName == null) {
             CircularProgressIndicator(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
         }
 
-        if (errorText != null) {
+        if (errorText != null && !isInPipMode && castDeviceName == null) {
             Column(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -185,23 +366,45 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        errorText = null
-                        isBuffering = true
-                        exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = true
-                    },
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text(strings.retry)
+                    OutlinedButton(
+                        onClick = onPreviousChannel,
+                        enabled = canGoPrevious,
+                    ) {
+                        Icon(
+                            Icons.Default.SkipPrevious,
+                            contentDescription = "Canale precedente",
+                            tint = if (canGoPrevious) Color.White else Color.White.copy(alpha = 0.35f),
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            errorText = null
+                            isBuffering = true
+                            exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+                            exoPlayer.prepare()
+                            exoPlayer.playWhenReady = true
+                        },
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text(strings.retry)
+                    }
+                    OutlinedButton(onClick = onNextChannel) {
+                        Icon(
+                            Icons.Default.SkipNext,
+                            contentDescription = "Canale seguente",
+                            tint = Color.White,
+                        )
+                    }
                 }
             }
         }
 
-        if (showControls) {
+        if (showControls && !isInPipMode) {
             // Top bar
             Row(
                 modifier = Modifier
@@ -214,6 +417,7 @@ fun PlayerScreen(
             ) {
                 IconButton(
                     onClick = {
+                        MobilePlaybackService.stop(context)
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         onBack()
                     },
@@ -223,6 +427,21 @@ fun PlayerScreen(
                         contentDescription = "Indietro",
                         tint = Color.White,
                     )
+                }
+                if (isMixMode) {
+                    Box(
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "MIX · ${mixIndex + 1}/${mixTotal.coerceAtLeast(1)}",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -241,6 +460,15 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                IconButton(
+                    onClick = { showCastPickerDialog(context, castContext) },
+                ) {
+                    Icon(
+                        imageVector = if (castDeviceName != null) Icons.Default.CastConnected else Icons.Default.Cast,
+                        contentDescription = "Chromecast",
+                        tint = if (castDeviceName != null) Color(0xFF38BDF8) else Color.White,
+                    )
+                }
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
                         imageVector = if (channel.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -250,25 +478,62 @@ fun PlayerScreen(
                 }
             }
 
-            // Center Play/Pause
-            IconButton(
-                onClick = {
-                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                },
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(64.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+            // Center Previous / Play-Pause / Next
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pausa" else "Riproduci",
-                    tint = Color.White,
-                    modifier = Modifier.size(36.dp),
-                )
+                IconButton(
+                    onClick = onPreviousChannel,
+                    enabled = canGoPrevious,
+                    modifier = Modifier
+                        .size(54.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Canale precedente",
+                        tint = if (canGoPrevious) Color.White else Color.White.copy(alpha = 0.35f),
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        val activeCast = runCatching { castContext?.sessionManager?.currentCastSession }.getOrNull()
+                        if (castDeviceName != null && activeCast?.remoteMediaClient != null) {
+                            activeCast.remoteMediaClient?.togglePlayback()
+                        } else {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        }
+                    },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pausa" else "Riproduci",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onNextChannel,
+                    modifier = Modifier
+                        .size(54.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Canale seguente",
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
             }
 
-            // Bottom bar
+            // Bottom bar: Background Audio toggle, PiP, Aspect Ratio, Screen Rotation
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -279,6 +544,24 @@ fun PlayerScreen(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                IconButton(
+                    onClick = { onToggleBackgroundPlay(!backgroundPlayEnabled) },
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Headphones,
+                        contentDescription = "Riproduzione in background",
+                        tint = if (backgroundPlayEnabled) Color(0xFF00D4FF) else Color.White.copy(alpha = 0.65f),
+                    )
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    IconButton(onClick = onEnterPip) {
+                        Icon(
+                            imageVector = Icons.Default.PictureInPictureAlt,
+                            contentDescription = "Picture in Picture",
+                            tint = Color.White,
+                        )
+                    }
+                }
                 IconButton(
                     onClick = {
                         resizeMode = when (resizeMode) {
@@ -313,4 +596,53 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+private fun showCastPickerDialog(context: Context, castContext: CastContext?) {
+    runCatching {
+        val themedCtx = ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat_Dialog)
+        val currentSession = castContext?.sessionManager?.currentCastSession
+        if (currentSession != null) {
+            MediaRouteControllerDialog(themedCtx).show()
+            return
+        }
+        val selector = castContext?.mergedSelector ?: MediaRouteSelector.Builder()
+            .addControlCategory(
+                CastMediaControlIntent.categoryForCast(
+                    CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID,
+                ),
+            )
+            .build()
+        MediaRouteChooserDialog(themedCtx).apply {
+            routeSelector = selector
+            show()
+        }
+    }
+}
+
+private fun loadChannelOnCast(castSession: CastSession, channel: MobileChannel) {
+    val client = castSession.remoteMediaClient ?: return
+    val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
+        putString(MediaMetadata.KEY_TITLE, channel.name)
+        putString(MediaMetadata.KEY_SUBTITLE, channel.subtitle)
+        channel.logo?.takeIf { it.isNotBlank() }?.let { logoUrl ->
+            addImage(WebImage(Uri.parse(logoUrl)))
+        }
+    }
+    val urlLower = channel.streamUrl.lowercase()
+    val contentType = when {
+        urlLower.contains(".m3u8") || urlLower.contains("m3u8") -> "application/x-mpegURL"
+        urlLower.contains(".mpd") -> "application/dash+xml"
+        else -> "video/mp2t"
+    }
+    val mediaInfo = MediaInfo.Builder(channel.streamUrl)
+        .setStreamType(MediaInfo.STREAM_TYPE_LIVE)
+        .setContentType(contentType)
+        .setMetadata(metadata)
+        .build()
+    val request = MediaLoadRequestData.Builder()
+        .setMediaInfo(mediaInfo)
+        .setAutoplay(true)
+        .build()
+    runCatching { client.load(request) }
 }

@@ -6,20 +6,20 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val CasaBg = Color(0xFF070C10)
-val CasaPanel = Color(0xFF0D171D)
-val CasaPanelHigh = Color(0xFF122028)
-val CasaBorder = Color(0xFF22333B)
-val CasaGreen = Color(0xFF62E69A)
-val CasaText = Color(0xFFF3F7F5)
-val CasaMuted = Color(0xFF9BAEB3)
-val CasaDim = Color(0xFF667B82)
-val CasaWarning = Color(0xFFF2C14E)
-val CasaDanger = Color(0xFFE4635B)
+val CasaBg = Color(0xFF060B14)
+val CasaPanel = Color(0xFF0A1322)
+val CasaPanelHigh = Color(0xFF102036)
+val CasaBorder = Color(0xFF1E3A5F)
+val CasaGreen = Color(0xFF00D4FF)
+val CasaText = Color(0xFFF8FAFC)
+val CasaMuted = Color(0xFFCBD5E1)
+val CasaDim = Color(0xFF94A3B8)
+val CasaWarning = Color(0xFFFF9F0A)
+val CasaDanger = Color(0xFFFF453A)
 
 private val Colors = darkColorScheme(
     primary = CasaGreen,
-    onPrimary = Color(0xFF04140B),
+    onPrimary = Color(0xFF04101A),
     secondary = CasaText,
     background = CasaBg,
     onBackground = CasaText,

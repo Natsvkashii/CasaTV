@@ -1543,24 +1543,24 @@ class CasaHttpServer(
               <title>${nameProvider()} · CasaTV Server</title>
               <style>
                 :root { color-scheme: dark; }
-                body { margin: 0; background: #070C10; color: #F3F7F5;
+                body { margin: 0; background: #060B14; color: #F8FAFC;
                        font-family: system-ui, -apple-system, sans-serif; }
                 main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
                 h1 { font-size: 34px; margin: 0 0 6px; }
-                h1 span { color: #62E69A; }
-                p.lead { color: #9BAEB3; margin: 0 0 28px; }
-                .card { background: #0D171D; border: 1px solid #22333B;
+                h1 span { color: #00D4FF; }
+                p.lead { color: #CBD5E1; margin: 0 0 28px; }
+                .card { background: #0A1322; border: 1px solid #1E3A5F;
                         border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
-                .card h2 { font-size: 12px; letter-spacing: 1.2px; color: #667B82;
+                .card h2 { font-size: 12px; letter-spacing: 1.2px; color: #94A3B8;
                            text-transform: uppercase; margin: 0 0 10px; }
                 ul { margin: 0; padding-left: 18px; line-height: 1.8; }
-                code { color: #62E69A; }
+                code { color: #00D4FF; }
                 .row { display: flex; gap: 26px; flex-wrap: wrap; }
                 .row div { min-width: 110px; }
                 .num { font-size: 26px; font-weight: 700; }
-                .label { color: #9BAEB3; font-size: 12px; }
-                a { color: #62E69A; }
-                footer { color: #667B82; font-size: 12px; margin-top: 26px; }
+                .label { color: #CBD5E1; font-size: 12px; }
+                a { color: #00D4FF; }
+                footer { color: #94A3B8; font-size: 12px; margin-top: 26px; }
               </style>
             </head>
             <body>
@@ -1601,7 +1601,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.012"
+        const val TV_LATEST_VERSION = "26.11.013"
     }
 }
 

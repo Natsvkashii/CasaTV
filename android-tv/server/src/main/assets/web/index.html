@@ -1,325 +1,328 @@
 <!doctype html>
-<html lang="it">
+<html lang="it" data-theme="dark" data-device="pc">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#080c10" />
+    <meta name="theme-color" content="#060B14" id="meta-theme-color" />
     <title>CasaTV</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <!-- Mobile Top Header -->
-    <header class="mobile-header">
-      <a class="mobile-brand" href="#/home">
-        <span class="brand-mark">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="2.5" y="5" width="19" height="13" rx="3"></rect>
-            <path d="M8 21h8M12 18v3"></path>
-            <path class="brand-tune" d="M6.5 9.5h11M6.5 13.5h7"></path>
-          </svg>
-        </span>
-        <strong>CasaTV</strong>
-      </a>
-      <div class="mobile-actions">
-        <button class="country-pill" id="mobile-country-btn" title="Cambia Paese TV">
-          <span id="mobile-country-flag">🇮🇹</span>
-          <span id="mobile-country-code">IT</span>
-        </button>
-        <button class="profile-pill" id="mobile-profile-btn" title="Profili">
-          <span class="avatar-emoji" id="mobile-profile-avatar">👤</span>
-          <span class="profile-name" id="mobile-profile-name">Profilo</span>
-        </button>
-      </div>
-    </header>
+    <div class="bg-glow" aria-hidden="true"></div>
 
-    <div class="shell">
-      <!-- Desktop Sidebar -->
-      <aside class="sidebar">
-        <a class="brand" href="#/home" aria-label="CasaTV">
-          <span class="brand-mark">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="2.5" y="5" width="19" height="13" rx="3"></rect>
-              <path d="M8 21h8M12 18v3"></path>
-              <path class="brand-tune" d="M6.5 9.5h11M6.5 13.5h7"></path>
-            </svg>
-          </span>
-          <span class="brand-text"><strong>CasaTV</strong><small>IPTV &amp; Libreria locale</small></span>
-        </a>
-
-        <!-- Desktop Profile Selector Widget -->
-        <button class="sidebar-profile-card" id="sidebar-profile-btn" title="Cambia profilo">
-          <span class="avatar-emoji-lg" id="sidebar-profile-avatar">👤</span>
-          <div class="profile-info">
-            <strong id="sidebar-profile-name">Profilo</strong>
-            <small id="sidebar-profile-country">Italia · IT</small>
-          </div>
-          <svg class="chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></svg>
-        </button>
-
-        <nav class="nav" aria-label="Sezioni">
-          <a href="#/home" data-nav="home">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg>
-            <span>Home</span>
-          </a>
-          <a href="#/tv" data-nav="tv">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M17 2l-5 5-5-5"></path></svg>
-            <span>Modo TV</span>
-            <em class="badge-accent">Zapping</em>
-          </a>
-          <a href="#/channels" data-nav="channels">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M7 10h10M7 14h6"></path></svg>
-            <span>Canali</span>
-            <em id="nav-channel-count">—</em>
-          </a>
-          <a href="#/library" data-nav="library">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M3 12h18"></path></svg>
-            <span>Libreria</span>
-            <em id="nav-library-count">0</em>
-          </a>
-          <a href="#/settings" data-nav="settings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
-            <span>Impostazioni</span>
-          </a>
-        </nav>
-
-        <div class="sidebar-foot">
-          <div class="server-state" id="server-state">
-            <span class="pulse"></span>
-            <div><strong>Server locale</strong><small id="server-url">connessione…</small></div>
-          </div>
-          <div class="version" id="app-version">CasaTV 1.3.1</div>
+    <div class="app-shell">
+      <!-- Unified Top Navigation Bar (adapts cleanly for PC, Tablet, and Smartphone) -->
+      <header class="topbar" id="topbar">
+        <!-- Segmented Pill: Canali | Preferiti (matches Android TV & Mobile) -->
+        <div class="subtab-pill" role="tablist" aria-label="Sezioni">
+          <button type="button" class="subtab-btn is-active" data-nav="channels" role="tab" aria-selected="true" id="nav-tab-channels">
+            Canali
+          </button>
+          <button type="button" class="subtab-btn" data-nav="favorites" role="tab" aria-selected="false" id="nav-tab-favorites">
+            Preferiti
+          </button>
         </div>
-      </aside>
 
-      <!-- Main Content Area -->
-      <main class="main" id="app" tabindex="-1">
-        <div class="loading-screen">
+        <!-- Standalone Mix Pill to the right of Preferiti -->
+        <button type="button" class="mix-pill-btn" id="btn-open-mix" title="Mix Mappamondo">
+          <span class="mix-dot" aria-hidden="true"></span>
+          <span>Mix</span>
+        </button>
+
+        <!-- Universal Global Channel Search Bar -->
+        <div class="search-pill" id="search-pill">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+          <input type="search" id="global-search-input" class="search-input" placeholder="Cerca canali…" autocomplete="off" />
+          <div class="search-spinner" id="search-spinner" hidden></div>
+          <button type="button" class="search-clear-btn" id="global-search-clear" aria-label="Cancella ricerca" hidden>✕</button>
+        </div>
+
+        <!-- Country Selector Pill -->
+        <button type="button" class="country-pill" id="topbar-country-btn" title="Cambia Paese TV">
+          <span id="topbar-country-flag">🇮🇹</span>
+          <span id="topbar-country-name">Italia</span>
+          <span class="caret" aria-hidden="true">▾</span>
+        </button>
+
+        <!-- Live Server Status / Channel Count Pill -->
+        <div class="status-pill" id="topbar-status-pill" title="Stato server e canali">
+          <span class="status-dot" id="topbar-status-dot"></span>
+          <span id="topbar-status-text">Carico…</span>
+        </div>
+
+        <!-- Optional GitHub Update Badge -->
+        <button type="button" class="update-pill" id="topbar-update-badge" hidden title="Aggiornamento disponibile su GitHub">
+          <span id="topbar-update-text">⬆ v0.0.0</span>
+        </button>
+
+        <!-- Profile Circular Button -->
+        <button type="button" class="circle-icon-btn profile-btn" id="topbar-profile-btn" title="Profilo utente">
+          <span id="topbar-profile-avatar">👤</span>
+        </button>
+
+        <!-- Settings Gear Circular Button -->
+        <button type="button" class="circle-icon-btn" id="topbar-settings-btn" data-nav="settings" title="Impostazioni" aria-label="Impostazioni">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
+          </svg>
+        </button>
+      </header>
+
+      <!-- Main Screen Viewport -->
+      <main class="main-stage" id="app" tabindex="-1">
+        <div class="loading-box">
           <div class="spinner"></div>
           <p>Carico CasaTV…</p>
         </div>
       </main>
-    </div>
 
-    <!-- Mobile Bottom Navigation Bar -->
-    <nav class="mobile-bottom-nav" aria-label="Navigazione mobile">
-      <a href="#/home" data-nav="home">
-        <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"></path><path d="M5 10v10h14V10"></path></svg>
-        <span>Home</span>
-      </a>
-      <a href="#/tv" data-nav="tv">
-        <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M17 2l-5 5-5-5"></path></svg>
-        <span>TV Mode</span>
-      </a>
-      <a href="#/channels" data-nav="channels">
-        <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M7 10h10M7 14h6"></path></svg>
-        <span>Canali</span>
-      </a>
-      <a href="#/library" data-nav="library">
-        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16"></path></svg>
-        <span>Libreria</span>
-      </a>
-      <a href="#/settings" data-nav="settings">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
-        <span>Impostazioni</span>
-      </a>
-    </nav>
+      <!-- Smartphone / Compact Touch Bottom Navigation Bar -->
+      <nav class="bottom-nav" id="bottom-nav" aria-label="Navigazione">
+        <button type="button" class="bottom-nav-item is-active" data-nav="channels">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2.5"></rect><path d="M8 20h8M12 17v3"></path></svg>
+          <span id="bottom-nav-channels-label">Canali</span>
+        </button>
+        <button type="button" class="bottom-nav-item" data-nav="favorites">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+          <span id="bottom-nav-favorites-label">Preferiti</span>
+        </button>
+        <button type="button" class="bottom-nav-item is-mix" id="bottom-nav-mix">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>
+          <span>Mix</span>
+        </button>
+        <button type="button" class="bottom-nav-item" data-nav="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+          <span id="bottom-nav-settings-label">Impostazioni</span>
+        </button>
+      </nav>
+    </div>
 
     <!-- Toast Notifications -->
     <div class="toast-stack" id="toasts" aria-live="polite"></div>
 
-    <!-- Live TV & Channel Player Modal -->
-    <div class="modal" id="player-modal" hidden>
-      <div class="modal-backdrop" data-close-modal></div>
-      <div class="modal-card player-card" role="dialog" aria-modal="true" aria-labelledby="player-title">
-        <button class="icon-btn modal-close" data-close-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="player-video">
-          <video id="preview-video" playsinline autoplay controls></video>
-          <div class="player-loading" id="player-loading"><div class="spinner"></div></div>
-          <div class="player-error-screen" id="player-error" hidden>
-            <div class="player-error-box">
-              <svg viewBox="0 0 24 24" class="err-icon"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4M12 16h.01"></path></svg>
-              <h3>Canale temporaneamente non disponibile</h3>
-              <p id="player-error-msg">Nessuna sorgente raggiungibile al momento.</p>
-              <div class="error-actions">
-                <button class="btn primary" id="player-retry-btn">Riprova</button>
-                <button class="btn ghost" id="player-next-src-btn">Sorgente successiva</button>
-              </div>
+    <!-- Fullscreen / Modal Live Channel Player -->
+    <div class="player-overlay" id="player-modal" hidden>
+      <div class="player-stage" id="player-stage" role="dialog" aria-modal="true" aria-labelledby="player-ch-name">
+        <video id="preview-video" playsinline autoplay></video>
+
+        <!-- Buffering / Tuning Spinner (unified cyan accent, zero green) -->
+        <div class="player-tuning" id="player-loading" hidden>
+          <div class="spinner"></div>
+          <p id="player-tuning-label">Sintonizzazione…</p>
+        </div>
+
+        <!-- Stream Error Overlay -->
+        <div class="player-error-screen" id="player-error" hidden>
+          <div class="player-error-box">
+            <span class="player-err-badge">!</span>
+            <h3 id="player-error-title">Flusso non disponibile</h3>
+            <p id="player-error-msg">Impossibile riprodurre questo canale al momento.</p>
+            <div class="player-error-actions">
+              <button type="button" class="casa-btn primary" id="player-retry-btn">Riprova</button>
+              <button type="button" class="casa-btn ghost" id="player-next-src-btn" hidden>Sorgente successiva</button>
+              <button type="button" class="casa-btn ghost" id="player-next-ch-btn">Canale successivo</button>
             </div>
           </div>
         </div>
-        <div class="player-info">
-          <div class="player-logo" id="player-logo"></div>
-          <div class="player-copy">
-            <span class="eyebrow" id="player-number"></span>
-            <h2 id="player-title">Canale</h2>
-            <p id="player-sub"></p>
+
+        <!-- Numeric Direct Tuning Badge (Top-Right) -->
+        <div class="player-num-overlay" id="player-num-overlay" hidden>
+          <span class="tag">CANALE</span>
+          <strong id="player-num-digits"></strong>
+        </div>
+
+        <!-- Quick Top Bar on Player (touch & pointer actions) -->
+        <div class="player-top-actions" id="player-top-actions">
+          <div class="player-top-left">
+            <button type="button" class="player-chip-btn" id="player-drawer-toggle">☰ Lista</button>
+            <button type="button" class="player-chip-btn" id="player-mix-regions-btn" hidden>🌍 Regioni Mix</button>
           </div>
-          <div class="player-actions">
-            <button class="btn ghost" id="player-fav">⭐ Preferito</button>
-            <button class="btn ghost" id="player-open" target="_blank">Apri flusso</button>
-            <button class="btn ghost" id="player-fullscreen-btn" title="Schermo intero">⛶</button>
+          <div class="player-top-right">
+            <button type="button" class="player-chip-btn" id="player-prev-ch">◀ Prec.</button>
+            <button type="button" class="player-chip-btn" id="player-next-ch">▶ Succ.</button>
+            <button type="button" class="player-chip-btn" id="player-fav-btn">☆ Preferito</button>
+            <button type="button" class="player-chip-btn" id="player-pip-btn" hidden>PiP</button>
+            <button type="button" class="player-chip-btn" id="player-mute-btn" title="Audio">🔊</button>
+            <button type="button" class="player-chip-btn" id="player-fullscreen-btn" title="Schermo intero">⛶</button>
+            <button type="button" class="player-chip-btn close" id="player-close-btn" aria-label="Chiudi">✕</button>
           </div>
         </div>
-        <div class="player-sources-bar" id="player-sources" hidden>
-          <small>Sorgenti:</small>
-          <div class="sources-chips" id="player-sources-chips"></div>
+
+        <!-- Left Quick Channel Drawer (slides open on ArrowLeft / ☰ Lista) -->
+        <aside class="player-quick-drawer" id="player-quick-drawer" hidden aria-label="Menu rapido canali">
+          <div class="drawer-head">
+            <div>
+              <strong id="drawer-title">Canali</strong>
+              <small id="drawer-sub">Sfoglia senza interrompere · OK o clic per aprire</small>
+            </div>
+            <button type="button" class="drawer-close-btn" id="drawer-close-btn" aria-label="Chiudi lista">✕</button>
+          </div>
+          <div class="drawer-list" id="drawer-list"></div>
+        </aside>
+
+        <!-- Fixed-Height Bottom OSD Info Strip (always same height regardless of channel name length) -->
+        <div class="player-bottom-strip" id="player-bottom-strip">
+          <div class="strip-badges">
+            <span class="strip-mix-badge" id="strip-mix-badge" hidden>MIX · 1/1</span>
+            <span class="strip-num-badge" id="strip-num-badge">—</span>
+          </div>
+          <div class="strip-channel-meta">
+            <span class="strip-ch-name" id="player-ch-name">Canale</span>
+            <span class="strip-ch-flag" id="player-ch-flag"></span>
+            <span class="strip-ch-quality" id="player-ch-quality" hidden></span>
+            <span class="strip-sync-pill" id="player-sync-pill" hidden>● Sync Multi-TV</span>
+          </div>
+          <div class="strip-hints" id="strip-hints">
+            <span class="hint-chip"><kbd>◀</kbd> Lista</span>
+            <span class="hint-chip"><kbd>▲▼</kbd> Canali</span>
+            <span class="hint-chip"><kbd>M</kbd> Preferito</span>
+            <span class="hint-chip"><kbd>Esc</kbd> Esci</span>
+          </div>
+          <div class="strip-clock" id="strip-clock">00:00</div>
         </div>
-        <div class="player-epg" id="player-epg"></div>
       </div>
     </div>
 
-    <!-- Movie & Series Library Detail Modal -->
-    <div class="modal" id="movie-modal" hidden>
-      <div class="modal-backdrop" data-close-movie-modal></div>
-      <div class="modal-card movie-card" role="dialog" aria-modal="true">
-        <button class="icon-btn modal-close" data-close-movie-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="movie-modal-body" id="movie-modal-body">
-          <!-- Filled by JS -->
+    <!-- Interactive World Map (Mappamondo) Mix Region Selector Modal -->
+    <div class="modal" id="mix-modal" hidden>
+      <div class="modal-backdrop" data-close-mix-modal></div>
+      <div class="modal-card mappamondo-dialog" role="dialog" aria-modal="true" aria-labelledby="mix-modal-title">
+        <div class="mix-header">
+          <div class="mix-header-titles">
+            <h2 id="mix-modal-title">MIX · MAPPAMONDO</h2>
+            <p class="mix-active-summary" id="mix-active-summary">TUTTO IL MONDO · 0 canali</p>
+          </div>
+          <div class="mix-header-actions">
+            <button type="button" class="casa-btn ghost" id="mix-btn-all-world">🌍 Tutto il mondo</button>
+            <button type="button" class="casa-btn primary" id="mix-btn-start">▶ Avvia Mix</button>
+            <button type="button" class="casa-btn ghost" data-close-mix-modal>Chiudi</button>
+          </div>
+        </div>
+
+        <!-- Interactive SVG World Map Canvas -->
+        <div class="mix-map-container" id="mix-map-container">
+          <svg class="mix-world-svg" id="mix-world-svg" viewBox="0 0 1000 515" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mappamondo interattivo delle regioni">
+            <g class="map-graticule" id="mix-map-graticule"></g>
+            <g class="map-regions" id="mix-map-regions"></g>
+            <g class="map-anchors" id="mix-map-anchors"></g>
+          </svg>
+          <!-- Compact Name-Only Floating Callout Pill -->
+          <div class="mix-map-callout" id="mix-map-callout" hidden>
+            <span class="callout-name" id="mix-callout-name">EUROPA</span>
+          </div>
+        </div>
+
+        <!-- Bottom Region Cards Row (channel counts + sociological subtitles live here) -->
+        <div class="mix-regions-strip" id="mix-regions-strip"></div>
+
+        <div class="mix-footer-hint" id="mix-footer-hint">
+          Seleziona una o più aree del mappamondo · Tutto il mondo include tutti i continenti
         </div>
       </div>
     </div>
 
-    <!-- Profile Selection & Management Modal ("Chi sta guardando?") -->
+    <!-- Profile Selection Gate & Manager Modal ("Chi sta guardando?") -->
     <div class="modal" id="profile-modal" hidden>
       <div class="modal-backdrop" data-close-profile-modal></div>
-      <div class="modal-card profile-card" role="dialog" aria-modal="true">
-        <button class="icon-btn modal-close" data-close-profile-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="profile-gate-header">
-          <h2>Chi sta guardando?</h2>
-          <p>Scegli il tuo profilo o creane uno nuovo per ritrovare preferiti e cronologia.</p>
+      <div class="modal-card profile-gate-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-gate-title">
+        <div id="profile-gate-view">
+          <div class="profile-gate-head">
+            <h2 id="profile-gate-title">Chi sta guardando?</h2>
+            <p id="profile-gate-sub">Scegli un profilo per continuare</p>
+          </div>
+          <div class="profile-tiles-row" id="modal-profiles-grid"></div>
+          <div class="profile-gate-actions">
+            <button type="button" class="casa-btn ghost" id="btn-gate-back" hidden>Torna indietro</button>
+            <button type="button" class="casa-btn ghost" id="btn-gate-manage">Gestisci profili</button>
+          </div>
         </div>
-        <div class="profiles-grid" id="modal-profiles-grid">
-          <!-- Rendered by JS -->
-        </div>
-        <div class="profile-gate-actions">
-          <button class="btn ghost" id="btn-create-profile-prompt">+ Nuovo profilo</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- PIN Authentication Modal (4 Cifre per Gestione Server) -->
-    <div class="modal" id="pin-modal" hidden>
-      <div class="modal-backdrop" data-close-pin-modal></div>
-      <div class="modal-card pin-card" role="dialog" aria-modal="true">
-        <button class="icon-btn modal-close" data-close-pin-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="pin-header">
-          <div class="pin-icon-circle">
-            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-          </div>
-          <h2>Accesso Gestione Server</h2>
-          <p>Inserisci il PIN a 4 cifre per accedere alla configurazione e monitoraggio del server.</p>
-        </div>
-        
-        <form id="pin-form">
-          <div class="pin-inputs" id="pin-inputs">
-            <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" data-idx="0" autofocus />
-            <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" data-idx="1" />
-            <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" data-idx="2" />
-            <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" data-idx="3" />
-          </div>
-          <div class="pin-error" id="pin-error-msg" hidden>PIN non valido. Riprova.</div>
-          <div class="pin-hint">PIN predefinito: <strong>0000</strong> (modificabile all'interno)</div>
-          
-          <!-- Keypad for touch/mobile devices -->
-          <div class="touch-keypad">
-            <button type="button" class="kp-btn" data-val="1">1</button>
-            <button type="button" class="kp-btn" data-val="2">2</button>
-            <button type="button" class="kp-btn" data-val="3">3</button>
-            <button type="button" class="kp-btn" data-val="4">4</button>
-            <button type="button" class="kp-btn" data-val="5">5</button>
-            <button type="button" class="kp-btn" data-val="6">6</button>
-            <button type="button" class="kp-btn" data-val="7">7</button>
-            <button type="button" class="kp-btn" data-val="8">8</button>
-            <button type="button" class="kp-btn" data-val="9">9</button>
-            <button type="button" class="kp-btn ghost" data-action="clear">C</button>
-            <button type="button" class="kp-btn" data-val="0">0</button>
-            <button type="button" class="kp-btn ghost" data-action="back">⌫</button>
-          </div>
-
-          <div class="form-actions" style="margin-top:14px">
-            <button type="submit" class="btn primary" style="width:100%" id="pin-submit-btn">Sblocca Gestione Server</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <!-- Country Selector Modal -->
-    <div class="modal" id="country-modal" hidden>
-      <div class="modal-backdrop" data-close-country-modal></div>
-      <div class="modal-card country-card" role="dialog" aria-modal="true">
-        <button class="icon-btn modal-close" data-close-country-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="modal-head-simple">
-          <h2>Seleziona Paese TV</h2>
-          <p>I canali in Home e in Modo TV saranno filtrati per questo paese.</p>
-        </div>
-        <div class="country-search-bar">
-          <input type="search" id="country-search-input" class="input" placeholder="Cerca paese o codice ISO..." />
-        </div>
-        <div class="countries-list" id="modal-countries-list">
-          <!-- Rendered by JS -->
-        </div>
-      </div>
-    </div>
-
-    <!-- Admin Profile Create/Edit Modal -->
-    <div class="modal" id="admin-profile-modal" hidden>
-      <div class="modal-backdrop" data-close-admin-profile-modal></div>
-      <div class="modal-card profile-card" role="dialog" aria-modal="true" style="max-width:440px">
-        <button class="icon-btn modal-close" data-close-admin-profile-modal aria-label="Chiudi">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
-        <div class="modal-head-simple" style="margin-bottom:18px">
-          <h2 id="adm-prof-modal-title">Crea Profilo</h2>
-          <p>Configura i dettagli dell'utente per gestire preferiti e quote replay.</p>
-        </div>
-        <form id="admin-profile-form">
-          <input type="hidden" id="adm-prof-id" value="" />
-          <div class="field" style="margin-bottom:14px">
-            <label>Nome Utente</label>
-            <input class="input" id="adm-prof-name" placeholder="Es. Marco, Soggiorno..." required />
-          </div>
-          <div class="field" style="margin-bottom:14px">
-            <label>Avatar Emoji</label>
-            <div class="avatar-picker-grid" id="adm-avatar-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;max-height:160px;overflow-y:auto;padding:8px;background:var(--panel-2);border-radius:8px;border:1px solid var(--line-soft)">
-              <!-- Populated by JS -->
+        <!-- Profile Create / Edit View inside the same clean modal -->
+        <div id="profile-editor-view" hidden>
+          <div class="profile-editor-head">
+            <div>
+              <span class="eyebrow">PROFILI CASATV</span>
+              <h2 id="profile-editor-title">Nuovo profilo</h2>
+            </div>
+            <div class="editor-head-actions">
+              <button type="button" class="casa-btn ghost" id="btn-editor-cancel">Annulla</button>
+              <button type="button" class="casa-btn primary" id="btn-editor-save">Salva</button>
             </div>
           </div>
-          <div class="field" style="margin-bottom:14px">
-            <label>Paese TV Predefinito</label>
-            <select class="input" id="adm-prof-country">
-              <option value="IT">Italia (IT)</option>
-              <option value="ES">Spagna (ES)</option>
-              <option value="EC">Ecuador (EC)</option>
-              <option value="US">Stati Uniti (US)</option>
-              <option value="GB">Regno Unito (GB)</option>
-              <option value="FR">Francia (FR)</option>
-              <option value="DE">Germania (DE)</option>
-              <option value="CH">Svizzera (CH)</option>
-            </select>
+          <div class="profile-editor-body">
+            <div class="editor-identity">
+              <div class="editor-avatar-preview" id="editor-avatar-preview">🦊</div>
+              <div class="field-col">
+                <label for="editor-prof-name">Nome del profilo</label>
+                <input type="text" id="editor-prof-name" class="casa-input" maxlength="28" placeholder="Es. Marco" />
+              </div>
+              <div class="editor-selects">
+                <div class="field-col">
+                  <label for="editor-prof-lang">Lingua dell'app</label>
+                  <select id="editor-prof-lang" class="casa-select">
+                    <option value="it">Italiano</option>
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                  </select>
+                </div>
+                <div class="field-col">
+                  <label for="editor-prof-country">Paese preferito</label>
+                  <select id="editor-prof-country" class="casa-select"></select>
+                </div>
+              </div>
+              <button type="button" class="casa-btn danger" id="btn-editor-delete" hidden>Elimina profilo</button>
+            </div>
+            <div class="editor-avatars">
+              <label>Scegli un avatar</label>
+              <div class="avatar-picker-grid" id="editor-avatar-grid"></div>
+            </div>
           </div>
-          <div class="field" style="margin-bottom:18px">
-            <label>Lingua Interfaccia</label>
-            <select class="input" id="adm-prof-lang">
-              <option value="it">Italiano</option>
-              <option value="es">Español</option>
-              <option value="en">English</option>
-            </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Country Selector Overlay Modal -->
+    <div class="modal" id="country-modal" hidden>
+      <div class="modal-backdrop" data-close-country-modal></div>
+      <div class="modal-card country-dialog" role="dialog" aria-modal="true" aria-labelledby="country-modal-title">
+        <div class="country-modal-head">
+          <div>
+            <h2 id="country-modal-title">Paese della modalità TV</h2>
+            <p id="country-modal-sub">I canali vengono ordinati per il paese scelto.</p>
           </div>
-          <div class="form-actions">
-            <button class="btn primary" type="submit" style="width:100%" id="adm-prof-save-btn">Salva Profilo</button>
+          <button type="button" class="casa-btn ghost" data-close-country-modal>Chiudi</button>
+        </div>
+        <div class="search-pill country-search">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+          <input type="search" id="country-search-input" class="search-input" placeholder="Cerca un paese…" autocomplete="off" />
+        </div>
+        <div class="countries-grid" id="modal-countries-list"></div>
+      </div>
+    </div>
+
+    <!-- Server Picker Dialog (from Settings) -->
+    <div class="modal" id="server-modal" hidden>
+      <div class="modal-backdrop" data-close-server-modal></div>
+      <div class="modal-card compact-dialog" role="dialog" aria-modal="true">
+        <div class="country-modal-head">
+          <div>
+            <h2>Cambia server CasaTV</h2>
+            <p>Inserisci l'indirizzo locale del server (es. http://casatv.local:8787).</p>
           </div>
-        </form>
+          <button type="button" class="casa-btn ghost" data-close-server-modal>Chiudi</button>
+        </div>
+        <div class="field-row">
+          <input type="url" id="manual-server-input" class="casa-input" placeholder="http://192.168.10.15:8787" />
+          <button type="button" class="casa-btn primary" id="btn-connect-manual-server">Collega</button>
+        </div>
       </div>
     </div>
 

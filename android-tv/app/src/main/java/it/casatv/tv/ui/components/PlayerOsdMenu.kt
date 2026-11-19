@@ -213,8 +213,8 @@ fun PlayerOsdMenu(
         modifier = modifier
             .padding(bottom = 64.dp, start = 48.dp, end = 48.dp)
             .clip(RoundedCornerShape(24.dp))
-            .background(if (isLight) Color(0xF5FFFFFF) else Color(0xF0141416))
-            .border(1.dp, if (isLight) CasaBorder else Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+            .background(if (isLight) Color(0xF5FFFFFF) else Color(0xF208111E))
+            .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), RoundedCornerShape(24.dp))
             .padding(horizontal = 24.dp, vertical = 20.dp),
     ) {
         Column {
@@ -496,14 +496,14 @@ private fun OsdItemButton(
     val shape = RoundedCornerShape(14.dp)
     val backgroundColor = when {
         isFocused -> if (isLight) CasaBlue else Color.White
-        isSelected -> if (isLight) Color(0x1F0070F3) else Color(0x330A84FF)
-        else -> if (isLight) Color(0x0A000000) else Color(0x14FFFFFF)
+        isSelected -> if (isLight) Color(0x1F0284C7) else Color(0x2E00D4FF)
+        else -> if (isLight) Color(0x0A000000) else Color(0x140E1D33)
     }
 
     val borderColor = when {
         isFocused -> if (isLight) CasaBlue else Color.White
         isSelected -> CasaBlue
-        else -> if (isLight) CasaBorder else Color(0x2EFFFFFF)
+        else -> if (isLight) CasaBorder else Color(0xFF1E3A5F)
     }
 
     val borderWidth = if (isFocused) 2.dp else 1.dp

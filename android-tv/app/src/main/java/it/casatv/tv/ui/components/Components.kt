@@ -1,9 +1,6 @@
 package it.casatv.tv.ui.components
 
 import android.view.KeyEvent as AndroidKeyEvent
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,7 +11,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,62 +34,51 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.ImeAction
-import it.casatv.tv.data.GlobalSearchResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import it.casatv.tv.R
 import it.casatv.tv.data.Channel
-import it.casatv.tv.data.Profile
+import it.casatv.tv.data.GlobalSearchResult
 import it.casatv.tv.ui.LocalAppStrings
-import it.casatv.tv.ui.MainTab
 import it.casatv.tv.ui.countryFlag
 import it.casatv.tv.ui.formatNumber
 import it.casatv.tv.ui.initials
 import it.casatv.tv.ui.localizedSubtitle
 import it.casatv.tv.ui.theme.CasaAmber
 import it.casatv.tv.ui.theme.CasaBackground
-import it.casatv.tv.ui.theme.CasaBackgroundDeep
 import it.casatv.tv.ui.theme.CasaBorder
 import it.casatv.tv.ui.theme.CasaDim
 import it.casatv.tv.ui.theme.CasaGreen
@@ -102,6 +87,7 @@ import it.casatv.tv.ui.theme.CasaRed
 import it.casatv.tv.ui.theme.CasaSurface
 import it.casatv.tv.ui.theme.CasaSurfaceHigh
 import it.casatv.tv.ui.theme.CasaText
+import kotlinx.coroutines.delay
 
 data class TvUiScale(
     val screenWidthDp: Int,
@@ -186,500 +172,6 @@ fun BackgroundGlow(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun CasaLogo(compact: Boolean = false) {
-    if (compact) {
-        Image(
-            painter = painterResource(R.drawable.ic_brand),
-            contentDescription = null,
-            modifier = Modifier.size(32.dp),
-        )
-    } else {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(R.drawable.ic_brand),
-                contentDescription = null,
-                modifier = Modifier.size(34.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = "CasaTV",
-                    color = CasaText,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.4).sp,
-                )
-                Text(
-                    text = "IPTV LOCALE",
-                    color = CasaDim,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.2.sp,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun NavRail(
-    selected: MainTab,
-    serverName: String,
-    serverUrl: String,
-    profile: Profile?,
-    isServerDisconnected: Boolean = false,
-    onSwitchProfile: () -> Unit,
-    onSelect: (MainTab) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var isRailFocused by remember { mutableStateOf(false) }
-    var isExpanded by remember { mutableStateOf(false) }
-    val scale = rememberTvUiScale()
-
-    LaunchedEffect(isRailFocused) {
-        if (isRailFocused) {
-            delay(160) // Prevent flickering open/close on transient focus pass-throughs
-            if (isRailFocused) isExpanded = true
-        } else {
-            isExpanded = false
-        }
-    }
-
-    val width by animateDpAsState(
-        targetValue = if (isExpanded) 220.dp else if (scale.isCompact) 58.dp else 68.dp,
-        animationSpec = tween(120),
-        label = "nav-width",
-    )
-    val railShape = RoundedCornerShape(22.dp)
-
-    Column(
-        modifier = modifier
-            .width(width)
-            .fillMaxHeight()
-            .onFocusChanged { isRailFocused = it.hasFocus }
-            .clip(railShape)
-            .background(CasaSurface)
-            .border(1.dp, CasaBorder, railShape)
-            .padding(horizontal = if (isExpanded) 12.dp else 6.dp, vertical = if (scale.isCompact) 12.dp else 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        CasaLogo(compact = !isExpanded)
-        if (isServerDisconnected) {
-            Spacer(Modifier.height(6.dp))
-            if (isExpanded) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0x26FF5555))
-                        .border(1.dp, Color(0x66FF5555), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFF5555)),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Server scollegato",
-                        color = Color(0xFFFF7777),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(if (scale.isCompact) 24.dp else 28.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x26FF5555))
-                        .border(1.dp, Color(0x66FF5555), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFF5555)),
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(if (scale.isCompact) 14.dp else 18.dp))
-        val primaryTabs = listOf(MainTab.Home, MainTab.Tv)
-        primaryTabs.forEach { tab ->
-            NavRailItem(
-                tab = tab,
-                selected = selected == tab,
-                isExpanded = isExpanded,
-                onClick = { onSelect(tab) },
-            )
-            Spacer(Modifier.height(if (scale.isCompact) 4.dp else 6.dp))
-        }
-        Spacer(Modifier.weight(1f))
-        NavRailItem(
-            tab = MainTab.Settings,
-            selected = selected == MainTab.Settings,
-            isExpanded = isExpanded,
-            onClick = { onSelect(MainTab.Settings) },
-        )
-        Spacer(Modifier.height(if (scale.isCompact) 6.dp else 8.dp))
-        if (profile != null) {
-            ProfileChip(
-                profile = profile,
-                isExpanded = isExpanded,
-                onClick = onSwitchProfile,
-            )
-            Spacer(Modifier.height(if (scale.isCompact) 6.dp else 8.dp))
-        }
-        if (isExpanded) {
-            ServerCard(
-                serverName = serverName,
-                serverUrl = serverUrl,
-                isDisconnected = isServerDisconnected,
-            )
-        }
-    }
-}
-
-@Composable
-private fun NavRailItem(
-    tab: MainTab,
-    selected: Boolean,
-    isExpanded: Boolean,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(14.dp)
-    val isLight = it.casatv.tv.ui.theme.CasaIsLight
-    val background = when {
-        focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
-        selected -> if (isLight) Color(0x1F0070F3) else Color(0x26FFFFFF)
-        else -> Color.Transparent
-    }
-    val contentColor = when {
-        focused -> if (isLight) Color.White else Color.Black
-        selected -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
-        else -> CasaMuted
-    }
-
-    Row(
-        modifier = Modifier
-            .then(if (isExpanded) Modifier.fillMaxWidth() else Modifier.size(46.dp))
-            .clip(shape)
-            .background(background)
-            .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else if (selected) (if (isLight) Color(0x330070F3) else Color(0x33FFFFFF)) else Color.Transparent,
-                shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                role = Role.Tab,
-                onClick = onClick,
-            )
-            .padding(horizontal = if (isExpanded) 12.dp else 0.dp, vertical = if (isExpanded) 10.dp else 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = tab.icon,
-            contentDescription = tab.label(LocalAppStrings.current.language),
-            tint = contentColor,
-            modifier = Modifier.size(20.dp),
-        )
-        if (isExpanded) {
-            Spacer(Modifier.width(11.dp))
-            Text(
-                text = tab.label(LocalAppStrings.current.language),
-                color = contentColor,
-                fontSize = 14.sp,
-                fontWeight = if (focused || selected) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileChip(
-    profile: Profile,
-    isExpanded: Boolean,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val strings = LocalAppStrings.current
-    val shape = if (isExpanded) RoundedCornerShape(16.dp) else CircleShape
-    val isLight = it.casatv.tv.ui.theme.CasaIsLight
-    Row(
-        modifier = Modifier
-            .then(if (isExpanded) Modifier.fillMaxWidth() else Modifier.size(48.dp))
-            .clip(shape)
-            .background(if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else if (isLight) CasaSurface else Color(0x1AFFFFFF))
-            .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaBorder,
-                shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .padding(horizontal = if (isExpanded) 10.dp else 0.dp, vertical = if (isExpanded) 8.dp else 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(if (isExpanded) 32.dp else 40.dp)
-                .clip(CircleShape)
-                .border(2.dp, if (focused) (if (isLight) Color.White else Color.Black) else if (isLight) CasaBorder else Color.White.copy(alpha = 0.85f), CircleShape)
-                .background(if (isLight) CasaSurfaceHigh else Color(0x33FFFFFF)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(text = profile.avatar, fontSize = if (isExpanded) 16.sp else 22.sp)
-        }
-        if (isExpanded) {
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = profile.name,
-                    color = if (focused) (if (isLight) Color.White else Color.Black) else CasaText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = strings.t("Profilo", "Profile", "Perfil"),
-                    color = if (focused) (if (isLight) Color(0xCCFFFFFF) else Color(0x99000000)) else CasaDim,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ServerCard(
-    serverName: String,
-    serverUrl: String,
-    isDisconnected: Boolean = false,
-) {
-    val shape = RoundedCornerShape(14.dp)
-    val dotColor = if (isDisconnected) Color(0xFFFF5555) else CasaGreen
-    val borderColor = if (isDisconnected) Color(0x66FF5555) else CasaBorder
-    val bgColor = if (isDisconnected) Color(0x1AFF5555) else Color(0x14FFFFFF)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(bgColor)
-            .border(1.dp, borderColor, shape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(dotColor),
-            )
-            Spacer(Modifier.width(7.dp))
-            Text(
-                text = if (isDisconnected) "${serverName.ifBlank { "CasaTV" }} (Offline)" else serverName.ifBlank { "CasaTV" },
-                color = if (isDisconnected) Color(0xFFFF8888) else CasaText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = if (isDisconnected) "Flussi memorizzati attivi" else serverUrl.removePrefix("http://").removePrefix("https://"),
-            color = if (isDisconnected) Color(0xFFFFBBAA) else CasaMuted,
-            fontSize = 9.sp,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-fun ScreenHeader(
-    eyebrow: String,
-    title: String,
-    subtitle: String? = null,
-    modifier: Modifier = Modifier,
-    trailing: @Composable (() -> Unit)? = null,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(CasaGreen),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = eyebrow.uppercase(),
-                    color = CasaGreen,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp,
-                )
-            }
-            Spacer(Modifier.height(7.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineLarge,
-                color = CasaText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = CasaMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        trailing?.invoke()
-    }
-}
-
-@Composable
-fun HomeChannelCard(
-    channel: Channel,
-    onClick: () -> Unit,
-    onFavorite: () -> Unit,
-    modifier: Modifier = Modifier,
-    cardWidth: Dp = 215.dp,
-    cardHeight: Dp = 215.dp,
-    artworkHeight: Dp = 120.dp,
-) {
-    val strings = LocalAppStrings.current
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(20.dp)
-    val isLight = it.casatv.tv.ui.theme.CasaIsLight
-
-    Column(
-        modifier = modifier
-            .width(cardWidth)
-            .height(cardHeight)
-            .zIndex(if (focused) 2f else 0f)
-            .clip(shape)
-            .background(if (focused) (if (isLight) CasaSurface else Color.White) else CasaSurface)
-            .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaBorder,
-                shape = shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-            )
-            .onPreviewKeyEvent { event ->
-                if (
-                    event.type == KeyEventType.KeyUp &&
-                    event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_MENU
-                ) {
-                    onFavorite()
-                    true
-                } else {
-                    false
-                }
-            },
-    ) {
-        ChannelArtwork(
-            channel = channel,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(artworkHeight),
-            compact = false,
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-        ) {
-            Text(
-                text = channel.name,
-                color = if (focused) (if (isLight) CasaText else Color.Black) else CasaText,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                text = channel.now?.title?.let {
-                    "${strings.t("Ora", "Now")}: $it"
-                } ?: localizedSubtitle(channel, strings.language),
-                color = if (focused) (if (isLight) CasaMuted else Color(0x99000000)) else if (channel.now != null) CasaMuted else CasaDim,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = channel.categoryNames.firstOrNull() ?: channel.countryName,
-                    color = if (focused) (if (isLight) CasaMuted else Color(0x80000000)) else CasaDim,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (focused) (if (isLight) Color(0x1F0070F3) else Color(0x1F000000)) else (if (isLight) Color(0x14000000) else Color(0x14FFFFFF)))
-                        .border(1.dp, if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue.copy(alpha = 0.5f) else Color(0x33000000)) else CasaBorder, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp),
-                ) {
-                    Text(
-                        text = channel.quality,
-                        color = if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.Black) else CasaMuted,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun GridChannelCard(
     channel: Channel,
     onClick: () -> Unit,
@@ -699,7 +191,7 @@ fun GridChannelCard(
             .height(168.dp)
             .zIndex(if (focused) 2f else 0f)
             .clip(shape)
-            .background(if (focused) (if (isLight) CasaSurface else Color.White) else CasaSurface)
+            .background(if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaSurface)
             .border(
                 width = if (focused) 3.dp else 1.dp,
                 color = if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaBorder,
@@ -729,6 +221,7 @@ fun GridChannelCard(
                 .height(100.dp),
             compact = true,
             showCountryFlag = showCountryFlag,
+            focused = focused,
         )
         Column(
             modifier = Modifier
@@ -746,7 +239,7 @@ fun GridChannelCard(
                             modifier = Modifier
                                 .size(20.dp)
                                 .clip(CircleShape)
-                                .background(if (focused) (if (isLight) Color(0x1F0070F3) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
+                                .background(if (focused) (if (isLight) Color(0x33FFFFFF) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(text = flag, fontSize = 11.sp)
@@ -756,7 +249,7 @@ fun GridChannelCard(
                 }
                 Text(
                     text = channel.name,
-                    color = if (focused) (if (isLight) CasaText else Color.Black) else CasaText,
+                    color = if (focused) (if (isLight) Color.White else Color.Black) else CasaText,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -769,7 +262,7 @@ fun GridChannelCard(
                 text = channel.now?.title?.let {
                     "${strings.t("Ora", "Now")}: $it"
                 } ?: localizedSubtitle(channel, strings.language),
-                color = if (focused) (if (isLight) CasaMuted else Color(0x99000000)) else CasaMuted,
+                color = if (focused) (if (isLight) Color(0xD9FFFFFF) else Color(0x99000000)) else CasaMuted,
                 fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -784,6 +277,7 @@ private fun ChannelArtwork(
     modifier: Modifier = Modifier,
     compact: Boolean,
     showCountryFlag: Boolean = false,
+    focused: Boolean = false,
 ) {
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
     Box(
@@ -795,7 +289,7 @@ private fun ChannelArtwork(
                     )
                 } else {
                     Brush.linearGradient(
-                        listOf(Color(0xFF17272D), Color(0xFF0C151A)),
+                        listOf(Color(0xFF0F2238), Color(0xFF07111E)),
                     )
                 },
             ),
@@ -806,13 +300,18 @@ private fun ChannelArtwork(
                 .fillMaxSize()
                 .padding(if (compact) 14.dp else 20.dp),
         )
+        ChannelLivePreviewBox(
+            streamUrl = channel.streamUrl,
+            active = focused,
+            modifier = Modifier.fillMaxSize(),
+        )
         if (channel.number != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(if (isLight) Color(0xF2FFFFFF) else Color(0xB3060B0E))
+                    .background(if (isLight) Color(0xF2FFFFFF) else Color(0xCC060D18))
                     .border(1.dp, if (isLight) CasaBorder else Color.Transparent, RoundedCornerShape(6.dp))
                     .padding(horizontal = 7.dp, vertical = 3.dp),
             ) {
@@ -839,8 +338,8 @@ private fun ChannelArtwork(
                         modifier = Modifier
                             .size(if (compact) 24.dp else 28.dp)
                             .clip(CircleShape)
-                            .background(if (isLight) Color(0xF2FFFFFF) else Color(0xE60A131A))
-                            .border(1.dp, if (isLight) CasaBorder else Color(0x66FFFFFF), CircleShape),
+                            .background(if (isLight) Color(0xF2FFFFFF) else Color(0xE6081220))
+                            .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(text = flag, fontSize = if (compact) 13.sp else 15.sp)
@@ -852,7 +351,7 @@ private fun ChannelArtwork(
                     modifier = Modifier
                         .size(if (compact) 20.dp else 23.dp)
                         .clip(CircleShape)
-                        .background(if (isLight) Color(0xF2FFFFFF) else Color(0xB3060B0E))
+                        .background(if (isLight) Color(0xF2FFFFFF) else Color(0xCC060D18))
                         .border(1.dp, if (isLight) CasaBorder else Color.Transparent, CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -870,7 +369,7 @@ private fun ChannelArtwork(
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(if (isLight) Color(0xF2FFFFFF) else Color(0xB3060B0E))
+                .background(if (isLight) Color(0xF2FFFFFF) else Color(0xCC060D18))
                 .border(1.dp, if (isLight) CasaBorder else Color.Transparent, RoundedCornerShape(6.dp))
                 .padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -908,7 +407,6 @@ fun ChannelLogo(
             model = ImageRequest.Builder(context)
                 .data(channel.logo)
                 .crossfade(180)
-                .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 .build(),
             contentDescription = channel.name,
             contentScale = ContentScale.Fit,
@@ -1004,79 +502,6 @@ fun TvButton(
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-        )
-    }
-}
-
-@Composable
-fun FilterPill(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(9999.dp)
-    val isLight = it.casatv.tv.ui.theme.CasaIsLight
-    val background = when {
-        focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
-        selected -> it.casatv.tv.ui.theme.CasaBlue
-        else -> if (isLight) CasaSurface else Color(0x14FFFFFF)
-    }
-    val contentColor = when {
-        focused -> if (isLight) Color.White else Color.Black
-        selected -> Color.White
-        else -> CasaMuted
-    }
-    val borderColor = when {
-        focused -> if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White
-        selected -> it.casatv.tv.ui.theme.CasaBlue
-        else -> CasaBorder
-    }
-
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(background)
-            .border(
-                width = if (focused) 2.dp else 1.dp,
-                color = borderColor,
-                shape = shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                role = Role.Tab,
-                onClick = onClick,
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = text,
-            color = contentColor,
-            fontSize = 13.sp,
-            fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-fun InfoPill(text: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(CasaSurface.copy(alpha = 0.8f))
-            .border(1.dp, CasaBorder, RoundedCornerShape(50))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = text,
-            color = CasaMuted,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
         )
     }
 }
@@ -1377,7 +802,7 @@ fun UniversalSearchResultCard(
             .height(168.dp)
             .zIndex(if (focused) 2f else 0f)
             .clip(shape)
-            .background(if (focused) (if (isLight) CasaSurface else Color.White) else CasaSurface)
+            .background(if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaSurface)
             .border(
                 width = if (focused) 3.dp else 1.dp,
                 color = if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaBorder,
@@ -1409,6 +834,7 @@ fun UniversalSearchResultCard(
                     .height(100.dp),
                 compact = true,
                 showCountryFlag = false,
+                focused = focused,
             )
         }
 
@@ -1425,7 +851,7 @@ fun UniversalSearchResultCard(
                     modifier = Modifier
                         .size(20.dp)
                         .clip(CircleShape)
-                        .background(if (focused) (if (isLight) Color(0x1F0070F3) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
+                        .background(if (focused) (if (isLight) Color(0x33FFFFFF) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(text = meta.badge, fontSize = 11.sp)
@@ -1433,7 +859,7 @@ fun UniversalSearchResultCard(
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = meta.title,
-                    color = if (focused) (if (isLight) CasaText else Color.Black) else CasaText,
+                    color = if (focused) (if (isLight) Color.White else Color.Black) else CasaText,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -1444,7 +870,7 @@ fun UniversalSearchResultCard(
             Spacer(Modifier.height(2.dp))
             Text(
                 text = meta.subtitle,
-                color = if (focused) (if (isLight) CasaMuted else Color(0x99000000)) else CasaMuted,
+                color = if (focused) (if (isLight) Color(0xD9FFFFFF) else Color(0x99000000)) else CasaMuted,
                 fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
