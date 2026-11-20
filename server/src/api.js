@@ -36,7 +36,7 @@ import {
   updateProfile,
 } from './db.js';
 import { generateM3u } from './m3u.js';
-import { importPlaylist } from './catalog.js';
+import { checkPlaylist, importPlaylist } from './catalog.js';
 import {
   addSource,
   epgChannel,
@@ -634,21 +634,28 @@ export async function registerApi(app) {
     return getFacets(lang);
   });
 
+  app.addContentTypeParser('multipart/form-data', { parseAs: 'buffer', bodyLimit: 64 * 1024 * 1024 }, async (req, body) => ({
+    _rawMultipart: body,
+    _contentType: req.headers['content-type'] || '',
+  }));
+
   app.get('/api/playlists', async () => ({
     ok: true,
     playlists: listPlaylists(),
   }));
 
-  app.post('/api/playlists', async (req, reply) => {
+  app.post('/api/playlists', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
     const body = req.body || {};
     const url = String(body.url || '').trim();
+    const content = body.content != null ? String(body.content) : null;
     const name = String(body.name || '').trim();
-    if (!url) {
+    if (!url && content == null) {
       reply.code(400);
-      return { ok: false, error: 'URL della playlist mancante' };
+      return { ok: false, error: 'URL o contenuto della playlist mancante' };
     }
     try {
-      const playlist = await importPlaylist({ name, url });
+      const playlist = await importPlaylist({ name, url, text: content });
+      reply.code(201);
       return { ok: true, playlist };
     } catch (err) {
       reply.code(400);
@@ -656,9 +663,56 @@ export async function registerApi(app) {
     }
   });
 
+  app.post('/api/playlists/upload', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
+    try {
+      let text = '';
+      let fileName = '';
+      let customName = String(req.query?.name || '').trim();
+      if (req.body && req.body._rawMultipart) {
+        const form = await new Response(req.body._rawMultipart, {
+          headers: { 'content-type': req.body._contentType },
+        }).formData();
+        const file = form.get('file');
+        const nameField = String(form.get('name') || '').trim();
+        if (nameField) customName = nameField;
+        if (file && typeof file.text === 'function') {
+          fileName = file.name || 'playlist.m3u';
+          text = await file.text();
+        } else if (typeof file === 'string') {
+          text = file;
+        } else {
+          reply.code(400);
+          return { ok: false, error: 'Nessun file ricevuto' };
+        }
+      } else {
+        reply.code(400);
+        return { ok: false, error: 'Formato multipart non valido' };
+      }
+      const playlist = await importPlaylist({
+        name: customName || fileName,
+        url: '',
+        text,
+      });
+      reply.code(201);
+      return { ok: true, playlist };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, error: err.message || 'Errore caricamento file M3U' };
+    }
+  });
+
   app.delete('/api/playlists/:id', async (req, reply) => {
     deletePlaylist(req.params.id);
     return { ok: true };
+  });
+
+  app.post('/api/playlists/:id/check', async (req, reply) => {
+    const playlist = await checkPlaylist(req.params.id);
+    if (!playlist) {
+      reply.code(404);
+      return { ok: false, error: 'Playlist non trovata' };
+    }
+    return { ok: true, playlist };
   });
 
   app.post('/api/playlists/:id/refresh', async (req, reply) => {
@@ -668,12 +722,12 @@ export async function registerApi(app) {
       return { ok: false, error: 'Playlist non trovata' };
     }
     if (!p.url) {
-      reply.code(400);
-      return { ok: false, error: 'La playlist non ha un URL remoto da aggiornare' };
+      const checked = await checkPlaylist(p.id);
+      return { ok: true, channelCount: checked?.channelCount || 0, playlist: checked };
     }
     try {
       const playlist = await importPlaylist({ id: p.id, name: p.name, url: p.url });
-      return { ok: true, playlist };
+      return { ok: true, channelCount: playlist?.channelCount || 0, playlist };
     } catch (err) {
       reply.code(400);
       return { ok: false, error: err.message };

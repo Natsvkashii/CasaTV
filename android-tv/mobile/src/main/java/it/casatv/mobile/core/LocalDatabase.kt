@@ -19,7 +19,9 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 is_local_file INTEGER NOT NULL DEFAULT 0,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 channel_count INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                last_error TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -57,16 +59,28 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Initial version 1
+        // Migrations handled idempotently in onOpen
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        runCatching {
+            db.execSQL("ALTER TABLE playlists ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")
+        }
+        runCatching {
+            db.execSQL("ALTER TABLE playlists ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     fun getPlaylists(): List<LocalPlaylist> {
         val result = mutableListOf<LocalPlaylist>()
         readableDatabase.rawQuery(
-            "SELECT id, name, source, is_local_file, enabled, channel_count, updated_at FROM playlists ORDER BY updated_at DESC",
+            "SELECT id, name, source, is_local_file, enabled, channel_count, updated_at, status, last_error FROM playlists ORDER BY updated_at DESC",
             null,
         ).use { c ->
             while (c.moveToNext()) {
+                val chCount = c.getInt(5)
+                val rawStatus = c.getString(7).orEmpty().ifBlank { "ok" }
                 result.add(
                     LocalPlaylist(
                         id = c.getString(0),
@@ -74,13 +88,56 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                         source = c.getString(2),
                         isLocalFile = c.getInt(3) == 1,
                         enabled = c.getInt(4) == 1,
-                        channelCount = c.getInt(5),
+                        channelCount = chCount,
                         updatedAt = c.getLong(6),
+                        status = if (chCount == 0 && rawStatus == "ok") "error" else rawStatus,
+                        lastError = c.getString(8).orEmpty(),
                     ),
                 )
             }
         }
         return result
+    }
+
+    fun savePlaylistRecord(playlist: LocalPlaylist) {
+        val pv = ContentValues().apply {
+            put("id", playlist.id)
+            put("name", playlist.name)
+            put("source", playlist.source)
+            put("is_local_file", if (playlist.isLocalFile) 1 else 0)
+            put("enabled", if (playlist.enabled) 1 else 0)
+            put("channel_count", playlist.channelCount)
+            put("updated_at", playlist.updatedAt)
+            put("status", playlist.status)
+            put("last_error", playlist.lastError)
+        }
+        writableDatabase.insertWithOnConflict("playlists", null, pv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun updatePlaylistStatus(playlistId: String, status: String, lastError: String) {
+        val cv = ContentValues().apply {
+            put("status", status)
+            put("last_error", lastError)
+            put("updated_at", System.currentTimeMillis())
+        }
+        writableDatabase.update("playlists", cv, "id = ?", arrayOf(playlistId))
+    }
+
+    fun sampleChannelUrls(playlistId: String, limit: Int = 3): List<String> {
+        val pool = mutableListOf<String>()
+        readableDatabase.rawQuery(
+            "SELECT stream_url FROM channels WHERE playlist_id = ? LIMIT 50",
+            arrayOf(playlistId),
+        ).use { c ->
+            while (c.moveToNext()) pool += c.getString(0)
+        }
+        if (pool.size <= limit) return pool
+        val out = mutableListOf<String>()
+        val denom = (limit - 1).coerceAtLeast(1)
+        for (i in 0 until limit) {
+            out += pool[(i * (pool.size - 1)) / denom]
+        }
+        return out
     }
 
     fun upsertPlaylistAndChannels(playlist: LocalPlaylist, channels: List<MobileChannel>) {
@@ -95,6 +152,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 put("enabled", if (playlist.enabled) 1 else 0)
                 put("channel_count", channels.size)
                 put("updated_at", playlist.updatedAt)
+                put("status", playlist.status)
+                put("last_error", playlist.lastError)
             }
             db.insertWithOnConflict("playlists", null, pv, SQLiteDatabase.CONFLICT_REPLACE)
 

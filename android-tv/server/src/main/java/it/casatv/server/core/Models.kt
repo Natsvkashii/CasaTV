@@ -38,6 +38,8 @@ data class PlaylistEntry(
     val channelCount: Int = 0,
     val addedAt: Long = System.currentTimeMillis() / 1000,
     val updatedAt: Long = System.currentTimeMillis() / 1000,
+    val status: String = "ok",
+    val lastError: String = "",
 )
 
 data class PlaylistStatus(

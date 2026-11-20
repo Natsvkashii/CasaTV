@@ -408,11 +408,17 @@ fun TvModeScreen(
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
                             verticalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
-                            itemsIndexed(queue, key = { _, channel -> channel.id }) { index, channel ->
+                            itemsIndexed(
+                                queue,
+                                key = { _, channel -> channel.id },
+                                contentType = { _, _ -> "channel_card" },
+                            ) { index, channel ->
+                                val onCardClick = remember(channel, queue) { { vm.startPlayback(channel, queue) } }
+                                val onCardFavorite = remember(channel) { { vm.toggleFavorite(channel) } }
                                 GridChannelCard(
                                     channel = channel,
-                                    onClick = { vm.startPlayback(channel, queue) },
-                                    onFavorite = { vm.toggleFavorite(channel) },
+                                    onClick = onCardClick,
+                                    onFavorite = onCardFavorite,
                                     modifier = if (index == targetIndex) {
                                         Modifier.focusRequester(firstFocus)
                                     } else {

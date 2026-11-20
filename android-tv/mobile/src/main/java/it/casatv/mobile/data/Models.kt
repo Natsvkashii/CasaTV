@@ -39,6 +39,8 @@ data class LocalPlaylist(
     val enabled: Boolean = true,
     val channelCount: Int = 0,
     val updatedAt: Long = System.currentTimeMillis(),
+    val status: String = "ok",
+    val lastError: String = "",
 )
 
 @Serializable

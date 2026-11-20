@@ -173,6 +173,11 @@ fun BackgroundGlow(modifier: Modifier = Modifier) {
     )
 }
 
+private val CardShape = RoundedCornerShape(20.dp)
+private val BadgeShape = RoundedCornerShape(6.dp)
+private val LightArtworkBrush = Brush.linearGradient(listOf(Color(0xFFE2E8F0), Color(0xFFEDF2F7)))
+private val DarkArtworkBrush = Brush.linearGradient(listOf(Color(0xFF0F2238), Color(0xFF07111E)))
+
 @Composable
 fun GridChannelCard(
     channel: Channel,
@@ -186,7 +191,14 @@ fun GridChannelCard(
     val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val shape = remember { RoundedCornerShape(20.dp) }
+    val shape = CardShape
+    val flagText = remember(channel.flag, channel.country) {
+        channel.flag.ifBlank { countryFlag(channel.country) }
+    }
+    val subtitleText = remember(channel.now?.title, channel.categoryNames, channel.categories, channel.quality, strings.language) {
+        channel.now?.title?.let { "${strings.t("Ora", "Now")}: $it" }
+            ?: localizedSubtitle(channel, strings.language)
+    }
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
 
     Column(
@@ -225,7 +237,7 @@ fun GridChannelCard(
                 .height(100.dp),
             compact = true,
             showCountryFlag = showCountryFlag,
-            focused = focused,
+            focused = if (isLowRam) false else focused,
         )
         Column(
             modifier = Modifier
@@ -236,20 +248,17 @@ fun GridChannelCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (showCountryFlag) {
-                    val flag = channel.flag.ifBlank { countryFlag(channel.country) }
-                    if (flag.isNotBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(if (focused) (if (isLight) Color(0x33FFFFFF) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(text = flag, fontSize = 11.sp)
-                        }
-                        Spacer(Modifier.width(6.dp))
+                if (showCountryFlag && flagText.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (focused) (if (isLight) Color(0x33FFFFFF) else Color(0x22000000)) else (if (isLight) Color(0x14000000) else Color(0x33FFFFFF))),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = flagText, fontSize = 11.sp)
                     }
+                    Spacer(Modifier.width(6.dp))
                 }
                 Text(
                     text = channel.name,
@@ -263,9 +272,7 @@ fun GridChannelCard(
             }
             Spacer(Modifier.height(2.dp))
             Text(
-                text = channel.now?.title?.let {
-                    "${strings.t("Ora", "Now")}: $it"
-                } ?: localizedSubtitle(channel, strings.language),
+                text = subtitleText,
                 color = if (focused) (if (isLight) Color(0xD9FFFFFF) else Color(0x99000000)) else CasaMuted,
                 fontSize = 11.sp,
                 maxLines = 1,
@@ -286,8 +293,11 @@ private fun ChannelArtwork(
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
     val context = LocalContext.current
     val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
-    val lightBrush = remember { Brush.linearGradient(listOf(Color(0xFFE2E8F0), Color(0xFFEDF2F7))) }
-    val darkBrush = remember { Brush.linearGradient(listOf(Color(0xFF0F2238), Color(0xFF07111E))) }
+    val lightBrush = LightArtworkBrush
+    val darkBrush = DarkArtworkBrush
+    val flagText = remember(channel.flag, channel.country) {
+        channel.flag.ifBlank { countryFlag(channel.country) }
+    }
     val boxModifier = if (isLowRam) {
         modifier.background(if (isLight) Color(0xFFE8EEF5) else Color(0xFF0A1728))
     } else {
@@ -314,9 +324,9 @@ private fun ChannelArtwork(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(BadgeShape)
                     .background(if (isLight) Color(0xF2FFFFFF) else Color(0xCC060D18))
-                    .border(1.dp, if (isLight) CasaBorder else Color.Transparent, RoundedCornerShape(6.dp))
+                    .border(1.dp, if (isLight) CasaBorder else Color.Transparent, BadgeShape)
                     .padding(horizontal = 7.dp, vertical = 3.dp),
             ) {
                 Text(
@@ -335,19 +345,16 @@ private fun ChannelArtwork(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (showCountryFlag) {
-                val flag = channel.flag.ifBlank { countryFlag(channel.country) }
-                if (flag.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .size(if (compact) 24.dp else 28.dp)
-                            .clip(CircleShape)
-                            .background(if (isLight) Color(0xF2FFFFFF) else Color(0xE6081220))
-                            .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(text = flag, fontSize = if (compact) 13.sp else 15.sp)
-                    }
+            if (showCountryFlag && flagText.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(if (compact) 24.dp else 28.dp)
+                        .clip(CircleShape)
+                        .background(if (isLight) Color(0xF2FFFFFF) else Color(0xE6081220))
+                        .border(1.dp, if (isLight) CasaBorder else Color(0xFF1E3A5F), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text = flagText, fontSize = if (compact) 13.sp else 15.sp)
                 }
             }
             if (channel.favorite) {
@@ -372,9 +379,9 @@ private fun ChannelArtwork(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(BadgeShape)
                 .background(if (isLight) Color(0xF2FFFFFF) else Color(0xCC060D18))
-                .border(1.dp, if (isLight) CasaBorder else Color.Transparent, RoundedCornerShape(6.dp))
+                .border(1.dp, if (isLight) CasaBorder else Color.Transparent, BadgeShape)
                 .padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -424,12 +431,15 @@ fun ChannelLogo(
                 }
                 .build()
         }
+        val onImageError = remember(channel.logo, channel.id) {
+            { _: coil.compose.AsyncImagePainter.State.Error -> failed = true }
+        }
         AsyncImage(
             model = request,
             contentDescription = channel.name,
             contentScale = ContentScale.Fit,
             modifier = modifier,
-            onError = { failed = true },
+            onError = onImageError,
         )
     }
 }

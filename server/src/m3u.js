@@ -5,14 +5,45 @@ import { categoryName, countryFlag, countryName } from './db.js';
  * Parse an extended M3U playlist into entries.
  * Handles EXTINF attributes, EXTVLCOPT headers, EXTGRP and pipe-suffixed headers.
  */
+function isHlsManifest(text) {
+  const head = String(text || '').slice(0, 16384);
+  return /#EXT-X-TARGETDURATION|#EXT-X-MEDIA-SEQUENCE|#EXT-X-STREAM-INF/i.test(head);
+}
+
+function normalizePlsToM3u(text) {
+  const head = String(text || '').trimStart().slice(0, 1024);
+  if (!/^\[playlist\]/i.test(head) && !(head.includes('NumberOfEntries=') && /File1=/i.test(head))) {
+    return text;
+  }
+  const files = new Map();
+  const titles = new Map();
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const fMatch = /^File(\d+)\s*=\s*(.+)$/i.exec(line);
+    if (fMatch) {
+      files.set(Number(fMatch[1]), fMatch[2].trim());
+      continue;
+    }
+    const tMatch = /^Title(\d+)\s*=\s*(.+)$/i.exec(line);
+    if (tMatch) titles.set(Number(tMatch[1]), tMatch[2].trim());
+  }
+  if (!files.size) return '';
+  const out = ['#EXTM3U'];
+  for (const [idx, url] of [...files.entries()].sort((a, b) => a[0] - b[0])) {
+    const title = (titles.get(idx) || url.split('/').pop()?.split('?')[0] || `Channel ${idx}`).replace(/,/g, ' ');
+    out.push(`#EXTINF:-1,${title}`, url);
+  }
+  return out.join('\n');
+}
+
 export function parseM3u(text) {
+  const raw = normalizePlsToM3u(String(text || '').replace(/^\uFEFF/, ''));
+  if (isHlsManifest(raw)) return [];
   const entries = [];
   let current = null;
   let pendingHeaders = {};
 
-  const lines = String(text || '')
-    .replace(/^\uFEFF/, '')
-    .split(/\r?\n/);
+  const lines = raw.split(/\r?\n/);
 
   for (const rawLine of lines) {
     const line = rawLine.trim();

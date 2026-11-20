@@ -61,6 +61,7 @@ data class MobileUiState(
     val mixTotal: Int = 0,
     val backgroundPlayEnabled: Boolean = true,
     val pipOnLeaveEnabled: Boolean = true,
+    val liveSafetyBufferEnabled: Boolean = true,
     val isImporting: Boolean = false,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
@@ -103,6 +104,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             selectedCountry = prefs.getString(KEY_SELECTED_COUNTRY, null),
             backgroundPlayEnabled = prefs.getBoolean(KEY_BACKGROUND_PLAY, true),
             pipOnLeaveEnabled = prefs.getBoolean(KEY_PIP_ON_LEAVE, true),
+            liveSafetyBufferEnabled = prefs.getBoolean(KEY_LIVE_SAFETY_BUFFER, true),
             updateFrequency = updater.getFrequency(),
         ),
     )
@@ -331,10 +333,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(isImporting = true, errorMessage = null, statusMessage = null) }
             repo.importFromUrl(name, url)
                 .onSuccess { pl ->
+                    val isBroken = pl.status == "error" || pl.channelCount == 0
                     _state.update {
                         it.copy(
                             isImporting = false,
-                            statusMessage = "Lista '${pl.name}' caricata (${pl.channelCount} canali)",
+                            statusMessage = if (isBroken) null else "Lista '${pl.name}' caricata (${pl.channelCount} canali)",
+                            errorMessage = if (isBroken) "${pl.name}: non funziona (${pl.lastError})" else null,
                         )
                     }
                     refreshLocalData()
@@ -355,10 +359,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(isImporting = true, errorMessage = null, statusMessage = null) }
             repo.importFromUri(uri)
                 .onSuccess { pl ->
+                    val isBroken = pl.status == "error" || pl.channelCount == 0
                     _state.update {
                         it.copy(
                             isImporting = false,
-                            statusMessage = "File '${pl.name}' importato (${pl.channelCount} canali)",
+                            statusMessage = if (isBroken) null else "File '${pl.name}' importato (${pl.channelCount} canali)",
+                            errorMessage = if (isBroken) "${pl.name}: non funziona (${pl.lastError})" else null,
                         )
                     }
                     refreshLocalData()
@@ -370,6 +376,57 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                             errorMessage = err.message ?: "Errore lettura file M3U",
                         )
                     }
+                }
+        }
+    }
+
+    fun checkPlaylist(playlist: LocalPlaylist) {
+        viewModelScope.launch {
+            _state.update { it.copy(isImporting = true, errorMessage = null, statusMessage = null) }
+            repo.checkPlaylist(playlist)
+                .onSuccess { pl ->
+                    val isBroken = pl.status == "error" || pl.channelCount == 0
+                    _state.update {
+                        it.copy(
+                            isImporting = false,
+                            statusMessage = if (isBroken) null else "${pl.name}: attiva (${pl.channelCount} canali)",
+                            errorMessage = if (isBroken) "${pl.name}: non funziona (${pl.lastError})" else null,
+                        )
+                    }
+                    refreshLocalData()
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            isImporting = false,
+                            errorMessage = err.message ?: "Errore verifica",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun uploadM3uFileToServer(uri: Uri) {
+        val serverUrl = _state.value.connectedServerUrl
+        if (serverUrl.isNullOrBlank()) {
+            _state.update { it.copy(errorMessage = "Nessun server CasaTV connesso") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(isImporting = true, errorMessage = null, statusMessage = null) }
+            repo.uploadFileToServer(serverUrl, uri)
+                .onSuccess { msg ->
+                    _state.update { it.copy(isImporting = false, statusMessage = msg) }
+                    discoverAndSyncServer()
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            isImporting = false,
+                            errorMessage = err.message ?: "Errore upload sul server",
+                        )
+                    }
+                    discoverAndSyncServer()
                 }
         }
     }
@@ -386,10 +443,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(isImporting = true, errorMessage = null, statusMessage = null) }
             repo.refreshUrlPlaylist(playlist)
                 .onSuccess { pl ->
+                    val isBroken = pl.status == "error" || pl.channelCount == 0
                     _state.update {
                         it.copy(
                             isImporting = false,
-                            statusMessage = "Aggiornata '${pl.name}' (${pl.channelCount} canali)",
+                            statusMessage = if (isBroken) null else "Aggiornata '${pl.name}' (${pl.channelCount} canali)",
+                            errorMessage = if (isBroken) "${pl.name}: non funziona (${pl.lastError})" else null,
                         )
                     }
                     refreshLocalData()
@@ -401,6 +460,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                             errorMessage = err.message ?: "Aggiornamento fallito",
                         )
                     }
+                    refreshLocalData()
                 }
         }
     }
@@ -446,6 +506,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     fun setAutoSaveServerM3u(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_AUTO_SAVE_SERVER_M3U, enabled).apply()
         _state.update { it.copy(autoSaveServerM3u = enabled) }
+    }
+
+    fun setLiveSafetyBufferEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LIVE_SAFETY_BUFFER, enabled).apply()
+        _state.update { it.copy(liveSafetyBufferEnabled = enabled) }
     }
 
     fun setUpdateFrequency(freq: UpdateFrequency) {
@@ -955,6 +1020,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_LAST_SERVER_URL = "last_server_url"
         private const val KEY_BACKGROUND_PLAY = "background_play_enabled"
         private const val KEY_PIP_ON_LEAVE = "pip_on_leave_enabled"
+        private const val KEY_LIVE_SAFETY_BUFFER = "live_safety_buffer_enabled"
         private const val EXO_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }

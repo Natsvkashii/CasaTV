@@ -121,17 +121,19 @@ class ServerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _playlistBusy.value = true
             try {
-                val res = withContext(Dispatchers.IO) { playlist.importUrl(clean) }
-                _message.value = playlistStrings().t(
-                    "Playlist importata: ${res.count} canali",
-                    "Playlist imported: ${res.count} channels",
-                    "Lista importada: ${res.count} canales",
-                )
-            } catch (error: PlaylistException) {
-                _message.value = when (error.reason) {
-                    PlaylistError.InvalidUrl -> playlistStrings().t("Inserisci un link valido", "Enter a valid link", "Introduce un enlace válido")
-                    PlaylistError.Download -> playlistStrings().t("Download fallito: verifica il link", "Download failed: check link", "Descarga fallida")
-                    PlaylistError.Empty -> playlistStrings().t("Nessun canale trovato", "No channels found", "No se encontraron canales")
+                val res = withContext(Dispatchers.IO) { playlist.addPlaylist("", clean) }
+                _message.value = if (res.status == "error" || res.channelCount == 0) {
+                    playlistStrings().t(
+                        "${res.name}: non funziona (${res.lastError})",
+                        "${res.name}: not working (${res.lastError})",
+                        "${res.name}: no funciona (${res.lastError})",
+                    )
+                } else {
+                    playlistStrings().t(
+                        "Playlist importata: ${res.channelCount} canali",
+                        "Playlist imported: ${res.channelCount} channels",
+                        "Lista importada: ${res.channelCount} canales",
+                    )
                 }
             } catch (error: Exception) {
                 _message.value = error.message ?: "Errore importazione"
@@ -146,20 +148,49 @@ class ServerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _playlistBusy.value = true
             try {
-                val res = withContext(Dispatchers.IO) { playlist.importUri(uri) }
-                _message.value = playlistStrings().t(
-                    "Playlist importata: ${res.count} canali",
-                    "Playlist imported: ${res.count} channels",
-                    "Lista importada: ${res.count} canales",
-                )
-            } catch (error: PlaylistException) {
-                _message.value = when (error.reason) {
-                    PlaylistError.InvalidUrl -> playlistStrings().t("File non valido", "Invalid file", "Archivo no válido")
-                    PlaylistError.Download -> playlistStrings().t("Lettura fallita", "Read failed", "Error de lectura")
-                    PlaylistError.Empty -> playlistStrings().t("Nessun canale trovato", "No channels found", "No se encontraron canales")
+                val res = withContext(Dispatchers.IO) { playlist.addPlaylistFromUri(uri) }
+                _message.value = if (res.status == "error") {
+                    playlistStrings().t(
+                        "${res.name}: non funziona (${res.lastError})",
+                        "${res.name}: not working (${res.lastError})",
+                        "${res.name}: no funciona (${res.lastError})",
+                    )
+                } else {
+                    playlistStrings().t(
+                        "Playlist importata: ${res.channelCount} canali",
+                        "Playlist imported: ${res.channelCount} channels",
+                        "Lista importada: ${res.channelCount} canales",
+                    )
                 }
             } catch (error: Exception) {
                 _message.value = error.message ?: "Errore importazione"
+            } finally {
+                _playlistBusy.value = false
+                refresh()
+            }
+        }
+    }
+
+    fun checkPlaylist(id: String) {
+        viewModelScope.launch {
+            _playlistBusy.value = true
+            try {
+                val updated = withContext(Dispatchers.IO) { playlist.checkPlaylist(id) }
+                if (updated != null) {
+                    _message.value = if (updated.status == "error") {
+                        playlistStrings().t(
+                            "${updated.name}: non funziona (${updated.lastError})",
+                            "${updated.name}: not working (${updated.lastError})",
+                            "${updated.name}: no funciona (${updated.lastError})",
+                        )
+                    } else {
+                        playlistStrings().t(
+                            "${updated.name}: attiva (${updated.channelCount} canali)",
+                            "${updated.name}: working (${updated.channelCount} channels)",
+                            "${updated.name}: activa (${updated.channelCount} canales)",
+                        )
+                    }
+                }
             } finally {
                 _playlistBusy.value = false
                 refresh()

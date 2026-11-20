@@ -145,6 +145,12 @@ class ServerDatabase private constructor(context: Context) :
             db.execSQL("ALTER TABLE channels ADD COLUMN playlist_id TEXT NOT NULL DEFAULT 'default'")
         }
         createPlaylistsTable(db)
+        runCatching {
+            db.execSQL("ALTER TABLE playlists ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")
+        }
+        runCatching {
+            db.execSQL("ALTER TABLE playlists ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     private fun createPlaylistsTable(db: SQLiteDatabase) {
@@ -157,7 +163,9 @@ class ServerDatabase private constructor(context: Context) :
                 enabled INTEGER NOT NULL DEFAULT 1,
                 channel_count INTEGER NOT NULL DEFAULT 0,
                 added_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                last_error TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -606,15 +614,21 @@ class ServerDatabase private constructor(context: Context) :
         }
     }
 
-    private fun readPlaylist(cursor: Cursor): PlaylistEntry = PlaylistEntry(
-        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
-        name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
-        url = cursor.getString(cursor.getColumnIndexOrThrow("url")),
-        enabled = cursor.getInt(cursor.getColumnIndexOrThrow("enabled")) == 1,
-        channelCount = cursor.getInt(cursor.getColumnIndexOrThrow("channel_count")),
-        addedAt = cursor.getLong(cursor.getColumnIndexOrThrow("added_at")),
-        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
-    )
+    private fun readPlaylist(cursor: Cursor): PlaylistEntry {
+        val statusCol = cursor.getColumnIndex("status")
+        val errCol = cursor.getColumnIndex("last_error")
+        return PlaylistEntry(
+            id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+            name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+            url = cursor.getString(cursor.getColumnIndexOrThrow("url")),
+            enabled = cursor.getInt(cursor.getColumnIndexOrThrow("enabled")) == 1,
+            channelCount = cursor.getInt(cursor.getColumnIndexOrThrow("channel_count")),
+            addedAt = cursor.getLong(cursor.getColumnIndexOrThrow("added_at")),
+            updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+            status = if (statusCol >= 0) cursor.getString(statusCol).orEmpty().ifBlank { "ok" } else "ok",
+            lastError = if (errCol >= 0) cursor.getString(errCol).orEmpty() else "",
+        )
+    }
 
     fun getPlaylist(id: String): PlaylistEntry? = synchronized(lock) {
         readableDatabase.rawQuery("SELECT * FROM playlists WHERE id = ? LIMIT 1", arrayOf(id)).use { cursor ->
@@ -631,8 +645,33 @@ class ServerDatabase private constructor(context: Context) :
             put("channel_count", playlist.channelCount)
             put("added_at", playlist.addedAt)
             put("updated_at", playlist.updatedAt)
+            put("status", playlist.status)
+            put("last_error", playlist.lastError)
         }
         writableDatabase.insertWithOnConflict("playlists", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun updatePlaylistStatus(id: String, status: String, lastError: String) = synchronized(lock) {
+        val cv = ContentValues().apply {
+            put("status", status)
+            put("last_error", lastError)
+            put("updated_at", System.currentTimeMillis() / 1000)
+        }
+        writableDatabase.update("playlists", cv, "id = ?", arrayOf(id))
+    }
+
+    fun sampleChannelsForPlaylist(playlistId: String, limit: Int = 3): List<IptvChannel> = synchronized(lock) {
+        val pool = readableDatabase.rawQuery(
+            "SELECT * FROM channels WHERE playlist_id = ? ORDER BY number ASC LIMIT 50",
+            arrayOf(playlistId),
+        ).use { cursor -> cursor.mapAll(::readChannel) }
+        if (pool.size <= limit) return@synchronized pool
+        val step = (pool.size - 1).coerceAtLeast(1)
+        val indices = LinkedHashSet<Int>()
+        for (i in 0 until limit) {
+            indices += (i * step) / (limit - 1).coerceAtLeast(1)
+        }
+        indices.map { pool[it] }
     }
 
     fun togglePlaylist(id: String, enabled: Boolean) = synchronized(lock) {

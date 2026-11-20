@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -97,6 +98,8 @@ import it.casatv.tv.ui.theme.CasaText
 
 @Composable
 private fun LocalTvM3uCard(vm: MainViewModel) {
+    val strings = LocalAppStrings.current
+    val localStatus by vm.localM3uStatus.collectAsStateWithLifecycle()
     var localUrl by remember { mutableStateOf("") }
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -107,11 +110,59 @@ private fun LocalTvM3uCard(vm: MainViewModel) {
     }
 
     SettingsCard(
-        title = "Lista M3U locale (sul televisore)",
-        subtitle = "Carica una lista M3U direttamente su questo dispositivo senza usare il server",
+        title = strings.t("Lista M3U locale (sul televisore)", "Local M3U Playlist (on TV)", "Lista M3U local (en la TV)"),
+        subtitle = strings.t(
+            "Carica un file (.m3u, .m3u8, .pls, .txt) o URL direttamente su questo dispositivo senza usare il server",
+            "Load a file (.m3u, .m3u8, .pls, .txt) or URL directly on this TV without the server",
+            "Carga un archivo (.m3u, .m3u8, .pls, .txt) o URL directamente en este televisor",
+        ),
     ) {
+        if (localStatus.label.isNotBlank() || localStatus.error.isNotBlank() || localStatus.count > 0) {
+            val hasErr = localStatus.error.isNotBlank()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background((if (hasErr) CasaRed else CasaGreen).copy(alpha = 0.14f))
+                    .border(1.dp, (if (hasErr) CasaRed else CasaGreen).copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = localStatus.label.ifBlank { strings.t("Lista locale", "Local playlist", "Lista local") },
+                        color = CasaText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (hasErr) {
+                            strings.t("Non funziona", "Not working", "No funciona") + ": ${localStatus.error}"
+                        } else {
+                            strings.t("Attiva · ${localStatus.count} canali", "Active · ${localStatus.count} channels", "Activa · ${localStatus.count} canales")
+                        },
+                        color = if (hasErr) CasaRed else CasaGreen,
+                        fontSize = 12.sp,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                TvButton(
+                    text = strings.t("Rimuovi", "Remove", "Quitar"),
+                    onClick = { vm.clearLocalM3u() },
+                    primary = false,
+                    icon = Icons.Filled.Delete,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         Text(
-            text = "Attenzione: il dispositivo potrebbe non essere in grado di gestire tutti i dati della lista M3U e potrebbe risultare lento su dispositivi di fascia bassa.",
+            text = strings.t(
+                "Attenzione: il dispositivo potrebbe non essere in grado di gestire tutti i dati della lista M3U e potrebbe risultare lento su dispositivi di fascia bassa.",
+                "Warning: low-RAM TVs may be slower when parsing huge local M3U files directly.",
+                "Atención: el dispositivo puede ir más lento con listas M3U locales muy grandes.",
+            ),
             color = CasaAmber,
             fontSize = 13.sp,
             modifier = Modifier
@@ -123,7 +174,7 @@ private fun LocalTvM3uCard(vm: MainViewModel) {
         OutlinedTextField(
             value = localUrl,
             onValueChange = { localUrl = it },
-            label = { Text("URL lista M3U / M3U8") },
+            label = { Text("URL lista M3U / M3U8 / PLS") },
             placeholder = { Text("https://...") },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
@@ -137,12 +188,12 @@ private fun LocalTvM3uCard(vm: MainViewModel) {
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TvButton(
-                text = "Carica URL M3U",
+                text = strings.t("Carica URL M3U", "Load M3U URL", "Cargar URL M3U"),
                 onClick = { vm.importLocalM3uUrl(localUrl) },
                 primary = true,
             )
             TvButton(
-                text = "Scegli file .M3U locale",
+                text = strings.t("Scegli file locale (.M3U / .M3U8)", "Pick local file (.M3U / .M3U8)", "Elegir archivo (.M3U / .M3U8)"),
                 onClick = {
                     picker.launch(
                         arrayOf(
@@ -155,6 +206,7 @@ private fun LocalTvM3uCard(vm: MainViewModel) {
                     )
                 },
                 primary = false,
+                icon = Icons.Filled.Add,
             )
         }
     }
@@ -222,6 +274,7 @@ fun SettingsScreen(
     val system by vm.system.collectAsStateWithLifecycle()
     val systemBusy by vm.systemBusy.collectAsStateWithLifecycle()
     val multiTvSync by vm.multiTvSync.collectAsStateWithLifecycle()
+    val liveSafetyBuffer by vm.liveSafetyBufferEnabled.collectAsStateWithLifecycle()
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
     val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
     val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
@@ -430,6 +483,50 @@ fun SettingsScreen(
                                     text = if (multiTvSync) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
                                     onClick = { vm.setMultiTvSync(!multiTvSync) },
                                     primary = !multiTvSync,
+                                )
+                            }
+                        }
+
+                        SettingsCard(
+                            title = strings.t("Buffer anti-interruzione", "Anti-freeze safety buffer", "Búfer anti-cortes"),
+                            subtitle = strings.t(
+                                "Crea gradualmente una riserva invisibile (~8s) e riconnette il canale in background se il flusso cade.",
+                                "Gradually builds an invisible ~8s safety cushion and reconnects silently if the stream drops.",
+                                "Crea gradualmente un colchón invisible (~8s) y reconecta el canal en segundo plano si se corta.",
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (liveSafetyBuffer) {
+                                            strings.t("Protezione anti-blocco attiva", "Anti-freeze protection enabled", "Protección anti-cortes activa")
+                                        } else {
+                                            strings.t("Riserva disattivata (solo bassa latenza)", "Safety buffer disabled (low latency)", "Búfer desactivado")
+                                        },
+                                        color = if (liveSafetyBuffer) CasaGreen else CasaMuted,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        text = strings.t(
+                                            "Rallenta impercettibilmente all'avvio fino a ~8s per assorbire cali di rete e rigenerare il buffer dopo una riconnessione.",
+                                            "Imperceptibly paces playback up to ~8s so temporary network drops recover seamlessly.",
+                                            "Modula imperceptiblemente la reproducción hasta ~8s para absorber cortes temporales de red.",
+                                        ),
+                                        color = CasaDim,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                TvButton(
+                                    text = if (liveSafetyBuffer) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
+                                    onClick = { vm.setLiveSafetyBufferEnabled(!liveSafetyBuffer) },
+                                    primary = !liveSafetyBuffer,
                                 )
                             }
                         }
@@ -1674,6 +1771,13 @@ private fun PlaylistsSettingsCard(
 ) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
+    val uploadPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            vm.uploadServerPlaylistUri(uri)
+        }
+    }
 
     LaunchedEffect(Unit) {
         vm.loadPlaylists()
@@ -1682,9 +1786,9 @@ private fun PlaylistsSettingsCard(
     SettingsCard(
         title = strings.t("Playlist canali M3U", "M3U Channel Playlists", "Listas de canales M3U"),
         subtitle = strings.t(
-            "Configura e gestisci le sorgenti canali memorizzate sul server.",
-            "Configure and manage channel sources stored on the server.",
-            "Configura y gestiona las fuentes de canales almacenadas en el servidor.",
+            "Carica file M3U, M3U8 o PLS sul server oppure aggiungi un link remoto.",
+            "Upload M3U, M3U8 or PLS files to the server or add a remote link.",
+            "Sube archivos M3U, M3U8 o PLS al servidor o añade un enlace remoto.",
         ),
     ) {
         Row(
@@ -1701,14 +1805,33 @@ private fun PlaylistsSettingsCard(
                 color = CasaText,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
             )
-            TvButton(
-                text = strings.t("+ Aggiungi Playlist", "+ Add Playlist", "+ Añadir Lista"),
-                onClick = { showAddDialog = true },
-                primary = true,
-                icon = Icons.Filled.Add,
-                modifier = if (firstActionFocus != null) Modifier.focusRequester(firstActionFocus) else Modifier,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvButton(
+                    text = strings.t("Carica file (.M3U / .M3U8)", "Upload file (.M3U / .M3U8)", "Subir archivo (.M3U / .M3U8)"),
+                    onClick = {
+                        uploadPicker.launch(
+                            arrayOf(
+                                "audio/x-mpegurl",
+                                "application/vnd.apple.mpegurl",
+                                "application/x-mpegurl",
+                                "text/plain",
+                                "*/*",
+                            ),
+                        )
+                    },
+                    primary = true,
+                    icon = Icons.Filled.Add,
+                    modifier = if (firstActionFocus != null) Modifier.focusRequester(firstActionFocus) else Modifier,
+                )
+                TvButton(
+                    text = strings.t("+ Aggiungi Link", "+ Add Link", "+ Añadir Enlace"),
+                    onClick = { showAddDialog = true },
+                    primary = false,
+                    icon = Icons.Filled.Add,
+                )
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -1716,9 +1839,9 @@ private fun PlaylistsSettingsCard(
         if (playlists.isEmpty()) {
             Text(
                 text = strings.t(
-                    "Nessuna playlist configurata sul server. Premi '+ Aggiungi Playlist' per inserire un link M3U.",
-                    "No playlists configured on the server. Press '+ Add Playlist' to enter an M3U link.",
-                    "No hay listas configuradas en el servidor. Pulsa '+ Añadir Lista' para introducir un enlace M3U.",
+                    "Nessuna playlist configurata sul server. Usa 'Carica file' o '+ Aggiungi Link'.",
+                    "No playlists configured on the server. Use 'Upload file' or '+ Add Link'.",
+                    "No hay listas configuradas en el servidor. Usa 'Subir archivo' o '+ Añadir Enlace'.",
                 ),
                 color = CasaMuted,
                 fontSize = 12.sp,
@@ -1726,38 +1849,109 @@ private fun PlaylistsSettingsCard(
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 playlists.forEach { p ->
+                    val isError = p.status == "error" || p.channelCount == 0
+                    val isWarn = !isError && p.status == "warn"
+                    val statusColor = when {
+                        isError -> CasaRed
+                        isWarn -> CasaAmber
+                        else -> CasaGreen
+                    }
+                    val statusLabel = when {
+                        isError -> strings.t("Non funziona", "Not working", "No funciona")
+                        isWarn -> strings.t("Avviso", "Warning", "Aviso")
+                        else -> strings.t("Attiva", "Active", "Activa")
+                    }
+                    val srcTag = if (p.url.isNotBlank()) "LINK" else "FILE"
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x14FFFFFF))
-                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(12.dp))
+                            .background(if (isError) CasaRed.copy(alpha = 0.08f) else Color(0x14FFFFFF))
+                            .border(
+                                1.dp,
+                                if (isError) CasaRed.copy(alpha = 0.7f) else Color(0x1FFFFFFF),
+                                RoundedCornerShape(12.dp),
+                            )
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                text = p.name,
-                                color = CasaText,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(statusColor),
+                                )
+                                Text(
+                                    text = p.name,
+                                    color = CasaText,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = statusLabel.uppercase(),
+                                    color = statusColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(statusColor.copy(alpha = 0.16f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                                Text(
+                                    text = srcTag,
+                                    color = CasaMuted,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0x1FFFFFFF))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                text = "${p.channelCount} canali" + if (p.url.isNotBlank()) " · ${p.url}" else "",
+                                text = "${p.channelCount} canali" + if (p.url.isNotBlank()) " · ${p.url}" else " · File caricato",
                                 color = CasaMuted,
                                 fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (p.lastError.isNotBlank() || isError) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = p.lastError.ifBlank {
+                                        strings.t("Playlist non valida o senza canali funzionanti", "Invalid playlist or no working channels", "Lista no válida")
+                                    },
+                                    color = CasaRed,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                         Spacer(Modifier.width(8.dp))
                         TvButton(
-                            text = strings.t("Aggiorna", "Refresh", "Actualizar"),
-                            onClick = { vm.refreshPlaylist(p.id) },
+                            text = strings.t("Verifica", "Check", "Verificar"),
+                            onClick = { vm.checkPlaylist(p.id) },
                             primary = false,
-                            icon = Icons.Filled.Refresh,
+                            icon = Icons.Filled.Warning.takeIf { isError },
                         )
+                        if (p.url.isNotBlank()) {
+                            Spacer(Modifier.width(6.dp))
+                            TvButton(
+                                text = strings.t("Aggiorna", "Refresh", "Actualizar"),
+                                onClick = { vm.refreshPlaylist(p.id) },
+                                primary = false,
+                                icon = Icons.Filled.Refresh,
+                            )
+                        }
                         Spacer(Modifier.width(6.dp))
                         TvButton(
                             text = strings.t("Elimina", "Delete", "Eliminar"),

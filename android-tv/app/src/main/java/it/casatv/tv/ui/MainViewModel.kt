@@ -289,6 +289,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean(KEY_MULTI_TV_SYNC, enabled).apply()
     }
 
+    private val _liveSafetyBufferEnabled = MutableStateFlow(prefs.getBoolean(KEY_LIVE_SAFETY_BUFFER, true))
+    val liveSafetyBufferEnabled: StateFlow<Boolean> = _liveSafetyBufferEnabled.asStateFlow()
+
+    fun setLiveSafetyBufferEnabled(enabled: Boolean) {
+        _liveSafetyBufferEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_LIVE_SAFETY_BUFFER, enabled).apply()
+    }
+
     private val _themeMode = MutableStateFlow(prefs.getString(KEY_THEME_MODE, "light") ?: "light")
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
@@ -1550,6 +1558,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _playlists = MutableStateFlow<List<it.casatv.tv.data.PlaylistDto>>(emptyList())
     val playlists: StateFlow<List<it.casatv.tv.data.PlaylistDto>> = _playlists.asStateFlow()
 
+    private val _localM3uStatus = MutableStateFlow(it.casatv.tv.data.LocalM3uStatus())
+    val localM3uStatus: StateFlow<it.casatv.tv.data.LocalM3uStatus> = _localM3uStatus.asStateFlow()
+
     fun loadPlaylists() {
         viewModelScope.launch {
             _playlists.value = api.getPlaylists()
@@ -1558,15 +1569,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addPlaylist(name: String, url: String, onComplete: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            val success = api.addPlaylist(name, url)
-            if (success) {
-                showMessage("Playlist aggiunta con successo")
+            val dto = api.addPlaylist(name, url)
+            if (dto != null) {
+                if (dto.status == "error" || dto.channelCount == 0) {
+                    showMessage("${dto.name}: non funziona (${dto.lastError.ifBlank { "nessun canale" }})")
+                } else {
+                    showMessage("Playlist aggiunta con successo (${dto.channelCount} canali)")
+                }
                 loadPlaylists()
                 reloadTv()
+                onComplete(dto.status != "error" && dto.channelCount > 0)
             } else {
-                showMessage("Impossibile scaricare la playlist")
+                showMessage("Impossibile contattare il server")
+                onComplete(false)
             }
-            onComplete(success)
+        }
+    }
+
+    fun uploadServerPlaylistUri(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val (fileName, bytes) = withContext(Dispatchers.IO) {
+                    var displayName = ""
+                    runCatching {
+                        app.contentResolver.query(
+                            uri,
+                            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                            null,
+                            null,
+                            null,
+                        )?.use { c ->
+                            if (c.moveToFirst()) {
+                                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (idx >= 0) displayName = c.getString(idx).orEmpty().trim()
+                            }
+                        }
+                    }
+                    if (displayName.isBlank()) {
+                        displayName = uri.lastPathSegment?.substringAfterLast('/').orEmpty().ifBlank { "playlist.m3u" }
+                    }
+                    val data = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error("Impossibile leggere il file selezionato")
+                    displayName to data
+                }
+                val dto = api.uploadPlaylistFile(fileName, fileName, bytes)
+                if (dto != null) {
+                    if (dto.status == "error" || dto.channelCount == 0) {
+                        showMessage("${dto.name}: non funziona (${dto.lastError.ifBlank { "nessun canale" }})")
+                    } else {
+                        showMessage("File '${dto.name}' caricato (${dto.channelCount} canali)")
+                    }
+                    loadPlaylists()
+                    reloadTv()
+                } else {
+                    showMessage("Impossibile caricare il file sul server")
+                }
+            } catch (e: Exception) {
+                showMessage("Errore lettura file: ${e.message}")
+            }
+        }
+    }
+
+    fun checkPlaylist(id: String) {
+        viewModelScope.launch {
+            showMessage("Verifica playlist...")
+            val dto = api.checkPlaylist(id)
+            if (dto != null) {
+                if (dto.status == "error" || dto.channelCount == 0) {
+                    showMessage("${dto.name}: non funziona (${dto.lastError.ifBlank { "nessun canale" }})")
+                } else {
+                    showMessage("${dto.name}: attiva (${dto.channelCount} canali)")
+                }
+                loadPlaylists()
+            } else {
+                showMessage("Errore verifica playlist")
+            }
         }
     }
 
@@ -1584,9 +1662,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshPlaylist(id: String) {
         viewModelScope.launch {
             showMessage("Aggiornamento playlist...")
-            val success = api.refreshPlaylist(id)
-            if (success) {
-                showMessage("Playlist aggiornata")
+            val dto = api.refreshPlaylist(id)
+            if (dto != null) {
+                if (dto.status == "error" || dto.channelCount == 0) {
+                    showMessage("${dto.name}: non funziona (${dto.lastError.ifBlank { "errore aggiornamento" }})")
+                } else {
+                    showMessage("Playlist aggiornata (${dto.channelCount} canali)")
+                }
                 loadPlaylists()
                 reloadTv()
             } else {
@@ -1755,6 +1837,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val clean = url.trim()
             if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+                _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus(label = clean.ifBlank { "URL M3U" }, count = 0, error = "URL non valido (richiesto http:// o https://)")
                 _messages.emit("Inserisci un URL http:// o https:// valido")
                 return@launch
             }
@@ -1766,30 +1849,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         resp.body?.string() ?: error("Risposta vuota")
                     }
                 }
-                applyLocalM3uText(text)
+                applyLocalM3uText(text, clean)
             } catch (e: Exception) {
-                _messages.emit("Errore caricamento M3U: ${e.message}")
+                val msg = e.message ?: "Errore caricamento URL"
+                _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus(label = clean, count = 0, error = msg)
+                _messages.emit("Errore caricamento M3U: $msg")
             }
         }
     }
 
     fun importLocalM3uUri(uri: Uri) {
         viewModelScope.launch {
+            val app = getApplication<Application>()
+            val displayName = withContext(Dispatchers.IO) {
+                var n = ""
+                runCatching {
+                    app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx >= 0) n = c.getString(idx).orEmpty().trim()
+                        }
+                    }
+                }
+                n.ifBlank { uri.lastPathSegment?.substringAfterLast('/').orEmpty().ifBlank { "File locale" } }
+            }
             try {
                 val text = withContext(Dispatchers.IO) {
-                    getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    app.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                         ?: error("Impossibile leggere il file selezionato")
                 }
-                applyLocalM3uText(text)
+                applyLocalM3uText(text, displayName)
             } catch (e: Exception) {
-                _messages.emit("Errore lettura file M3U: ${e.message}")
+                val msg = e.message ?: "Errore lettura file"
+                _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus(label = displayName, count = 0, error = msg)
+                _messages.emit("Errore lettura file M3U: $msg")
             }
         }
     }
 
-    private suspend fun applyLocalM3uText(text: String) {
+    private suspend fun applyLocalM3uText(text: String, label: String) {
         val channels = withContext(Dispatchers.Default) { LocalM3uParser.parse(text) }
         if (channels.isEmpty()) {
+            _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus(
+                label = label,
+                count = 0,
+                error = "Nessun canale IPTV valido trovato (#EXTINF o PLS)",
+            )
             _messages.emit("Nessun canale valido trovato nella lista M3U")
             return
         }
@@ -1797,7 +1902,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _zapQueue.value = channels
         _tvInitialized.value = true
         _tvError.value = null
+        _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus(label = label, count = channels.size, error = "")
         _messages.emit("Caricati ${channels.size} canali M3U in locale")
+    }
+
+    fun clearLocalM3u() {
+        _localM3uStatus.value = it.casatv.tv.data.LocalM3uStatus()
+        reloadTv()
     }
 
     fun checkForUpdates(silent: Boolean = true) {
@@ -2040,6 +2151,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_LANGUAGE = "active_language"
         private const val KEY_ASPECT_RATIO_MODE = "aspect_ratio_mode"
         private const val KEY_MULTI_TV_SYNC = "multi_tv_sync"
+        private const val KEY_LIVE_SAFETY_BUFFER = "live_safety_buffer_enabled"
         private const val KEY_THEME_MODE = "theme_mode"
 
         private val DEFAULT_AVATARS = listOf(

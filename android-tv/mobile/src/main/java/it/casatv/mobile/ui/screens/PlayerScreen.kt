@@ -11,6 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -57,9 +58,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,14 +77,22 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.ParserException
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.mediarouter.app.MediaRouteChooserDialog
@@ -97,7 +109,10 @@ import com.google.android.gms.common.images.WebImage
 import it.casatv.mobile.data.MobileChannel
 import it.casatv.mobile.service.MobilePlaybackService
 import it.casatv.mobile.ui.LocalMobileStrings
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -108,6 +123,7 @@ fun PlayerScreen(
     mixTotal: Int = 0,
     isInPipMode: Boolean = false,
     backgroundPlayEnabled: Boolean = true,
+    liveSafetyBufferEnabled: Boolean = true,
     onToggleBackgroundPlay: (Boolean) -> Unit = {},
     onEnterPip: () -> Unit = {},
     onPreviousChannel: () -> Unit = {},
@@ -123,6 +139,20 @@ fun PlayerScreen(
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    val safetyBufferEnabledState by rememberUpdatedState(liveSafetyBufferEnabled)
+    val scope = rememberCoroutineScope()
+    var reconnecting by remember { mutableStateOf(false) }
+    var hasPlayedCurrentChannel by remember { mutableStateOf(false) }
+    var reconnectAttempt by remember { mutableIntStateOf(0) }
+    var reconnectJob by remember { mutableStateOf<Job?>(null) }
+    val currentStreamUrlState by rememberUpdatedState(channel.streamUrl)
+    val tr: (String, String, String) -> String = { itText, enText, esText ->
+        when (strings.lang.lowercase()) {
+            "it" -> itText
+            "es" -> esText
+            else -> enText
+        }
+    }
     var showControls by remember { mutableStateOf(true) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var isLandscape by remember { mutableStateOf(false) }
@@ -136,6 +166,7 @@ fun PlayerScreen(
                 .getOrNull(),
         )
     }
+    val castDeviceNameState by rememberUpdatedState(castDeviceName)
 
     val canGoPrevious = !isMixMode || mixIndex > 0
 
@@ -183,13 +214,18 @@ fun PlayerScreen(
         }
     }
 
-    val exoPlayer = remember {
+    val loadErrorPolicy = remember {
+        MobileResilientLoadErrorHandlingPolicy { safetyBufferEnabledState }
+    }
+    val dataSourceFactory = remember(context) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(10000)
             .setReadTimeoutMs(20000)
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+        DefaultDataSource.Factory(context, httpFactory)
+    }
+    val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -197,13 +233,100 @@ fun PlayerScreen(
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
+            .setLoadErrorHandlingPolicy(loadErrorPolicy)
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 40_000, 2_000, 4_000)
+            .setBackBuffer(10_000, false)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
         ExoPlayer.Builder(context, renderersFactory)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory))
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true)
             .build()
     }
 
+    fun startStream(url: String): Result<Unit> = runCatching {
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        exoPlayer.playbackParameters = PlaybackParameters(1.0f, 1.0f)
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMaxPlaybackSpeed(1.0f)
+                    .setMinPlaybackSpeed(1.0f)
+                    .setTargetOffsetMs(C.TIME_UNSET)
+                    .build(),
+            )
+            .build()
+        if (url.contains(".m3u8", ignoreCase = true) || url.contains("m3u8", ignoreCase = true)) {
+            val hlsSource = HlsMediaSource.Factory(dataSourceFactory)
+                .setLoadErrorHandlingPolicy(loadErrorPolicy)
+                .setAllowChunklessPreparation(false)
+                .createMediaSource(mediaItem)
+            exoPlayer.setMediaSource(hlsSource)
+        } else {
+            exoPlayer.setMediaItem(mediaItem)
+        }
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+    }
+
+    fun scheduleAutoReconnect(reason: String) {
+        if (castDeviceNameState != null) return
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            val backoffs = longArrayOf(700L, 1500L, 2500L, 4000L, 6000L, 8000L)
+            if (reconnectAttempt < backoffs.size) {
+                val delayMs = backoffs[reconnectAttempt]
+                reconnectAttempt += 1
+                reconnecting = true
+                isBuffering = false
+                errorText = null
+                delay(delayMs)
+                if (!isActive) return@launch
+                val url = currentStreamUrlState
+                if (url.isBlank()) {
+                    reconnecting = false
+                    errorText = tr(
+                        "Questo canale non ha un flusso valido o disponibile.",
+                        "This channel has no valid or available stream.",
+                        "Este canal no tiene un flujo válido o disponible.",
+                    )
+                    return@launch
+                }
+                val res = startStream(url)
+                if (res.isFailure) {
+                    scheduleAutoReconnect("start_failed")
+                }
+            } else {
+                reconnecting = false
+                isBuffering = false
+                errorText = tr(
+                    "Flusso temporaneamente interrotto. Riconnessione automatica in attesa…",
+                    "Stream temporarily interrupted. Background reconnect waiting…",
+                    "Flujo interrumpido temporalmente. Reconexión en segundo plano…",
+                )
+                delay(15_000L)
+                if (!isActive || errorText == null) return@launch
+                reconnectAttempt = 0
+                val url = currentStreamUrlState
+                if (url.isBlank()) return@launch
+                reconnecting = true
+                errorText = null
+                startStream(url)
+            }
+        }
+    }
+
     LaunchedEffect(channel.streamUrl, castDeviceName) {
+        reconnectJob?.cancel()
+        reconnectAttempt = 0
+        reconnecting = false
+        hasPlayedCurrentChannel = false
         errorText = null
         showControls = true
         val activeCast = runCatching { castContext?.sessionManager?.currentCastSession }.getOrNull()
@@ -214,9 +337,101 @@ fun PlayerScreen(
             loadChannelOnCast(activeCast, channel)
         } else {
             isBuffering = true
-            exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
-            exoPlayer.playWhenReady = true
-            exoPlayer.prepare()
+            val res = startStream(channel.streamUrl)
+            if (res.isFailure) {
+                scheduleAutoReconnect("start_failed")
+            }
+        }
+    }
+
+    LaunchedEffect(exoPlayer, channel.streamUrl, castDeviceName, liveSafetyBufferEnabled) {
+        if (castDeviceName != null) {
+            runCatching { exoPlayer.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
+            return@LaunchedEffect
+        }
+        var lastWatchPos = -1L
+        var lastAdvanceMs = System.currentTimeMillis()
+        var bufferingSinceMs = 0L
+        var readySinceMs = 0L
+        var lastCushionSpeedChangeMs = 0L
+
+        while (isActive) {
+            delay(1000)
+            val now = System.currentTimeMillis()
+            val pState = exoPlayer.playbackState
+            val isReady = pState == Player.STATE_READY && exoPlayer.playWhenReady
+
+            if (isReady && errorText == null && !reconnecting) {
+                if (readySinceMs == 0L) readySinceMs = now
+                if (reconnectAttempt > 0 && now - readySinceMs >= 6_000L) {
+                    reconnectAttempt = 0
+                }
+            } else {
+                readySinceMs = 0L
+            }
+
+            if (pState == Player.STATE_BUFFERING && errorText == null && !reconnecting && currentStreamUrlState.isNotBlank()) {
+                if (bufferingSinceMs == 0L) bufferingSinceMs = now
+                if (now - bufferingSinceMs > 12_000L) {
+                    bufferingSinceMs = now
+                    scheduleAutoReconnect("buffering_timeout")
+                }
+            } else {
+                bufferingSinceMs = 0L
+            }
+
+            if (isReady && errorText == null && !reconnecting && currentStreamUrlState.isNotBlank()) {
+                val pos = exoPlayer.currentPosition
+                if (pos == lastWatchPos) {
+                    if (now - lastAdvanceMs > 10_000L) {
+                        lastAdvanceMs = now
+                        scheduleAutoReconnect("stall_watchdog")
+                    }
+                } else {
+                    lastWatchPos = pos
+                    lastAdvanceMs = now
+                }
+            } else {
+                lastWatchPos = -1L
+                lastAdvanceMs = now
+            }
+
+            if (isReady) {
+                if (!liveSafetyBufferEnabled || !exoPlayer.isCurrentMediaItemLive) {
+                    if (kotlin.math.abs(exoPlayer.playbackParameters.speed - 1.0f) > 0.002f) {
+                        runCatching { exoPlayer.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
+                    }
+                } else {
+                    val bufferedAheadMs = (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
+                    val windowDurationMs = run {
+                        val timeline = exoPlayer.currentTimeline
+                        if (!timeline.isEmpty && exoPlayer.currentMediaItemIndex in 0 until timeline.windowCount) {
+                            val w = Timeline.Window()
+                            timeline.getWindow(exoPlayer.currentMediaItemIndex, w)
+                            if (w.durationMs != C.TIME_UNSET && w.durationMs > 0L) w.durationMs else 0L
+                        } else 0L
+                    }
+                    val effectiveTargetMs = if (windowDurationMs > 0L) {
+                        minOf(8_000L, (windowDurationMs * 55L) / 100L).coerceAtLeast(4_000L)
+                    } else {
+                        8_000L
+                    }
+                    val targetSpeed = when {
+                        bufferedAheadMs < effectiveTargetMs - 1_500L -> 0.965f
+                        bufferedAheadMs < effectiveTargetMs -> 0.985f
+                        else -> 1.0f
+                    }
+                    val currentSpeed = exoPlayer.playbackParameters.speed
+                    if (kotlin.math.abs(currentSpeed - targetSpeed) > 0.003f &&
+                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 1000L)
+                    ) {
+                        runCatching {
+                            exoPlayer.playbackParameters = PlaybackParameters(targetSpeed, 1.0f)
+                            lastCushionSpeedChangeMs = now
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -231,24 +446,42 @@ fun PlayerScreen(
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                isBuffering = playbackState == Player.STATE_BUFFERING
+                isBuffering = playbackState == Player.STATE_BUFFERING && !reconnecting
                 if (playbackState == Player.STATE_READY) {
+                    hasPlayedCurrentChannel = true
+                    reconnecting = false
                     errorText = null
+                } else if (playbackState == Player.STATE_ENDED && (exoPlayer.isCurrentMediaItemLive || hasPlayedCurrentChannel)) {
+                    scheduleAutoReconnect("state_ended")
                 }
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                if (playing) {
+                    reconnecting = false
+                    errorText = null
+                    hasPlayedCurrentChannel = true
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 isBuffering = false
-                errorText = strings.get("playback_error", error.errorCodeName)
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    runCatching {
+                        exoPlayer.seekToDefaultPosition()
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    }
+                    return
+                }
+                scheduleAutoReconnect(error.errorCodeName)
             }
         }
         exoPlayer.addListener(listener)
         exoPlayer.setHandleAudioBecomingNoisy(true)
         onDispose {
+            reconnectJob?.cancel()
             exoPlayer.removeListener(listener)
             runCatching {
                 exoPlayer.stop()
@@ -300,6 +533,7 @@ fun PlayerScreen(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
+                    setKeepContentOnPlayerReset(true)
                     player = exoPlayer
                     this.resizeMode = resizeMode
                     layoutParams = ViewGroup.LayoutParams(
@@ -346,11 +580,38 @@ fun PlayerScreen(
             }
         }
 
-        if (isBuffering && errorText == null && castDeviceName == null) {
+        if (isBuffering && errorText == null && castDeviceName == null && !reconnecting) {
             CircularProgressIndicator(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
+        }
+
+        if (reconnecting && errorText == null && castDeviceName == null && !isInPipMode) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 16.dp, end = 16.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xD80A1322))
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = tr("Riconnessione in corso…", "Reconnecting…", "Reconectando…"),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
 
         if (errorText != null && !isInPipMode && castDeviceName == null) {
@@ -382,11 +643,15 @@ fun PlayerScreen(
                     }
                     Button(
                         onClick = {
+                            reconnectJob?.cancel()
+                            reconnectAttempt = 0
+                            reconnecting = false
                             errorText = null
                             isBuffering = true
-                            exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
-                            exoPlayer.prepare()
-                            exoPlayer.playWhenReady = true
+                            val res = startStream(channel.streamUrl)
+                            if (res.isFailure) {
+                                scheduleAutoReconnect("manual_retry_failed")
+                            }
                         },
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null)
@@ -645,4 +910,25 @@ private fun loadChannelOnCast(castSession: CastSession, channel: MobileChannel) 
         .setAutoplay(true)
         .build()
     runCatching { client.load(request) }
+}
+
+private class MobileResilientLoadErrorHandlingPolicy(
+    private val cushionEnabledProvider: () -> Boolean,
+) : DefaultLoadErrorHandlingPolicy() {
+    override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+        if (cushionEnabledProvider()) 8 else 4
+
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val ex = loadErrorInfo.exception
+        if (ex is ParserException || ex is HttpDataSource.CleartextNotPermittedException) {
+            return C.TIME_UNSET
+        }
+        if (ex is HttpDataSource.InvalidResponseCodeException &&
+            ex.responseCode in intArrayOf(401, 403, 404, 410) &&
+            loadErrorInfo.errorCount >= 2
+        ) {
+            return C.TIME_UNSET
+        }
+        return (500L * loadErrorInfo.errorCount).coerceAtMost(3500L)
+    }
 }

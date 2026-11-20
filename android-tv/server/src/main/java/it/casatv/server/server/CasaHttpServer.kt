@@ -702,6 +702,21 @@ class CasaHttpServer(
         return errorResponse(Response.Status.NOT_FOUND, "Endpoint non trovato")
     }
 
+    private fun playlistEntryJson(p: it.casatv.server.core.PlaylistEntry): JsonObject {
+        val status = if (p.channelCount == 0 && p.status == "ok") "error" else p.status
+        return buildJsonObject {
+            put("id", p.id)
+            put("name", p.name)
+            put("url", p.url)
+            put("sourceType", if (p.url.isBlank()) "file" else "url")
+            put("enabled", p.enabled)
+            put("channelCount", p.channelCount)
+            put("status", status)
+            put("lastError", p.lastError)
+            put("lastImport", p.updatedAt)
+        }
+    }
+
     private fun playlistsRoutes(session: IHTTPSession, parts: List<String>): Response {
         if (parts.size == 1) {
             return when (session.method) {
@@ -711,18 +726,7 @@ class CasaHttpServer(
                         buildJsonObject {
                             put("ok", true)
                             putJsonArray("playlists") {
-                                list.forEach { p ->
-                                    add(
-                                        buildJsonObject {
-                                            put("id", p.id)
-                                            put("name", p.name)
-                                            put("url", p.url)
-                                            put("enabled", p.enabled)
-                                            put("channelCount", p.channelCount)
-                                            put("lastImport", p.updatedAt)
-                                        },
-                                    )
-                                }
+                                list.forEach { p -> add(playlistEntryJson(p)) }
                             }
                         },
                     )
@@ -730,24 +734,20 @@ class CasaHttpServer(
                 Method.POST -> {
                     val body = session.jsonBody()
                     val url = body.string("url").trim()
+                    val content = body.string("content")
                     val name = body.string("name").trim()
-                    if (url.isBlank()) {
-                        return errorResponse(Response.Status.BAD_REQUEST, "URL mancante")
+                    if (url.isBlank() && content.isBlank()) {
+                        return errorResponse(Response.Status.BAD_REQUEST, "URL o contenuto file mancante")
                     }
                     try {
-                        val entry = runBlocking { playlist.addPlaylist(name, url) }
+                        val entry = runBlocking {
+                            if (content.isNotBlank()) playlist.addPlaylistFromText(name, content, name)
+                            else playlist.addPlaylist(name, url)
+                        }
                         jsonResponse(
                             buildJsonObject {
                                 put("ok", true)
-                                put(
-                                    "playlist",
-                                    buildJsonObject {
-                                        put("id", entry.id)
-                                        put("name", entry.name)
-                                        put("url", entry.url)
-                                        put("channelCount", entry.channelCount)
-                                    },
-                                )
+                                put("playlist", playlistEntryJson(entry))
                             },
                             Response.Status.CREATED,
                         )
@@ -759,11 +759,46 @@ class CasaHttpServer(
             }
         }
 
+        if (parts.size >= 2 && parts[1] == "upload" && session.method == Method.POST) {
+            val files = HashMap<String, String>()
+            session.parseBody(files)
+            val path = files["file"]
+                ?: files.entries.firstOrNull { it.key != "postData" }?.value
+                ?: return errorResponse(Response.Status.BAD_REQUEST, "Nessun file ricevuto")
+            val temp = File(path)
+            val customName = session.parm("name")
+                .ifBlank { session.parms["file"]?.takeIf { it.isNotBlank() } ?: temp.name }
+            return try {
+                val entry = runBlocking { playlist.addPlaylistFromFile(temp, customName) }
+                jsonResponse(
+                    buildJsonObject {
+                        put("ok", true)
+                        put("playlist", playlistEntryJson(entry))
+                    },
+                    Response.Status.CREATED,
+                )
+            } catch (e: Exception) {
+                errorResponse(Response.Status.BAD_REQUEST, e.message ?: "Errore caricamento file M3U")
+            } finally {
+                temp.delete()
+            }
+        }
+
         if (parts.size >= 2) {
             val id = parts[1]
             if (parts.size == 2 && session.method == Method.DELETE) {
                 playlist.deletePlaylist(id)
                 return jsonResponse(buildJsonObject { put("ok", true) })
+            }
+            if (parts.size >= 3 && parts[2] == "check" && session.method == Method.POST) {
+                val updated = runBlocking { playlist.checkPlaylist(id) }
+                    ?: return errorResponse(Response.Status.NOT_FOUND, "Playlist non trovata")
+                return jsonResponse(
+                    buildJsonObject {
+                        put("ok", true)
+                        put("playlist", playlistEntryJson(updated))
+                    },
+                )
             }
             if (parts.size >= 3 && parts[2] == "refresh" && session.method == Method.POST) {
                 return try {
@@ -773,6 +808,7 @@ class CasaHttpServer(
                         buildJsonObject {
                             put("ok", true)
                             put("channelCount", updated.channelCount)
+                            put("playlist", playlistEntryJson(updated))
                         },
                     )
                 } catch (e: Exception) {
@@ -1601,7 +1637,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.014"
+        const val TV_LATEST_VERSION = "26.11.015"
     }
 }
 

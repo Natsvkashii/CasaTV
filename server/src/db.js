@@ -161,6 +161,8 @@ db.exec(`
     url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     channel_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ok',
+    last_error TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -172,6 +174,14 @@ try {
 
 try {
   db.exec('ALTER TABLE channels ADD COLUMN playlist_id TEXT DEFAULT NULL');
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE playlists ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE playlists ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
 } catch (_) {}
 
 const defaultSettings = {
@@ -1423,10 +1433,14 @@ export function listPlaylists() {
       id: p.id,
       name: p.name,
       url: p.url,
+      sourceType: p.url ? 'url' : 'file',
       enabled: p.enabled === 1,
       channelCount: p.channel_count,
+      status: p.channel_count === 0 && (!p.status || p.status === 'ok') ? 'error' : (p.status || 'ok'),
+      lastError: p.last_error || '',
       createdAt: p.created_at,
       updatedAt: p.updated_at,
+      lastImport: p.updated_at,
     }));
 }
 
@@ -1437,28 +1451,56 @@ export function getPlaylist(id) {
     id: p.id,
     name: p.name,
     url: p.url,
+    sourceType: p.url ? 'url' : 'file',
     enabled: p.enabled === 1,
     channelCount: p.channel_count,
+    status: p.channel_count === 0 && (!p.status || p.status === 'ok') ? 'error' : (p.status || 'ok'),
+    lastError: p.last_error || '',
     createdAt: p.created_at,
     updatedAt: p.updated_at,
+    lastImport: p.updated_at,
   };
 }
 
-export function savePlaylist({ id, name, url, enabled = 1, channel_count = 0 }) {
+export function savePlaylist({ id, name, url, enabled = 1, channel_count = 0, status = 'ok', last_error = '' }) {
   const now = Math.floor(Date.now() / 1000);
   const existing = db.prepare('SELECT id FROM playlists WHERE id = ?').get(id);
   if (existing) {
     db.prepare(`
       UPDATE playlists
-      SET name = ?, url = ?, enabled = ?, channel_count = ?, updated_at = ?
+      SET name = ?, url = ?, enabled = ?, channel_count = ?, status = ?, last_error = ?, updated_at = ?
       WHERE id = ?
-    `).run(name, url, enabled ? 1 : 0, channel_count, now, id);
+    `).run(name, url, enabled ? 1 : 0, channel_count, status, last_error || '', now, id);
   } else {
     db.prepare(`
-      INSERT INTO playlists (id, name, url, enabled, channel_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, url, enabled ? 1 : 0, channel_count, now, now);
+      INSERT INTO playlists (id, name, url, enabled, channel_count, status, last_error, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, url, enabled ? 1 : 0, channel_count, status, last_error || '', now, now);
   }
+}
+
+export function updatePlaylistStatus(id, status, lastError = '') {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE playlists SET status = ?, last_error = ?, updated_at = ? WHERE id = ?')
+    .run(status, lastError || '', now, id);
+}
+
+export function samplePlaylistChannels(playlistId, limit = 3) {
+  const rows = db.prepare(`
+    SELECT c.id, c.name, s.url AS stream_url
+    FROM channels c
+    JOIN streams s ON s.channel_id = c.id
+    WHERE c.playlist_id = ?
+    ORDER BY c.number ASC
+    LIMIT 50
+  `).all(playlistId);
+  if (rows.length <= limit) return rows;
+  const out = [];
+  for (let i = 0; i < limit; i++) {
+    const idx = Math.floor((i * (rows.length - 1)) / Math.max(1, limit - 1));
+    out.push(rows[idx]);
+  }
+  return out;
 }
 
 export function togglePlaylist(id, enabled) {

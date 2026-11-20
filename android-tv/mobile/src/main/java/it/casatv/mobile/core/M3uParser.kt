@@ -55,7 +55,11 @@ object M3uParser {
     private val countryMetaCache = ConcurrentHashMap<String, Pair<String, String>>()
 
     fun parse(text: String, playlistId: String = "default"): List<MobileChannel> {
-        val cleaned = text.removePrefix("\uFEFF")
+        val rawText = text.removePrefix("\uFEFF")
+        val cleaned = if (isPlsContent(rawText)) convertPlsToM3u(rawText) else rawText
+        if (isHlsMediaOrMasterManifest(cleaned)) {
+            return emptyList()
+        }
         val channels = ArrayList<MobileChannel>(1024)
         val seenUrls = HashSet<String>(1024)
 
@@ -273,5 +277,44 @@ object M3uParser {
     private fun shortHash(input: String): String {
         val digest = MessageDigest.getInstance("SHA-1").digest(input.toByteArray())
         return digest.take(6).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun isHlsMediaOrMasterManifest(text: String): Boolean {
+        val sample = text.take(16_384)
+        return sample.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
+            sample.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) ||
+            sample.contains("#EXT-X-STREAM-INF", ignoreCase = true)
+    }
+
+    private fun isPlsContent(text: String): Boolean {
+        val head = text.trimStart().take(1024)
+        return head.startsWith("[playlist]", ignoreCase = true) ||
+            (head.contains("NumberOfEntries=", ignoreCase = true) && head.contains("File1=", ignoreCase = true))
+    }
+
+    private fun convertPlsToM3u(text: String): String {
+        val files = LinkedHashMap<Int, String>()
+        val titles = LinkedHashMap<Int, String>()
+        val fileRe = Regex("""^File(\d+)\s*=\s*(.+)$""", RegexOption.IGNORE_CASE)
+        val titleRe = Regex("""^Title(\d+)\s*=\s*(.+)$""", RegexOption.IGNORE_CASE)
+        text.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            fileRe.matchEntire(line)?.let { m ->
+                files[m.groupValues[1].toIntOrNull() ?: return@let] = m.groupValues[2].trim()
+                return@forEach
+            }
+            titleRe.matchEntire(line)?.let { m ->
+                titles[m.groupValues[1].toIntOrNull() ?: return@let] = m.groupValues[2].trim()
+            }
+        }
+        if (files.isEmpty()) return ""
+        val sb = StringBuilder("#EXTM3U\n")
+        files.entries.sortedBy { it.key }.forEach { (idx, url) ->
+            val title = titles[idx]?.takeIf { it.isNotBlank() }
+                ?: url.substringAfterLast('/').substringBefore('?').ifBlank { "Canale $idx" }
+            sb.append("#EXTINF:-1,").append(title.replace(',', ' ')).append('\n')
+            sb.append(url).append('\n')
+        }
+        return sb.toString()
     }
 }

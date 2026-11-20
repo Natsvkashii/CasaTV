@@ -8,6 +8,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -503,24 +504,52 @@ class CasaApi {
         getJson<PlaylistsResponse>(baseUrl, "/api/playlists").playlists
     }.getOrDefault(emptyList())
 
-    suspend fun addPlaylist(name: String, url: String): Boolean = runCatching {
-        val body = kotlinx.serialization.json.buildJsonObject {
+    suspend fun addPlaylist(name: String, url: String): PlaylistDto? = runCatching {
+        val body = buildJsonObject {
             put("name", name)
             put("url", url)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
         val raw = request(baseUrl, "/api/playlists", "POST", body)
-        raw.contains("\"ok\":true")
-    }.getOrDefault(false)
+        json.decodeFromString<PlaylistActionResponse>(raw).playlist
+    }.getOrNull()
+
+    suspend fun uploadPlaylistFile(
+        name: String,
+        fileName: String,
+        bytes: ByteArray,
+    ): PlaylistDto? = runCatching {
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("name", name)
+            .addFormDataPart(
+                "file",
+                fileName.ifBlank { "playlist.m3u" },
+                bytes.toRequestBody("application/octet-stream".toMediaType()),
+            )
+            .build()
+        val raw = request(
+            baseUrl,
+            "/api/playlists/upload?name=${encodePath(name.ifBlank { fileName })}",
+            "POST",
+            multipart,
+        )
+        json.decodeFromString<PlaylistActionResponse>(raw).playlist
+    }.getOrNull()
+
+    suspend fun checkPlaylist(id: String): PlaylistDto? = runCatching {
+        val raw = request(baseUrl, "/api/playlists/${encodePath(id)}/check", "POST", EMPTY_BODY)
+        json.decodeFromString<PlaylistActionResponse>(raw).playlist
+    }.getOrNull()
 
     suspend fun deletePlaylist(id: String): Boolean = runCatching {
         request(baseUrl, "/api/playlists/${encodePath(id)}", "DELETE", EMPTY_BODY)
         true
     }.getOrDefault(false)
 
-    suspend fun refreshPlaylist(id: String): Boolean = runCatching {
-        request(baseUrl, "/api/playlists/${encodePath(id)}/refresh", "POST", EMPTY_BODY)
-        true
-    }.getOrDefault(false)
+    suspend fun refreshPlaylist(id: String): PlaylistDto? = runCatching {
+        val raw = request(baseUrl, "/api/playlists/${encodePath(id)}/refresh", "POST", EMPTY_BODY)
+        json.decodeFromString<PlaylistActionResponse>(raw).playlist
+    }.getOrNull()
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

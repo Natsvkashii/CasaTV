@@ -3,7 +3,10 @@ package it.casatv.mobile.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,14 +15,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLink
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,6 +63,8 @@ fun PlaylistsScreen(
     state: MobileUiState,
     onImportUrl: (name: String, url: String) -> Unit,
     onImportFile: (Uri) -> Unit,
+    onUploadFileToServer: (Uri) -> Unit,
+    onCheckPlaylist: (LocalPlaylist) -> Unit,
     onTogglePlaylist: (LocalPlaylist, Boolean) -> Unit,
     onRefreshPlaylist: (LocalPlaylist) -> Unit,
     onDeletePlaylist: (LocalPlaylist) -> Unit,
@@ -65,6 +78,14 @@ fun PlaylistsScreen(
     ) { uri ->
         if (uri != null) {
             onImportFile(uri)
+        }
+    }
+
+    val serverFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            onUploadFileToServer(uri)
         }
     }
 
@@ -88,37 +109,66 @@ fun PlaylistsScreen(
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Button(
-                    onClick = { showUrlDialog = true },
-                    enabled = !state.isImporting,
-                    modifier = Modifier.weight(1f),
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Icon(Icons.Default.AddLink, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(strings.fromUrl)
+                    Button(
+                        onClick = { showUrlDialog = true },
+                        enabled = !state.isImporting,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.AddLink, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.fromUrl)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "audio/x-mpegurl",
+                                    "application/vnd.apple.mpegurl",
+                                    "application/x-mpegurl",
+                                    "text/plain",
+                                    "*/*",
+                                ),
+                            )
+                        },
+                        enabled = !state.isImporting,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.localFileM3u)
+                    }
                 }
-                OutlinedButton(
-                    onClick = {
-                        filePicker.launch(
-                            arrayOf(
-                                "audio/x-mpegurl",
-                                "application/vnd.apple.mpegurl",
-                                "application/x-mpegurl",
-                                "text/plain",
-                                "*/*",
-                            ),
+                if (!state.connectedServerUrl.isNullOrBlank()) {
+                    OutlinedButton(
+                        onClick = {
+                            serverFilePicker.launch(
+                                arrayOf(
+                                    "audio/x-mpegurl",
+                                    "application/vnd.apple.mpegurl",
+                                    "application/x-mpegurl",
+                                    "text/plain",
+                                    "*/*",
+                                ),
+                            )
+                        },
+                        enabled = !state.isImporting,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            when (strings.lang) {
+                                "it" -> "Carica file .M3U / .M3U8 / .PLS sul server CasaTV"
+                                "es" -> "Subir archivo .M3U / .M3U8 / .PLS al servidor CasaTV"
+                                else -> "Upload .M3U / .M3U8 / .PLS file to CasaTV server"
+                            },
                         )
-                    },
-                    enabled = !state.isImporting,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(strings.localFileM3u)
+                    }
                 }
             }
         }
@@ -210,6 +260,7 @@ fun PlaylistsScreen(
             items(state.playlists, key = { it.id }) { playlist ->
                 PlaylistCard(
                     playlist = playlist,
+                    onCheck = { onCheckPlaylist(playlist) },
                     onToggle = { enabled -> onTogglePlaylist(playlist, enabled) },
                     onRefresh = { onRefreshPlaylist(playlist) },
                     onDelete = { onDeletePlaylist(playlist) },
@@ -232,53 +283,119 @@ fun PlaylistsScreen(
 @Composable
 private fun PlaylistCard(
     playlist: LocalPlaylist,
+    onCheck: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val strings = LocalMobileStrings.current
+    val isError = playlist.status == "error" || playlist.channelCount == 0
+    val statusColor = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00D4FF)
+    val statusLabel = when {
+        isError && strings.lang == "it" -> "Non funziona"
+        isError && strings.lang == "es" -> "No funciona"
+        isError -> "Not working"
+        strings.lang == "it" -> "Attiva"
+        strings.lang == "es" -> "Activa"
+        else -> "Active"
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = if (isError) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.65f)) else null,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isError) {
+                MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = playlist.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = "${strings.get("channels_count_label", playlist.channelCount)} · " +
-                        if (playlist.isLocalFile) strings.localFileLabel else "URL",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (!playlist.isLocalFile) {
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Aggiorna")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(statusColor),
+                        )
+                        Text(
+                            text = playlist.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            text = statusLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(statusColor.copy(alpha = 0.14f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "${strings.get("channels_count_label", playlist.channelCount)} · " +
+                            if (playlist.isLocalFile) strings.localFileLabel else "URL",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Elimina",
-                    tint = MaterialTheme.colorScheme.error,
+                IconButton(onClick = onCheck) {
+                    Icon(
+                        imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
+                        contentDescription = "Verifica",
+                        tint = statusColor,
+                    )
+                }
+                if (!playlist.isLocalFile) {
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Aggiorna")
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Elimina",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Switch(
+                    checked = playlist.enabled,
+                    onCheckedChange = onToggle,
                 )
             }
-            Switch(
-                checked = playlist.enabled,
-                onCheckedChange = onToggle,
-            )
+            if (playlist.lastError.isNotBlank() || isError) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = playlist.lastError.ifBlank {
+                        when (strings.lang) {
+                            "it" -> "Playlist non valida o senza canali funzionanti"
+                            "es" -> "Lista no válida o sin canales activos"
+                            else -> "Invalid playlist or no working channels"
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }

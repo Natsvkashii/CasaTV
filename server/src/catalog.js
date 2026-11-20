@@ -3,11 +3,14 @@ import path from 'node:path';
 import { config, paths } from './config.js';
 import {
   db,
+  getPlaylist,
   getSetting,
   refreshMeta,
+  samplePlaylistChannels,
   savePlaylist,
   setSetting,
   transaction,
+  updatePlaylistStatus,
 } from './db.js';
 import { parseM3u } from './m3u.js';
 import {
@@ -709,27 +712,111 @@ export async function runIngest({ force = false, reason = 'manual' } = {}) {
   return ingestPromise;
 }
 
-export async function importPlaylist({ name, url, text = null, id = null }) {
+async function probeSampleUrls(urls) {
+  if (!urls.length) return { status: 'error', lastError: 'Nessun canale nella playlist' };
+  const samples = urls.length <= 3
+    ? urls
+    : [urls[0], urls[Math.floor(urls.length / 2)], urls[urls.length - 1]];
+  let lastFailure = '';
+  for (const rawUrl of samples) {
+    const clean = String(rawUrl || '').trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      lastFailure = 'URL non HTTP';
+      continue;
+    }
+    try {
+      const headRes = await fetch(clean, {
+        method: 'HEAD',
+        headers: { 'User-Agent': 'Mozilla/5.0 CasaTV/1.0' },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (headRes.ok || (headRes.status >= 200 && headRes.status < 400)) {
+        return { status: 'ok', lastError: '' };
+      }
+      const getRes = await fetch(clean, {
+        method: 'GET',
+        headers: { 'User-Agent': 'Mozilla/5.0 CasaTV/1.0', Range: 'bytes=0-1024' },
+        signal: AbortSignal.timeout(4000),
+      });
+      await getRes.body?.cancel?.();
+      if (getRes.ok || (getRes.status >= 200 && getRes.status < 400)) {
+        return { status: 'ok', lastError: '' };
+      }
+      lastFailure = `HTTP ${getRes.status}`;
+    } catch (err) {
+      lastFailure = err?.name || err?.message || 'Errore connessione';
+    }
+  }
+  return { status: 'error', lastError: `Flussi non raggiungibili (${lastFailure})` };
+}
+
+export async function checkPlaylist(id) {
+  const p = getPlaylist(id);
+  if (!p) return null;
+  const samples = samplePlaylistChannels(id, 3);
+  if (!samples.length || !p.channelCount) {
+    updatePlaylistStatus(id, 'error', p.lastError || 'Nessun canale valido nella playlist');
+    return getPlaylist(id);
+  }
+  const probe = await probeSampleUrls(samples.map((s) => s.stream_url));
+  updatePlaylistStatus(id, probe.status, probe.lastError);
+  return getPlaylist(id);
+}
+
+export async function importPlaylist({ name, url = '', text = null, id = null }) {
   const playlistId = id || 'pl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const playlistName = (name || '').trim() || 'Playlist ' + playlistId.slice(-4);
+  const cleanUrl = String(url || '').trim();
+  const playlistName = (name || '').trim() ||
+    (cleanUrl ? cleanUrl.split('/').pop()?.split('?')[0] : '') ||
+    'Playlist ' + playlistId.slice(-4);
+
+  const failEntry = (reason) => {
+    if (id) {
+      updatePlaylistStatus(id, 'error', reason);
+    } else {
+      savePlaylist({
+        id: playlistId,
+        name: playlistName,
+        url: cleanUrl,
+        enabled: 1,
+        channel_count: 0,
+        status: 'error',
+        last_error: reason,
+      });
+    }
+    return getPlaylist(playlistId);
+  };
 
   let m3uText = text;
-  if (!m3uText && url) {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': config.userAgent,
-        'Accept': 'audio/x-mpegurl, application/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*',
-      },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: Impossibile scaricare la playlist`);
-    m3uText = await res.text();
+  if (m3uText == null && cleanUrl) {
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      return failEntry('Indirizzo non valido (deve iniziare con http:// o https://)');
+    }
+    try {
+      const res = await fetch(cleanUrl, {
+        headers: {
+          'User-Agent': config.userAgent,
+          'Accept': 'audio/x-mpegurl, application/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*',
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return failEntry(`Download fallito (HTTP ${res.status})`);
+      m3uText = await res.text();
+    } catch (err) {
+      return failEntry(`Download fallito: ${err?.message || 'errore di rete'}`);
+    }
   }
-  if (!m3uText || !m3uText.trim()) throw new Error('Playlist vuota o non valida');
+  if (!m3uText || !String(m3uText).trim()) {
+    return failEntry('Playlist vuota o non leggibile');
+  }
 
-  const entries = parseM3u(m3uText);
-  if (!entries.length) throw new Error('Nessun canale trovato nella playlist');
+  const parsedEntries = parseM3u(m3uText);
+  const validEntries = parsedEntries.filter((e) => e.url && /^https?:\/\//i.test(e.url));
+  if (!validEntries.length) {
+    return failEntry('Nessun canale IPTV valido trovato (richiesto #EXTM3U / #EXTINF o PLS con stream http/https)');
+  }
 
+  const probe = await probeSampleUrls(validEntries.slice(0, 20).map((e) => e.url));
   const now = Math.floor(Date.now() / 1000);
   const existingMaxNum = db.prepare('SELECT COALESCE(MAX(number), 0) AS max_num FROM channels').get().max_num;
 
@@ -775,9 +862,8 @@ export async function importPlaylist({ name, url, text = null, id = null }) {
     db.prepare('DELETE FROM channels WHERE playlist_id = ?').run(playlistId);
 
     let num = existingMaxNum;
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      if (!e.url || !e.url.startsWith('http')) continue;
+    for (let i = 0; i < validEntries.length; i++) {
+      const e = validEntries[i];
       const cleanName = e.title || e.attrs['tvg-name'] || `Canale ${i + 1}`;
       const chId = 'm3u_' + playlistId + '_' + i;
       const category = e.group || e.attrs['group-title'] || 'Generale';
@@ -820,12 +906,14 @@ export async function importPlaylist({ name, url, text = null, id = null }) {
     savePlaylist({
       id: playlistId,
       name: playlistName,
-      url: url || '',
+      url: cleanUrl,
       enabled: 1,
-      channel_count: entries.length,
+      channel_count: validEntries.length,
+      status: probe.status,
+      last_error: probe.lastError,
     });
   });
 
-  return { id: playlistId, name: playlistName, url, channelCount: entries.length };
+  return getPlaylist(playlistId);
 }
 

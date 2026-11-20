@@ -14,6 +14,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class CasaTvApplication : Application(), ImageLoaderFactory {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override fun newImageLoader(): ImageLoader {
         val lowRam = isLowRamDevice(this)
         return ImageLoader.Builder(this)
@@ -59,6 +60,7 @@ class CasaTvApplication : Application(), ImageLoaderFactory {
                 add(SvgDecoder.Factory())
             }
             .crossfade(!lowRam)
+            .decoderDispatcher(kotlinx.coroutines.Dispatchers.IO.limitedParallelism(if (lowRam) 2 else 3))
             .build()
     }
 

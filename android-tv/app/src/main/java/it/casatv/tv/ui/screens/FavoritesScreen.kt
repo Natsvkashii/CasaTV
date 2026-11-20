@@ -162,11 +162,17 @@ fun FavoritesScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                itemsIndexed(favorites, key = { _, channel -> channel.id }) { index, channel ->
+                itemsIndexed(
+                    favorites,
+                    key = { _, channel -> channel.id },
+                    contentType = { _, _ -> "channel_card" },
+                ) { index, channel ->
+                    val onCardClick = remember(channel, favorites) { { vm.startPlayback(channel, favorites) } }
+                    val onCardFavorite = remember(channel) { { vm.toggleFavorite(channel) } }
                     GridChannelCard(
                         channel = channel,
-                        onClick = { vm.startPlayback(channel, favorites) },
-                        onFavorite = { vm.toggleFavorite(channel) },
+                        onClick = onCardClick,
+                        onFavorite = onCardFavorite,
                         modifier = if (index == targetIndex) {
                             Modifier.focusRequester(firstFocus)
                         } else {

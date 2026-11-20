@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,18 +76,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.ParserException
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import it.casatv.tv.CasaTvApplication
 import it.casatv.tv.R
 import it.casatv.tv.data.Channel
 import it.casatv.tv.data.Facet
@@ -159,17 +166,24 @@ fun PlayerScreen(vm: MainViewModel) {
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
     }
-    val mediaSourceFactory = remember(context, defaultDataSourceFactory) {
+    val liveSafetyBufferEnabled by vm.liveSafetyBufferEnabled.collectAsStateWithLifecycle()
+    val safetyBufferEnabledState by rememberUpdatedState(liveSafetyBufferEnabled)
+    val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
+    val loadErrorPolicy = remember {
+        ResilientLoadErrorHandlingPolicy { safetyBufferEnabledState }
+    }
+    val mediaSourceFactory = remember(context, defaultDataSourceFactory, loadErrorPolicy) {
         androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
             .setDataSourceFactory(defaultDataSourceFactory)
+            .setLoadErrorHandlingPolicy(loadErrorPolicy)
     }
-    val loadControl = remember {
+    val loadControl = remember(isLowRam) {
         androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                20000,
-                50000,
-                2500,
-                5000,
+                if (isLowRam) 15000 else 20000,
+                if (isLowRam) 30000 else 50000,
+                if (isLowRam) 2000 else 2500,
+                if (isLowRam) 4000 else 5000,
             )
             .setBackBuffer(10000, false)
             .setPrioritizeTimeOverSizeThresholds(true)
@@ -194,7 +208,14 @@ fun PlayerScreen(vm: MainViewModel) {
     var buffering by remember { mutableStateOf(true) }
     var isPlayingState by remember { mutableStateOf(false) }
     var failingOver by remember { mutableStateOf(false) }
+    var reconnecting by remember { mutableStateOf(false) }
+    var hasPlayedCurrentChannel by remember { mutableStateOf(false) }
+    var reconnectAttempt by remember { mutableIntStateOf(0) }
+    var reconnectJob by remember { mutableStateOf<Job?>(null) }
+    var multiTvFollowerActive by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val currentStreamUrlState by rememberUpdatedState(playableStreamUrl(session.activeStreamUrl))
+    val isMixModeState by rememberUpdatedState(session.isMixMode)
     var controlsVisible by remember { mutableStateOf(true) }
     var hideTick by remember { mutableIntStateOf(0) }
     var numberEntry by remember { mutableStateOf("") }
@@ -312,42 +333,137 @@ fun PlayerScreen(vm: MainViewModel) {
         wakeControls()
     }
 
+    fun startStream(url: String): Result<Unit> = runCatching {
+        player.stop()
+        player.clearMediaItems()
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMaxPlaybackSpeed(1.0f)
+                    .setMinPlaybackSpeed(1.0f)
+                    .setTargetOffsetMs(C.TIME_UNSET)
+                    .build(),
+            )
+            .build()
+        if (url.contains(".m3u8", ignoreCase = true) || url.contains("m3u8", ignoreCase = true)) {
+            val hlsSource = androidx.media3.exoplayer.hls.HlsMediaSource.Factory(defaultDataSourceFactory)
+                .setLoadErrorHandlingPolicy(loadErrorPolicy)
+                .setAllowChunklessPreparation(false)
+                .createMediaSource(mediaItem)
+            player.setMediaSource(hlsSource)
+        } else {
+            player.setMediaItem(mediaItem)
+        }
+        player.prepare()
+        player.playWhenReady = true
+    }
+
+    fun scheduleAutoReconnect(reason: String) {
+        if (failingOver) return
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            if (isMixModeState && !hasPlayedCurrentChannel) {
+                failingOver = true
+                errorMessage = null
+                try {
+                    val moved = vm.tryNextSource()
+                    if (!moved) {
+                        buffering = false
+                        reconnecting = false
+                        errorMessage = strings.t(
+                            "Tutte le sorgenti di questo canale non sono raggiungibili in questo momento.",
+                            "All sources for this channel are unreachable right now.",
+                            "Todas las fuentes de este canal no están disponibles en este momento.",
+                        )
+                    }
+                } finally {
+                    failingOver = false
+                }
+                return@launch
+            }
+
+            val backoffs = longArrayOf(700L, 1500L, 2500L, 4000L, 6000L, 8000L)
+            if (reconnectAttempt < backoffs.size) {
+                val delayMs = backoffs[reconnectAttempt]
+                reconnectAttempt += 1
+                reconnecting = true
+                buffering = false
+                errorMessage = null
+                android.util.Log.i("CasaTV", "Riconnessione automatica ($reason), tentativo $reconnectAttempt/${backoffs.size} tra ${delayMs}ms")
+                delay(delayMs)
+                if (!isActive) return@launch
+                if (reconnectAttempt == 3 && vm.tryNextSource()) {
+                    return@launch
+                }
+                val url = currentStreamUrlState
+                if (url == null) {
+                    reconnecting = false
+                    errorMessage = strings.t(
+                        "Questo canale non ha un flusso valido o disponibile.",
+                        "This channel has no valid or available stream.",
+                        "Este canal no tiene un flujo válido o disponible.",
+                    )
+                    return@launch
+                }
+                val res = startStream(url)
+                if (res.isFailure) {
+                    scheduleAutoReconnect("start_failed")
+                }
+            } else {
+                reconnecting = false
+                buffering = false
+                errorMessage = strings.t(
+                    "Flusso temporaneamente interrotto. Riconnessione automatica in attesa…",
+                    "Stream temporarily interrupted. Background reconnect waiting…",
+                    "Flujo interrumpido temporalmente. Reconexión en segundo plano…",
+                )
+                delay(15_000L)
+                if (!isActive || errorMessage == null) return@launch
+                reconnectAttempt = 0
+                val url = currentStreamUrlState ?: return@launch
+                reconnecting = true
+                errorMessage = null
+                startStream(url)
+            }
+        }
+    }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                buffering = playbackState == Player.STATE_BUFFERING
+                buffering = playbackState == Player.STATE_BUFFERING && !reconnecting
+                if (playbackState == Player.STATE_READY) {
+                    hasPlayedCurrentChannel = true
+                    reconnecting = false
+                    errorMessage = null
+                } else if (playbackState == Player.STATE_ENDED && (player.isCurrentMediaItemLive || hasPlayedCurrentChannel)) {
+                    android.util.Log.w("CasaTV", "Flusso terminato inaspettatamente (STATE_ENDED), riconnessione...")
+                    scheduleAutoReconnect("state_ended")
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 buffering = false
-                android.util.Log.w("CasaTV", "Errore di riproduzione", error)
-                if (failingOver) return
-                failingOver = true
-                errorMessage = null
-                scope.launch {
-                    try {
-                        // Try every source the server knows for this channel before
-                        // showing the non-blocking black error screen.
-                        val moved = vm.tryNextSource()
-                        if (!moved) {
-                            buffering = false
-                            errorMessage = strings.t(
-                                "Tutte le sorgenti di questo canale non sono raggiungibili in questo momento.",
-                                "All sources for this channel are unreachable right now.",
-                                "Todas las fuentes de este canal no están disponibles en este momento.",
-                            )
-                        }
-                    } finally {
-                        failingOver = false
+                android.util.Log.w("CasaTV", "Errore di riproduzione (${error.errorCodeName})", error)
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    runCatching {
+                        player.seekToDefaultPosition()
+                        player.prepare()
+                        player.playWhenReady = true
                     }
+                    return
                 }
+                scheduleAutoReconnect(error.errorCodeName)
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 isPlayingState = isPlaying
                 if (isPlaying) {
                     failingOver = false
+                    reconnecting = false
                     errorMessage = null
+                    hasPlayedCurrentChannel = true
                 }
             }
 
@@ -362,6 +478,7 @@ fun PlayerScreen(vm: MainViewModel) {
         player.addListener(listener)
         player.setHandleAudioBecomingNoisy(true)
         onDispose {
+            reconnectJob?.cancel()
             player.removeListener(listener)
             runCatching {
                 player.stop()
@@ -401,11 +518,105 @@ fun PlayerScreen(vm: MainViewModel) {
         }
     }
 
+    // Live Safety Cushion (gradual imperceptible delay up to ~8s capped to live window)
+    // + Stall/Buffering watchdog for silent background reconnect.
+    LaunchedEffect(player, channel.id, session.playToken, liveSafetyBufferEnabled) {
+        var lastWatchPos = -1L
+        var lastAdvanceMs = System.currentTimeMillis()
+        var bufferingSinceMs = 0L
+        var readySinceMs = 0L
+        var lastCushionSpeedChangeMs = 0L
+
+        while (isActive) {
+            delay(1000)
+            val now = System.currentTimeMillis()
+            val pState = player.playbackState
+            val isReady = pState == Player.STATE_READY && player.playWhenReady
+
+            if (isReady && errorMessage == null && !reconnecting) {
+                if (readySinceMs == 0L) readySinceMs = now
+                if (reconnectAttempt > 0 && now - readySinceMs >= 6_000L) {
+                    reconnectAttempt = 0
+                }
+            } else {
+                readySinceMs = 0L
+            }
+
+            if (pState == Player.STATE_BUFFERING && errorMessage == null && !reconnecting && currentStreamUrlState != null) {
+                if (bufferingSinceMs == 0L) bufferingSinceMs = now
+                if (now - bufferingSinceMs > 12_000L) {
+                    bufferingSinceMs = now
+                    android.util.Log.w("CasaTV", "Buffering prolungato (>12s), avvio riconnessione automatica")
+                    scheduleAutoReconnect("buffering_timeout")
+                }
+            } else {
+                bufferingSinceMs = 0L
+            }
+
+            if (isReady && errorMessage == null && !reconnecting && currentStreamUrlState != null) {
+                val pos = player.currentPosition
+                if (pos == lastWatchPos) {
+                    if (now - lastAdvanceMs > 10_000L) {
+                        lastAdvanceMs = now
+                        android.util.Log.w("CasaTV", "Flusso bloccato su pos=$pos per 10s, avvio riconnessione automatica")
+                        scheduleAutoReconnect("stall_watchdog")
+                    }
+                } else {
+                    lastWatchPos = pos
+                    lastAdvanceMs = now
+                }
+            } else {
+                lastWatchPos = -1L
+                lastAdvanceMs = now
+            }
+
+            if (isReady && !multiTvFollowerActive) {
+                if (!liveSafetyBufferEnabled || !player.isCurrentMediaItemLive) {
+                    if (kotlin.math.abs(player.playbackParameters.speed - 1.0f) > 0.002f) {
+                        runCatching { player.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
+                    }
+                } else {
+                    val bufferedAheadMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L)
+                    val windowDurationMs = run {
+                        val timeline = player.currentTimeline
+                        if (!timeline.isEmpty && player.currentMediaItemIndex in 0 until timeline.windowCount) {
+                            val w = Timeline.Window()
+                            timeline.getWindow(player.currentMediaItemIndex, w)
+                            if (w.durationMs != C.TIME_UNSET && w.durationMs > 0L) w.durationMs else 0L
+                        } else 0L
+                    }
+                    val effectiveTargetMs = if (windowDurationMs > 0L) {
+                        minOf(8_000L, (windowDurationMs * 55L) / 100L).coerceAtLeast(4_000L)
+                    } else {
+                        8_000L
+                    }
+                    val targetSpeed = when {
+                        bufferedAheadMs < effectiveTargetMs - 1_500L -> 0.965f
+                        bufferedAheadMs < effectiveTargetMs -> 0.985f
+                        else -> 1.0f
+                    }
+                    val currentSpeed = player.playbackParameters.speed
+                    if (kotlin.math.abs(currentSpeed - targetSpeed) > 0.003f &&
+                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 1000L)
+                    ) {
+                        runCatching {
+                            player.playbackParameters = PlaybackParameters(targetSpeed, 1.0f)
+                            lastCushionSpeedChangeMs = now
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(player, channel.id, multiTvSyncEnabled) {
         if (!multiTvSyncEnabled) {
+            multiTvFollowerActive = false
             syncState = null
             inSyncByDelta = false
-            runCatching { player.playbackParameters = PlaybackParameters(1.0f) }
+            if (!liveSafetyBufferEnabled) {
+                runCatching { player.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
+            }
             return@LaunchedEffect
         }
         var prevSyncActive = false
@@ -413,32 +624,12 @@ fun PlayerScreen(vm: MainViewModel) {
         var hasFilteredDelta = false
         var lastSpeedChangeTime = 0L
         var lastSeekTime = 0L
-        var lastPlaybackPos = 0L
-        var lastPosChangeTime = System.currentTimeMillis()
 
         while (isActive) {
             delay(1000)
             val now = System.currentTimeMillis()
             val isReady = player.playbackState == Player.STATE_READY && player.playWhenReady
             val currentPos = player.currentPosition
-
-            // Stall watchdog: only if player is in READY state but position hasn't advanced for > 10.0s
-            if (isReady && !buffering) {
-                if (currentPos == lastPlaybackPos) {
-                    if (now - lastPosChangeTime > 10_000L) {
-                        android.util.Log.w("CasaSync", "Playback stall detected (pos $currentPos unchanged for 10s)! Re-triggering play...")
-                        lastPosChangeTime = now
-                        runCatching {
-                            player.play()
-                        }
-                    }
-                } else {
-                    lastPlaybackPos = currentPos
-                    lastPosChangeTime = now
-                }
-            } else {
-                lastPosChangeTime = now
-            }
 
             if (isReady) {
                 val isLive = player.isCurrentMediaItemLive
@@ -462,6 +653,7 @@ fun PlayerScreen(vm: MainViewModel) {
 
                 if (resp != null && resp.syncActive) {
                     syncState = resp
+                    multiTvFollowerActive = !resp.isLeader
                     if (!prevSyncActive) {
                         prevSyncActive = true
                         val partner = if (resp.isLeader) {
@@ -523,7 +715,7 @@ fun PlayerScreen(vm: MainViewModel) {
                             lastSeekTime = now
                             player.seekTo(resp.targetPositionMs.coerceIn(0L, (player.duration - 2000L).coerceAtLeast(0L)))
                             if (player.playbackParameters.speed != 1.0f) {
-                                player.playbackParameters = PlaybackParameters(1.0f)
+                                player.playbackParameters = PlaybackParameters(1.0f, 1.0f)
                             }
                             lastSpeedChangeTime = now
                             hasFilteredDelta = false
@@ -550,32 +742,31 @@ fun PlayerScreen(vm: MainViewModel) {
                             // Rate limit: change speed at most once every 1.0s, or immediately when entering sync (1.0f)
                             val timeSinceLastSpeedChange = now - lastSpeedChangeTime
                             if (speedDiff > 0.003f && (targetSpeed == 1.0f || timeSinceLastSpeedChange >= 1000L)) {
-                                player.playbackParameters = PlaybackParameters(targetSpeed)
+                                player.playbackParameters = PlaybackParameters(targetSpeed, 1.0f)
                                 lastSpeedChangeTime = now
                             }
                         }
                     } else {
-                        // Leader always plays at normal 1.0f speed
+                        // Leader yields speed control to live safety cushion when enabled
                         inSyncByDelta = true
                         hasFilteredDelta = false
-                        if (player.playbackParameters.speed != 1.0f) {
-                            player.playbackParameters = PlaybackParameters(1.0f)
-                        }
                     }
                 } else {
                     prevSyncActive = false
+                    multiTvFollowerActive = false
                     syncState = null
                     inSyncByDelta = false
                     hasFilteredDelta = false
-                    if (player.playbackParameters.speed != 1.0f) {
-                        player.playbackParameters = PlaybackParameters(1.0f)
-                    }
                 }
             }
         }
     }
 
     LaunchedEffect(session.channel.id, session.playToken, session.sourceIndex) {
+        reconnectJob?.cancel()
+        hasPlayedCurrentChannel = false
+        reconnectAttempt = 0
+        reconnecting = false
         errorMessage = null
         failingOver = false
         buffering = true
@@ -593,33 +784,8 @@ fun PlayerScreen(vm: MainViewModel) {
                 "Este canal no tiene un flujo válido o disponible.",
             )
         } else {
-            val started = runCatching {
-                player.stop()
-                player.clearMediaItems()
-                val mediaItem = MediaItem.Builder()
-                    .setUri(url)
-                    .setLiveConfiguration(
-                        MediaItem.LiveConfiguration.Builder()
-                            .setMaxPlaybackSpeed(1.0f)
-                            .setMinPlaybackSpeed(1.0f)
-                            .setTargetOffsetMs(C.TIME_UNSET)
-                            .build()
-                    )
-                    .build()
-                if (url.contains(".m3u8", ignoreCase = true) || url.contains("m3u8", ignoreCase = true)) {
-                    val hlsSource = androidx.media3.exoplayer.hls.HlsMediaSource.Factory(defaultDataSourceFactory)
-                        .setAllowChunklessPreparation(false)
-                        .createMediaSource(mediaItem)
-                    player.setMediaSource(hlsSource)
-                } else {
-                    player.setMediaItem(mediaItem)
-                }
-                player.prepare()
-                player.playWhenReady = true
-            }
+            val started = startStream(url)
             if (started.isFailure) {
-                // A malformed URL or an unsupported container must never take
-                // down the whole app: show the normal channel error screen.
                 android.util.Log.w("CasaTV", "Impossibile avviare il flusso $url", started.exceptionOrNull())
                 buffering = false
                 errorMessage = strings.t(
@@ -994,6 +1160,7 @@ fun PlayerScreen(vm: MainViewModel) {
                 (LayoutInflater.from(ctx).inflate(R.layout.view_player, null) as PlayerView).apply {
                     useController = false
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    setKeepContentOnPlayerReset(true)
                     keepScreenOn = false
                     isFocusable = false
                     descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
@@ -1008,7 +1175,7 @@ fun PlayerScreen(vm: MainViewModel) {
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (buffering && errorMessage == null && !failingOver) {
+        if (buffering && errorMessage == null && !failingOver && !reconnecting) {
             Column(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1024,6 +1191,32 @@ fun PlayerScreen(vm: MainViewModel) {
                     color = Color.White.copy(alpha = 0.9f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+
+        if (reconnecting && errorMessage == null) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 24.dp, end = 24.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xD80A1322))
+                    .border(1.dp, CasaGreen.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(
+                    color = CasaGreen,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = strings.t("Riconnessione in corso…", "Reconnecting…", "Reconectando…"),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
@@ -1142,6 +1335,11 @@ private fun QuickChannelDrawer(
     onSelectChannel: (Int) -> Unit,
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
+    val drawerCardShape = remember { RoundedCornerShape(14.dp) }
+    val drawerThumbShape = remember { RoundedCornerShape(9.dp) }
+    val drawerNumShape = remember { RoundedCornerShape(4.dp) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) {
@@ -1170,7 +1368,13 @@ private fun QuickChannelDrawer(
             else -> 0f
         }
         if (delta != 0f) {
-            runCatching { listState.animateScrollBy(delta, tween(durationMillis = 120)) }
+            runCatching {
+                if (isLowRam) {
+                    listState.scrollBy(delta)
+                } else {
+                    listState.animateScrollBy(delta, tween(durationMillis = 120))
+                }
+            }
         }
     }
 
@@ -1230,10 +1434,13 @@ private fun QuickChannelDrawer(
             contentPadding = PaddingValues(vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            itemsIndexed(queue, key = { idx, item -> "qd_${idx}_${item.id}" }) { index, item ->
+            itemsIndexed(
+                queue,
+                key = { idx, item -> "qd_${idx}_${item.id}" },
+                contentType = { _, _ -> "drawer_channel" },
+            ) { index, item ->
                 val isCursor = index == selectedIndex
                 val isPlaying = item.id == playingChannelId
-                val cardShape = RoundedCornerShape(14.dp)
                 val cardBg = if (isCursor) Color(0xFF132944) else Color(0xFF0A1422)
                 val cardBorder = if (isCursor) Color(0xFF00D4FF) else Color(0xFF1A2E47)
 
@@ -1241,9 +1448,9 @@ private fun QuickChannelDrawer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(72.dp)
-                        .clip(cardShape)
+                        .clip(drawerCardShape)
                         .background(cardBg)
-                        .border(if (isCursor) 2.dp else 1.dp, cardBorder, cardShape)
+                        .border(if (isCursor) 2.dp else 1.dp, cardBorder, drawerCardShape)
                         .clickable { onSelectChannel(index) }
                         .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1252,7 +1459,7 @@ private fun QuickChannelDrawer(
                         modifier = Modifier
                             .width(96.dp)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(9.dp))
+                            .clip(drawerThumbShape)
                             .background(Color(0xFF060A10)),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1262,18 +1469,20 @@ private fun QuickChannelDrawer(
                                 .fillMaxSize()
                                 .padding(8.dp),
                         )
-                        ChannelLivePreviewBox(
-                            streamUrl = item.streamUrl,
-                            active = isCursor && !isPlaying,
-                            dwellMs = 850L,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        if (!isLowRam) {
+                            ChannelLivePreviewBox(
+                                streamUrl = item.streamUrl,
+                                active = isCursor && !isPlaying,
+                                dwellMs = 850L,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                         if (item.number != null) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .padding(4.dp)
-                                    .clip(RoundedCornerShape(4.dp))
+                                    .clip(drawerNumShape)
                                     .background(Color(0xCC04080D))
                                     .padding(horizontal = 4.dp, vertical = 1.dp),
                             ) {
@@ -1830,5 +2039,26 @@ private fun computeHlsDeltaMs(
     val myPos = getPlaylistTimelinePositionMs(playlist, mySeq, myOffsetMs)
     val leaderPos = getPlaylistTimelinePositionMs(playlist, leaderSeq, leaderOffsetMs)
     return leaderPos - myPos
+}
+
+private class ResilientLoadErrorHandlingPolicy(
+    private val cushionEnabledProvider: () -> Boolean,
+) : DefaultLoadErrorHandlingPolicy() {
+    override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+        if (cushionEnabledProvider()) 8 else 4
+
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val ex = loadErrorInfo.exception
+        if (ex is ParserException || ex is androidx.media3.datasource.HttpDataSource.CleartextNotPermittedException) {
+            return C.TIME_UNSET
+        }
+        if (ex is HttpDataSource.InvalidResponseCodeException &&
+            ex.responseCode in intArrayOf(401, 403, 404, 410) &&
+            loadErrorInfo.errorCount >= 2
+        ) {
+            return C.TIME_UNSET
+        }
+        return (500L * loadErrorInfo.errorCount).coerceAtMost(3500L)
+    }
 }
 

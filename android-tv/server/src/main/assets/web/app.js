@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.014';
+const WEB_APP_VERSION = '26.11.015';
 const CHANNEL_PAGE_SIZE = 96;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -86,6 +86,7 @@ const state = {
   deviceType: detectDeviceProfile(),
   theme: localStorage.getItem('casatv_theme') === 'light' ? 'light' : 'dark',
   multiTvSync: localStorage.getItem('casatv_multi_tv_sync') !== 'false',
+  liveSafetyBuffer: localStorage.getItem('casatv_live_safety_buffer') !== 'false',
   updateFrequency: localStorage.getItem('casatv_update_freq') || 'WEEKLY',
   page: 'channels', // 'channels' | 'favorites' | 'settings'
   settingsSection: 'profile', // 'profile' | 'sources' | 'server' | 'guide'
@@ -106,6 +107,7 @@ const state = {
   favoritesLoading: false,
   localOverrideChannels: null,
   localSourceLabel: '',
+  localSourceError: '',
   searchQuery: '',
   searchResults: [],
   searchLoading: false,
@@ -146,6 +148,18 @@ const state = {
   syncText: '',
   systemPollTimer: null,
   mixErrorRetryCount: 0,
+  tuneSeq: 0,
+  reconnectTimer: null,
+  reconnectAttempt: 0,
+  reconnectActive: false,
+  hasPlayedCurrentChannel: false,
+  cushionTimer: null,
+  lastCushionRateMs: 0,
+  lastStallTime: -1,
+  lastStallWallMs: 0,
+  bufferingSinceMs: 0,
+  readySinceMs: 0,
+  playerTuneFailTimer: null,
 
   // GitHub Updates
   updateInfo: null,
@@ -588,7 +602,32 @@ function inferCountryFromAttrs(tvgCountry, tvgId, groupTitle, name, streamUrl) {
 }
 
 function parseM3uText(text) {
-  const lines = String(text || '').split(/\r?\n/);
+  let normalized = String(text || '').replace(/^\uFEFF/, '');
+  const head = normalized.slice(0, 16384);
+  if (/#EXT-X-TARGETDURATION|#EXT-X-MEDIA-SEQUENCE|#EXT-X-STREAM-INF/i.test(head)) {
+    return [];
+  }
+  const plsHead = normalized.trimStart().slice(0, 1024);
+  if (/^\[playlist\]/i.test(plsHead) || (plsHead.includes('NumberOfEntries=') && /File1=/i.test(plsHead))) {
+    const files = new Map();
+    const titles = new Map();
+    for (const rawLine of normalized.split(/\r?\n/)) {
+      const l = rawLine.trim();
+      const fm = /^File(\d+)\s*=\s*(.+)$/i.exec(l);
+      if (fm) { files.set(Number(fm[1]), fm[2].trim()); continue; }
+      const tm = /^Title(\d+)\s*=\s*(.+)$/i.exec(l);
+      if (tm) titles.set(Number(tm[1]), tm[2].trim());
+    }
+    if (!files.size) return [];
+    const plsLines = ['#EXTM3U'];
+    for (const [idx, u] of [...files.entries()].sort((a, b) => a[0] - b[0])) {
+      const label = (titles.get(idx) || u.split('/').pop()?.split('?')[0] || `Canale ${idx}`).replace(/,/g, ' ');
+      plsLines.push(`#EXTINF:-1,${label}`, u);
+    }
+    normalized = plsLines.join('\n');
+  }
+
+  const lines = normalized.split(/\r?\n/);
   const result = [];
   let pending = null;
   let num = 1;
@@ -1769,6 +1808,8 @@ function openPlayer(channel, queue, { isMix = false } = {}) {
 
 function closePlayer() {
   state.playerOpen = false;
+  state.tuneSeq += 1;
+  stopWebRecoveryLoops();
   stopPlayerStream();
   stopMultiTvSync();
   closeDrawerPreview();
@@ -1786,22 +1827,80 @@ function closePlayer() {
   state.playbackChannel = '';
 }
 
-function stopPlayerStream() {
+function stopWebRecoveryLoops() {
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  clearTimeout(state.playerTuneFailTimer);
+  state.playerTuneFailTimer = null;
+  clearInterval(state.cushionTimer);
+  state.cushionTimer = null;
+  state.reconnectActive = false;
+  const pill = $('#player-reconnect-pill');
+  if (pill) pill.hidden = true;
+}
+
+function stopPlayerStream({ keepFrame = false } = {}) {
   const video = $('#preview-video');
   if (state.hls) {
     state.hls.destroy();
     state.hls = null;
   }
   if (video) {
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
+    video.onplaying = null;
+    video.oncanplay = null;
+    video.onloadedmetadata = null;
+    video.onended = null;
+    video.onerror = null;
+    if (!keepFrame) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.playbackRate = 1.0;
+    }
   }
+}
+
+function setVideoPreservesPitch(video, enabled) {
+  if (!video) return;
+  try {
+    if ('preservesPitch' in video) video.preservesPitch = enabled;
+    if ('mozPreservesPitch' in video) video.mozPreservesPitch = enabled;
+    if ('webkitPreservesPitch' in video) video.webkitPreservesPitch = enabled;
+  } catch (_) {}
+}
+
+function getVideoBufferedAheadSec(video) {
+  if (!video || !video.buffered || !video.buffered.length) return 0;
+  const tNow = video.currentTime || 0;
+  for (let i = 0; i < video.buffered.length; i++) {
+    const s = video.buffered.start(i);
+    const e = video.buffered.end(i);
+    if (tNow >= s - 0.5 && tNow <= e + 0.5) {
+      return Math.max(0, e - tNow);
+    }
+  }
+  return Math.max(0, video.buffered.end(video.buffered.length - 1) - tNow);
+}
+
+function getVideoLiveWindowSec(video) {
+  if (!video || !video.seekable || !video.seekable.length) return 0;
+  const s = video.seekable.start(0);
+  const e = video.seekable.end(video.seekable.length - 1);
+  return Number.isFinite(e - s) && e > s ? e - s : 0;
 }
 
 function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isMix } = {}) {
   if (!ch) return;
+  const seq = ++state.tuneSeq;
+  stopWebRecoveryLoops();
   stopPlayerStream();
+  state.reconnectAttempt = 0;
+  state.reconnectActive = false;
+  state.hasPlayedCurrentChannel = false;
+  state.bufferingSinceMs = 0;
+  state.readySinceMs = 0;
+  state.lastStallTime = -1;
+  state.lastStallWallMs = 0;
   state.playerChannel = ch;
   state.playerSources = [];
   state.playerSourceIdx = 0;
@@ -1831,14 +1930,21 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   const video = $('#preview-video');
   const loading = $('#player-loading');
   const errBox = $('#player-error');
+  const reconnectPill = $('#player-reconnect-pill');
+  const reconnectLabel = $('#player-reconnect-label');
   loading.hidden = false;
   errBox.hidden = true;
+  if (reconnectPill) reconnectPill.hidden = true;
   $('#player-tuning-label').textContent = t('Sintonizzazione…', 'Tuning…', 'Sintonizando…');
 
   const url = ch.streamUrl;
   const onReady = () => {
+    if (!state.playerOpen || state.tuneSeq !== seq) return;
     loading.hidden = true;
     errBox.hidden = true;
+    if (reconnectPill) reconnectPill.hidden = true;
+    state.reconnectActive = false;
+    state.hasPlayedCurrentChannel = true;
     state.mixErrorRetryCount = 0;
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -1849,7 +1955,10 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     }
   };
   const onFail = (msg) => {
+    if (!state.playerOpen || state.tuneSeq !== seq) return;
     loading.hidden = true;
+    if (reconnectPill) reconnectPill.hidden = true;
+    state.reconnectActive = false;
     if (isMix && state.mixErrorRetryCount < 5) {
       state.deadMixIds.add(ch.id);
       state.mixErrorRetryCount += 1;
@@ -1863,33 +1972,199 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     nextSrcBtn.hidden = state.playerSources.length <= 1;
   };
 
-  if (window.Hls && window.Hls.isSupported() && /\.m3u8|m3u8/i.test(url)) {
-    const hls = new window.Hls({ enableWorker: true, lowLatencyMode: true });
-    state.hls = hls;
-    hls.loadSource(url);
-    hls.attachMedia(video);
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-      video.play().then(onReady).catch(() => onReady());
-    });
-    hls.on(window.Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) {
-        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-        else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else {
+  let attachStream;
+  const scheduleWebReconnect = (reason) => {
+    if (!state.playerOpen || state.tuneSeq !== seq) return;
+    if (isMix && !state.hasPlayedCurrentChannel && state.mixErrorRetryCount < 5) {
+      onFail();
+      return;
+    }
+    const backoffs = [700, 1500, 2500, 4000, 6000, 8000];
+    clearTimeout(state.reconnectTimer);
+    if (state.reconnectAttempt < backoffs.length) {
+      const delayMs = backoffs[state.reconnectAttempt++];
+      state.reconnectActive = true;
+      loading.hidden = true;
+      errBox.hidden = true;
+      if (reconnectLabel) {
+        reconnectLabel.textContent = t('Riconnessione in corso…', 'Reconnecting…', 'Reconectando…');
+      }
+      if (reconnectPill) reconnectPill.hidden = false;
+      state.reconnectTimer = setTimeout(() => {
+        if (!state.playerOpen || state.tuneSeq !== seq) return;
+        let targetUrl = state.playerChannel?.streamUrl || url;
+        if (state.reconnectAttempt === 3 && state.playerSources.length > 1) {
+          state.playerSourceIdx = (state.playerSourceIdx + 1) % state.playerSources.length;
+          targetUrl = state.playerSources[state.playerSourceIdx].url;
+          state.playerChannel = { ...state.playerChannel, streamUrl: targetUrl };
+        }
+        attachStream(targetUrl, { keepFrame: true });
+      }, delayMs);
+    } else {
+      state.reconnectActive = false;
+      if (reconnectPill) reconnectPill.hidden = true;
+      onFail(t(
+        'Flusso temporaneamente interrotto. Riconnessione automatica in attesa…',
+        'Stream temporarily interrupted. Background reconnect waiting…',
+        'Flujo interrumpido temporalmente. Reconexión en segundo plano…',
+      ));
+      state.reconnectTimer = setTimeout(() => {
+        if (!state.playerOpen || state.tuneSeq !== seq || errBox.hidden) return;
+        state.reconnectAttempt = 0;
+        state.reconnectActive = true;
+        errBox.hidden = true;
+        if (reconnectLabel) {
+          reconnectLabel.textContent = t('Riconnessione in corso…', 'Reconnecting…', 'Reconectando…');
+        }
+        if (reconnectPill) reconnectPill.hidden = false;
+        attachStream(state.playerChannel?.streamUrl || url, { keepFrame: true });
+      }, 15000);
+    }
+  };
+
+  attachStream = (streamUrl, { keepFrame = false } = {}) => {
+    if (!state.playerOpen || state.tuneSeq !== seq) return;
+    stopPlayerStream({ keepFrame });
+    if (!streamUrl) {
+      onFail(t('Questo canale non ha un flusso valido o disponibile.', 'This channel has no valid or available stream.'));
+      return;
+    }
+    setVideoPreservesPitch(video, true);
+    video.playbackRate = 1.0;
+    video.onplaying = onReady;
+    video.onended = () => {
+      if (state.playerOpen && state.tuneSeq === seq && (state.hasPlayedCurrentChannel || !Number.isFinite(video.duration))) {
+        scheduleWebReconnect('ended');
+      }
+    };
+
+    if (window.Hls && window.Hls.isSupported() && /\.m3u8|m3u8/i.test(streamUrl)) {
+      const hls = new window.Hls({
+        enableWorker: true,
+        lowLatencyMode: !state.liveSafetyBuffer,
+        backBufferLength: 12,
+        maxBufferLength: state.liveSafetyBuffer ? 30 : 14,
+        maxMaxBufferLength: 45,
+        liveSyncDurationCount: state.liveSafetyBuffer ? 4 : 3,
+        manifestLoadingMaxRetry: state.liveSafetyBuffer ? 6 : 3,
+        levelLoadingMaxRetry: state.liveSafetyBuffer ? 6 : 3,
+        fragLoadingMaxRetry: state.liveSafetyBuffer ? 8 : 3,
+        manifestLoadingRetryDelay: 700,
+        levelLoadingRetryDelay: 700,
+        fragLoadingRetryDelay: 700,
+      });
+      let fatalBurst = 0;
+      let lastFatalMs = 0;
+      state.hls = hls;
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        video.play().then(onReady).catch(() => {});
+      });
+      hls.on(window.Hls.Events.ERROR, (_, data) => {
+        if (!state.playerOpen || state.tuneSeq !== seq || !data.fatal) return;
+        const now = Date.now();
+        if (now - lastFatalMs > 8000) fatalBurst = 0;
+        lastFatalMs = now;
+        fatalBurst += 1;
+        if (fatalBurst <= 1 && data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+          hls.startLoad();
+        } else if (fatalBurst <= 2 && data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+        } else {
           hls.destroy();
-          onFail();
+          state.hls = null;
+          scheduleWebReconnect(data.details || data.type || 'hls_error');
+        }
+      });
+    } else {
+      video.src = streamUrl;
+      video.onloadedmetadata = () => {
+        video.play().catch(() => {});
+        onReady();
+      };
+      video.onerror = () => {
+        if (state.playerOpen && state.tuneSeq === seq) {
+          scheduleWebReconnect('media_error');
+        }
+      };
+      video.play().catch(() => {});
+    }
+  };
+
+  attachStream(url, { keepFrame: false });
+
+  state.cushionTimer = setInterval(() => {
+    if (!state.playerOpen || state.tuneSeq !== seq) {
+      clearInterval(state.cushionTimer);
+      state.cushionTimer = null;
+      return;
+    }
+    const now = Date.now();
+    const readyPlaying = !video.paused && !video.ended && video.readyState >= 3;
+
+    if (readyPlaying && errBox.hidden && !state.reconnectActive) {
+      if (!state.readySinceMs) state.readySinceMs = now;
+      if (state.reconnectAttempt > 0 && now - state.readySinceMs >= 6000) {
+        state.reconnectAttempt = 0;
+      }
+    } else {
+      state.readySinceMs = 0;
+    }
+
+    if (!video.paused && !video.ended && video.readyState < 3 && errBox.hidden && !state.reconnectActive) {
+      if (!state.bufferingSinceMs) state.bufferingSinceMs = now;
+      if (now - state.bufferingSinceMs > 12000) {
+        state.bufferingSinceMs = now;
+        scheduleWebReconnect('buffering_timeout');
+        return;
+      }
+    } else {
+      state.bufferingSinceMs = 0;
+    }
+
+    if (readyPlaying && errBox.hidden && !state.reconnectActive) {
+      const tCur = video.currentTime || 0;
+      if (Math.abs(tCur - state.lastStallTime) < 0.01) {
+        if (now - state.lastStallWallMs > 10000) {
+          state.lastStallWallMs = now;
+          scheduleWebReconnect('stall_watchdog');
+          return;
+        }
+      } else {
+        state.lastStallTime = tCur;
+        state.lastStallWallMs = now;
+      }
+    } else {
+      state.lastStallTime = -1;
+      state.lastStallWallMs = now;
+    }
+
+    if (readyPlaying) {
+      const winSec = getVideoLiveWindowSec(video);
+      const isLiveLike = !Number.isFinite(video.duration) || video.duration === Infinity || winSec > 0;
+      if (!state.liveSafetyBuffer || !isLiveLike) {
+        if (Math.abs((video.playbackRate || 1) - 1.0) > 0.002) {
+          setVideoPreservesPitch(video, true);
+          video.playbackRate = 1.0;
+        }
+      } else {
+        const aheadSec = getVideoBufferedAheadSec(video);
+        const effectiveTargetSec = winSec > 0 ? Math.max(4, Math.min(8, winSec * 0.55)) : 8;
+        const targetRate = aheadSec < effectiveTargetSec - 1.5
+          ? 0.965
+          : aheadSec < effectiveTargetSec
+            ? 0.985
+            : 1.0;
+        if (Math.abs((video.playbackRate || 1) - targetRate) > 0.003 &&
+            (targetRate === 1.0 || now - state.lastCushionRateMs >= 1000)) {
+          setVideoPreservesPitch(video, true);
+          video.playbackRate = targetRate;
+          state.lastCushionRateMs = now;
         }
       }
-    });
-  } else {
-    video.src = url;
-    video.onloadedmetadata = () => {
-      video.play().catch(() => {});
-      onReady();
-    };
-    video.onerror = () => onFail();
-    video.play().catch(() => {});
-  }
+    }
+  }, 1000);
 
   // Only log watched history when NOT in Mix mode (honoring Mix rule)
   if (!skipMarkPlayed && ch.id && !state.localOverrideChannels) {
@@ -2346,6 +2621,24 @@ function renderSettingsProfile(detail, p) {
         </button>
       </div>
     </section>
+
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3>${t('Buffer anti-interruzione', 'Anti-freeze safety buffer', 'Búfer anti-cortes')}</h3>
+        <p>${t('Crea gradualmente una riserva invisibile (~8s) e riconnette il canale in background se il flusso cade.', 'Gradually builds an invisible ~8s safety cushion and reconnects silently if the stream drops.', 'Crea gradualmente un colchón invisible (~8s) y reconecta el canal en segundo plano si se corta.')}</p>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong style="color:${state.liveSafetyBuffer ? 'var(--accent)' : 'var(--muted)'};font-size:14px">
+            ${state.liveSafetyBuffer ? t('Protezione anti-blocco attiva', 'Anti-freeze protection enabled', 'Protección anti-cortes activa') : t('Riserva disattivata (solo bassa latenza)', 'Safety buffer disabled (low latency)', 'Búfer desactivado')}
+          </strong>
+          <div style="font-size:11.5px;color:var(--dim)">${t('Rallenta impercettibilmente all\'avvio fino a ~8s per assorbire cali di rete e rigenera il buffer dopo una riconnessione.', 'Imperceptibly paces playback up to ~8s so temporary network drops recover seamlessly.', 'Modula imperceptiblemente la reproducción hasta ~8s para absorber cortes temporales de red.')}</div>
+        </div>
+        <button type="button" class="casa-btn ${!state.liveSafetyBuffer ? 'primary' : 'ghost'}" id="btn-toggle-safety-buffer">
+          ${state.liveSafetyBuffer ? t('Disattiva', 'Disable', 'Desactivar') : t('Attiva', 'Enable', 'Activar')}
+        </button>
+      </div>
+    </section>
   `;
 
   $('#btn-set-switch-prof')?.addEventListener('click', () => openProfileGate(true));
@@ -2361,6 +2654,15 @@ function renderSettingsProfile(detail, p) {
   $('#btn-toggle-sync')?.addEventListener('click', () => {
     state.multiTvSync = !state.multiTvSync;
     localStorage.setItem('casatv_multi_tv_sync', String(state.multiTvSync));
+    renderCurrentScreen();
+  });
+  $('#btn-toggle-safety-buffer')?.addEventListener('click', () => {
+    state.liveSafetyBuffer = !state.liveSafetyBuffer;
+    localStorage.setItem('casatv_live_safety_buffer', String(state.liveSafetyBuffer));
+    const v = $('#preview-video');
+    if (v && !state.liveSafetyBuffer) {
+      v.playbackRate = 1.0;
+    }
     renderCurrentScreen();
   });
 
@@ -2384,16 +2686,24 @@ function renderSettingsProfile(detail, p) {
 }
 
 function renderSettingsSources(detail, stats) {
+  const localCount = state.localOverrideChannels?.length || 0;
+  const localHasStatus = Boolean(state.localSourceLabel || state.localSourceError || localCount > 0);
+  const localIsError = Boolean(state.localSourceError);
+
   detail.innerHTML = `
     <section class="settings-card">
       <div class="settings-card-head">
         <h3>${t('Playlist canali M3U', 'M3U Channel Playlists', 'Listas M3U')}</h3>
-        <p>${t('Configura e gestisci le sorgenti canali memorizzate sul server.', 'Configure and manage channel sources stored on the server.')}</p>
+        <p>${t('Carica file M3U, M3U8 o PLS oppure aggiungi un link remoto sul server.', 'Upload M3U, M3U8 or PLS files or add a remote URL on the server.')}</p>
       </div>
       <div class="setting-row">
         <strong id="playlists-count-label">${t('Caricamento playlist…', 'Loading playlists…')}</strong>
         <div class="btn-row">
-          <button type="button" class="casa-btn primary sm" id="btn-add-playlist">+ ${t('Aggiungi Playlist', 'Add Playlist')}</button>
+          <label class="casa-btn primary sm" style="cursor:pointer" id="lbl-upload-server-m3u">
+            ${t('Carica file (.M3U / .M3U8 / .PLS)', 'Upload file (.M3U / .M3U8 / .PLS)')}
+            <input type="file" id="server-m3u-file" accept=".m3u,.m3u8,.pls,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,application/x-mpegurl,text/plain" multiple hidden />
+          </label>
+          <button type="button" class="casa-btn ghost sm" id="btn-add-playlist">+ ${t('Aggiungi Link', 'Add Link')}</button>
           <a class="casa-btn ghost sm" href="/api/playlist/export.m3u" download="casatv-server.m3u">${t('Esporta .M3U', 'Export .M3U')}</a>
         </div>
       </div>
@@ -2425,16 +2735,31 @@ function renderSettingsSources(detail, stats) {
     <section class="settings-card">
       <div class="settings-card-head">
         <h3>${t('Lista M3U locale (sul browser)', 'Local M3U Playlist (in browser)')}</h3>
-        <p>${t('Carica una lista M3U direttamente su questo schermo senza modificare il server.', 'Load an M3U playlist locally on this device without altering the server.')}</p>
+        <p>${t('Carica un file (.m3u, .m3u8, .pls, .txt) o URL solo su questo schermo senza modificare il server.', 'Load a file (.m3u, .m3u8, .pls, .txt) or URL only on this browser without altering the server.')}</p>
       </div>
+      ${localHasStatus ? `
+      <div class="local-status-box ${localIsError ? 'is-error' : ''}">
+        <div class="playlist-row-meta">
+          <div class="playlist-title-line">
+            <strong>${esc(state.localSourceLabel || t('Lista locale', 'Local list'))}</strong>
+            <span class="playlist-status-pill ${localIsError ? 'error' : 'ok'}">
+              <span class="playlist-status-dot"></span>
+              ${localIsError ? t('Non funziona', 'Not working') : `${fmtNum(localCount)} ${t('canali', 'channels')}`}
+            </span>
+          </div>
+          ${localIsError ? `<div class="playlist-error-msg">${esc(state.localSourceError)}</div>` : ''}
+        </div>
+        <button type="button" class="casa-btn danger sm" id="btn-clear-local-m3u">${t('Rimuovi', 'Remove')}</button>
+      </div>
+      ` : ''}
       <div class="field-row">
         <input type="url" class="casa-input" id="local-m3u-url" placeholder="https://..." />
         <button type="button" class="casa-btn primary sm" id="btn-load-local-m3u-url">${t('Carica URL', 'Load URL')}</button>
       </div>
       <div class="btn-row">
         <label class="casa-btn ghost sm" style="cursor:pointer">
-          ${t('Scegli file .M3U locale', 'Pick local .M3U file')}
-          <input type="file" id="local-m3u-file" accept=".m3u,.m3u8,text/plain,audio/x-mpegurl" hidden />
+          ${t('Scegli file .M3U / .M3U8 / .PLS', 'Pick .M3U / .M3U8 / .PLS file')}
+          <input type="file" id="local-m3u-file" accept=".m3u,.m3u8,.pls,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,application/x-mpegurl,text/plain" hidden />
         </label>
       </div>
     </section>
@@ -2451,9 +2776,14 @@ function renderSettingsSources(detail, stats) {
     const url = $('#new-pl-url').value.trim();
     if (!url) return toast(t('Inserisci un URL valido', 'Enter a valid URL'), 'err');
     try {
-      await api('/api/playlists', { method: 'POST', body: { name, url } });
+      const resp = await api('/api/playlists', { method: 'POST', body: { name, url } });
       $('#add-playlist-box').hidden = true;
-      toast(t('Playlist importata!', 'Playlist imported!'));
+      const pl = resp.playlist;
+      if (pl?.status === 'error' || !pl?.channelCount) {
+        toast(`${pl?.name || 'Playlist'}: ${pl?.lastError || t('non funziona', 'not working')}`, 'err');
+      } else {
+        toast(t('Playlist importata!', 'Playlist imported!'));
+      }
       await loadServerConfig();
       await loadChannels({ reset: true });
       drawPlaylists();
@@ -2462,14 +2792,62 @@ function renderSettingsSources(detail, stats) {
     }
   });
 
+  $('#server-m3u-file')?.addEventListener('change', async (e) => {
+    const files = [...(e.target.files || [])];
+    if (!files.length) return;
+    toast(`${t('Caricamento di', 'Uploading')} ${files.length} file…`);
+    let hasError = false;
+    for (const file of files) {
+      try {
+        const fd = new FormData();
+        fd.append('name', file.name);
+        fd.append('file', file, file.name);
+        const r = await fetch(`${state.serverUrl}/api/playlists/upload?name=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          body: fd,
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          hasError = true;
+          toast(`${file.name}: ${data.error || `HTTP ${r.status}`}`, 'err');
+        } else if (data.playlist?.status === 'error' || !data.playlist?.channelCount) {
+          hasError = true;
+          toast(`${file.name}: ${data.playlist?.lastError || t('Non funziona', 'Not working')}`, 'err');
+        }
+      } catch (err) {
+        hasError = true;
+        toast(`${file.name}: ${err.message}`, 'err');
+      }
+    }
+    e.target.value = '';
+    if (!hasError) toast(t('File playlist caricati!', 'Playlist files uploaded!'));
+    await loadServerConfig();
+    await loadChannels({ reset: true });
+    drawPlaylists();
+  });
+
+  $('#btn-clear-local-m3u')?.addEventListener('click', () => {
+    state.localOverrideChannels = null;
+    state.localSourceLabel = '';
+    state.localSourceError = '';
+    toast(t('Lista locale rimossa', 'Local playlist removed'));
+    renderCurrentScreen();
+  });
+
   $('#btn-load-local-m3u-url')?.addEventListener('click', async () => {
     const url = $('#local-m3u-url').value.trim();
     if (!/^https?:\/\//i.test(url)) return toast(t('Inserisci un URL http:// o https://', 'Invalid URL'), 'err');
     try {
-      const text = await (await fetch(url)).text();
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
       applyLocalM3u(text, url);
     } catch (err) {
-      toast(`${t('Errore caricamento', 'Load error')}: ${err.message}`, 'err');
+      state.localOverrideChannels = null;
+      state.localSourceLabel = url;
+      state.localSourceError = err.message || t('Errore caricamento URL', 'URL load error');
+      toast(`${t('Errore caricamento', 'Load error')}: ${state.localSourceError}`, 'err');
+      renderCurrentScreen();
     }
   });
 
@@ -2477,6 +2855,7 @@ function renderSettingsSources(detail, stats) {
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
+    e.target.value = '';
     applyLocalM3u(text, file.name);
   });
 
@@ -2488,33 +2867,75 @@ function renderSettingsSources(detail, stats) {
       const rowsEl = $('#playlists-rows');
       rowsEl.innerHTML = items.length
         ? items
-            .map(
-              (pl) => `
-          <div class="playlist-row">
+            .map((pl) => {
+              const isBroken = pl.status === 'error' || (pl.channelCount || 0) === 0;
+              const isWarn = !isBroken && pl.status === 'warn';
+              const rowClass = isBroken ? 'is-error' : isWarn ? 'is-warn' : '';
+              const pillClass = isBroken ? 'error' : isWarn ? 'warn' : 'ok';
+              const statusText = isBroken
+                ? t('Non funziona', 'Not working', 'No funciona')
+                : isWarn
+                  ? t('Avviso', 'Warning', 'Aviso')
+                  : t('Attiva', 'Active', 'Activa');
+              const srcTag = pl.url ? 'LINK' : 'FILE';
+              const errMsg = pl.lastError || (isBroken ? t('Playlist non valida o senza canali funzionanti', 'Invalid playlist or no working channels') : '');
+              return `
+          <div class="playlist-row ${rowClass}">
             <div class="playlist-row-meta">
-              <strong>${esc(pl.name || pl.url)}</strong>
-              <small>${fmtNum(pl.channelCount)} ${t('canali', 'channels')}${pl.url ? ` · ${esc(pl.url)}` : ''}</small>
+              <div class="playlist-title-line">
+                <strong>${esc(pl.name || pl.url || 'Playlist')}</strong>
+                <span class="playlist-status-pill ${pillClass}"><span class="playlist-status-dot"></span>${statusText}</span>
+                <span class="playlist-source-badge">${srcTag}</span>
+              </div>
+              <small>${fmtNum(pl.channelCount || 0)} ${t('canali', 'channels')}${pl.url ? ` · ${esc(pl.url)}` : ` · ${t('File caricato', 'Uploaded file')}`}</small>
+              ${errMsg ? `<div class="playlist-error-msg">${esc(errMsg)}</div>` : ''}
             </div>
             <div class="btn-row">
-              <button type="button" class="casa-btn ghost sm" data-pl-refresh="${esc(pl.id)}">${t('Aggiorna', 'Refresh')}</button>
+              <button type="button" class="casa-btn ghost sm" data-pl-check="${esc(pl.id)}">${t('Verifica', 'Check')}</button>
+              ${pl.url ? `<button type="button" class="casa-btn ghost sm" data-pl-refresh="${esc(pl.id)}">${t('Aggiorna', 'Refresh')}</button>` : ''}
               <button type="button" class="casa-btn danger sm" data-pl-del="${esc(pl.id)}">${t('Elimina', 'Delete')}</button>
             </div>
           </div>
-        `,
-            )
+        `;
+            })
             .join('')
         : `<p style="margin:0;color:var(--muted);font-size:12.5px">${t('Nessuna playlist salvata.', 'No saved playlists.')}</p>`;
 
+      $$('[data-pl-check]', rowsEl).forEach((b) =>
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try {
+            const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plCheck)}/check`, { method: 'POST' });
+            const pl = resp.playlist;
+            if (pl?.status === 'error') {
+              toast(`${pl.name}: ${pl.lastError || t('non funziona', 'not working')}`, 'err');
+            } else {
+              toast(`${pl?.name || 'Playlist'}: ${t('attiva', 'working')}!`);
+            }
+            drawPlaylists();
+          } catch (err) {
+            toast(err.message, 'err');
+            b.disabled = false;
+          }
+        }),
+      );
       $$('[data-pl-refresh]', rowsEl).forEach((b) =>
         b.addEventListener('click', async () => {
+          b.disabled = true;
           try {
-            await api(`/api/playlists/${encodeURIComponent(b.dataset.plRefresh)}/refresh`, { method: 'POST' });
-            toast(t('Playlist aggiornata', 'Playlist refreshed'));
+            const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plRefresh)}/refresh`, { method: 'POST' });
+            const pl = resp.playlist;
+            if (pl?.status === 'error') {
+              toast(`${pl.name}: ${pl.lastError || t('errore', 'error')}`, 'err');
+            } else {
+              toast(t('Playlist aggiornata', 'Playlist refreshed'));
+            }
             await loadServerConfig();
             await loadChannels({ reset: true });
             drawPlaylists();
           } catch (err) {
             toast(err.message, 'err');
+            b.disabled = false;
           }
         }),
       );
@@ -2540,9 +2961,20 @@ function renderSettingsSources(detail, stats) {
 
 function applyLocalM3u(text, label) {
   const parsed = parseM3uText(text);
-  if (!parsed.length) return toast(t('Nessun canale valido nella lista M3U', 'No valid channels found'), 'err');
+  if (!parsed.length) {
+    state.localOverrideChannels = null;
+    state.localSourceLabel = label;
+    state.localSourceError = t(
+      'File non valido o nessun canale IPTV (#EXTINF / PLS) trovato',
+      'Invalid file or no valid IPTV channels (#EXTINF / PLS) found',
+    );
+    toast(`${label}: ${state.localSourceError}`, 'err');
+    renderCurrentScreen();
+    return;
+  }
   state.localOverrideChannels = parsed;
   state.localSourceLabel = label;
+  state.localSourceError = '';
   toast(`${t('Caricati', 'Loaded')} ${parsed.length} ${t('canali in locale', 'local channels')}`);
   navigate('channels');
 }

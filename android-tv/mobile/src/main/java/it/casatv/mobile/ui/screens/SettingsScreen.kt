@@ -65,6 +65,7 @@ fun SettingsScreen(
     onSetAutoSaveServerM3u: (Boolean) -> Unit,
     onSetBackgroundPlay: (Boolean) -> Unit,
     onSetPipOnLeave: (Boolean) -> Unit,
+    onSetLiveSafetyBuffer: (Boolean) -> Unit,
     onSearchServerNow: () -> Unit,
     onSetUpdateFrequency: (UpdateFrequency) -> Unit,
     onCheckUpdatesNow: () -> Unit,
@@ -263,6 +264,24 @@ fun SettingsScreen(
                     ),
                     checked = state.backgroundPlayEnabled,
                     onCheckedChange = onSetBackgroundPlay,
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                SettingsToggleRow(
+                    icon = Icons.Default.Refresh,
+                    title = tr(
+                        "Buffer anti-interruzione",
+                        "Anti-freeze safety buffer",
+                        "Búfer anti-cortes",
+                    ),
+                    subtitle = tr(
+                        "Crea gradualmente una riserva invisibile (~8s) e riconnette il canale in background se il flusso cade.",
+                        "Gradually builds an invisible ~8s safety cushion and reconnects silently if the stream drops.",
+                        "Crea gradualmente un colchón invisible (~8s) y reconecta el canal en segundo plano si se corta.",
+                    ),
+                    checked = state.liveSafetyBufferEnabled,
+                    onCheckedChange = onSetLiveSafetyBuffer,
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))

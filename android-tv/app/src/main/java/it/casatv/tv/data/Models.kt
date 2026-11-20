@@ -7,8 +7,11 @@ data class PlaylistDto(
     val id: String = "",
     val name: String = "",
     val url: String = "",
+    val sourceType: String = "",
     val enabled: Boolean = true,
     val channelCount: Int = 0,
+    val status: String = "ok",
+    val lastError: String = "",
     val lastImport: Long = 0L,
 )
 
@@ -16,6 +19,18 @@ data class PlaylistDto(
 data class PlaylistsResponse(
     val ok: Boolean = false,
     val playlists: List<PlaylistDto> = emptyList(),
+)
+
+@Serializable
+data class PlaylistActionResponse(
+    val ok: Boolean = false,
+    val playlist: PlaylistDto? = null,
+)
+
+data class LocalM3uStatus(
+    val label: String = "",
+    val count: Int = 0,
+    val error: String = "",
 )
 
 @Serializable
@@ -47,6 +62,7 @@ data class ServerStats(
     val countries: Int = 0,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class Facet(
     val code: String = "",
@@ -56,6 +72,7 @@ data class Facet(
     val count: Int = 0,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class Facets(
     val countries: List<Facet> = emptyList(),
@@ -130,6 +147,7 @@ data class ProfilesResponse(
     val languages: List<ProfileLanguage> = emptyList(),
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class StreamSource(
     val id: String = "",
@@ -145,6 +163,7 @@ data class ChannelSources(
     val sources: List<StreamSource> = emptyList(),
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class NowProgram(
     val title: String = "",
@@ -152,12 +171,14 @@ data class NowProgram(
     val stop: Long = 0,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class NextProgram(
     val title: String = "",
     val start: Long = 0,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class Channel(
     val id: String,
@@ -197,6 +218,7 @@ data class Channel(
         get() = number?.toString() ?: "—"
 }
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class HomeRow(
     val id: String = "",
@@ -207,11 +229,13 @@ data class HomeRow(
     val channels: List<Channel> = emptyList(),
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class HomeResponse(
     val rows: List<HomeRow> = emptyList(),
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class ChannelPage(
     val items: List<Channel> = emptyList(),
@@ -221,6 +245,7 @@ data class ChannelPage(
     val hasMore: Boolean = false,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class EpgProgram(
     val title: String = "",
@@ -232,6 +257,7 @@ data class EpgProgram(
     val icon: String? = null,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class ChannelEpg(
     val channelId: String = "",
@@ -240,6 +266,7 @@ data class ChannelEpg(
     val upcoming: List<EpgProgram> = emptyList(),
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class EpgGuideChannel(
     val id: String,
@@ -249,6 +276,7 @@ data class EpgGuideChannel(
     val country: String? = null,
 )
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class EpgGuideProgram(
     val channelId: String = "",
