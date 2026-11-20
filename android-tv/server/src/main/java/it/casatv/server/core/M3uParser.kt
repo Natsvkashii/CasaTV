@@ -128,7 +128,11 @@ object M3uParser {
 
     private fun isPlayable(url: String): Boolean {
         val lower = url.lowercase(Locale.ROOT)
-        return lower.startsWith("http://") || lower.startsWith("https://")
+        return lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("rtsp://") ||
+            lower.startsWith("rtmp://") ||
+            lower.startsWith("rtmps://")
     }
 
     private fun firstToken(value: String?): String =

@@ -10,6 +10,7 @@ import fi.iki.elonen.NanoHTTPD.Response
 import it.casatv.server.BuildConfig
 import it.casatv.server.core.ClientRow
 import it.casatv.server.core.IptvChannel
+import it.casatv.server.core.LogoCache
 import it.casatv.server.core.M3uParser
 import it.casatv.server.core.NetworkUtils
 import it.casatv.server.core.PlaylistError
@@ -25,9 +26,12 @@ import it.casatv.server.core.countryName
 import it.casatv.server.core.languageLabel
 import it.casatv.server.core.languageName
 import it.casatv.server.core.textOf
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +67,7 @@ class CasaHttpServer(
 
     private val db = ServerDatabase.get(context)
     private val playlist = PlaylistManager(context)
+    private val logoCache = LogoCache.getInstance(context)
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clientTouchCache = ConcurrentHashMap<String, Pair<String, Long>>()
     private val startedAtSeconds = System.currentTimeMillis() / 1000
@@ -84,6 +89,7 @@ class CasaHttpServer(
             when {
                 path == "/healthz" -> health()
                 path == "/favicon.ico" -> serveStaticOrHtml(session, "favicon.svg")
+                path.startsWith("/logo/") -> serveLogo(session, path.removePrefix("/logo/"))
                 path.startsWith("/api/") -> api(session, path.removePrefix("/api").trim('/'))
                 else -> serveStaticOrHtml(session, path)
             }
@@ -296,6 +302,7 @@ class CasaHttpServer(
         val profile = activeProfile(session)
         val lang = profile.language
         val strings = textOf(lang)
+        val base = baseUrl(session)
         val favorites = db.favoriteIds(profile.id)
         val recentIds = db.recentIds(profile.id, 20)
         val iptv = db.listChannels()
@@ -305,7 +312,7 @@ class CasaHttpServer(
             if (favorites.isNotEmpty()) {
                 val favJson = buildJsonArray {
                     iptv.filter { it.id in favorites }.take(20).forEach { ch ->
-                        add(iptvChannelJson(ch, ch.number, lang, true))
+                        add(iptvChannelJson(ch, ch.number, lang, true, base))
                     }
                 }
                 if (favJson.isNotEmpty()) {
@@ -327,7 +334,7 @@ class CasaHttpServer(
                     mostWatchedIds.forEach { id ->
                         val ch = iptvById[id]
                         if (ch != null) {
-                            add(iptvChannelJson(ch, ch.number, lang, ch.id in favorites))
+                            add(iptvChannelJson(ch, ch.number, lang, ch.id in favorites, base))
                         }
                     }
                 }
@@ -350,7 +357,7 @@ class CasaHttpServer(
                     recentIds.forEach { id ->
                         val ch = iptvById[id]
                         if (ch != null) {
-                            add(iptvChannelJson(ch, ch.number, lang, ch.id in favorites))
+                            add(iptvChannelJson(ch, ch.number, lang, ch.id in favorites, base))
                         }
                     }
                 }
@@ -385,6 +392,7 @@ class CasaHttpServer(
                                         number = channel.number,
                                         language = lang,
                                         favorite = channel.id in favorites,
+                                        baseUrl = base,
                                     ),
                                 )
                             }
@@ -420,6 +428,7 @@ class CasaHttpServer(
                                             number = channel.number,
                                             language = lang,
                                             favorite = channel.id in favorites,
+                                            baseUrl = base,
                                         ),
                                     )
                                 }
@@ -434,6 +443,7 @@ class CasaHttpServer(
     private fun channels(session: IHTTPSession, parts: List<String>): Response {
         val profile = activeProfile(session)
         val lang = profile.language
+        val base = baseUrl(session)
         val favorites = db.favoriteIds(profile.id)
 
         if (parts.size >= 2 && parts[1] == "by-number") {
@@ -442,7 +452,7 @@ class CasaHttpServer(
             val channel = db.getChannelByNumber(number)
                 ?: return errorResponse(Response.Status.NOT_FOUND, "Canale non trovato")
             return jsonResponse(
-                iptvChannelJson(channel, channel.number, lang, channel.id in favorites),
+                iptvChannelJson(channel, channel.number, lang, channel.id in favorites, base),
             )
         }
 
@@ -462,11 +472,11 @@ class CasaHttpServer(
                     val favorite = session.jsonBody().bool("favorite") ?: false
                     db.setFavorite(profile.id, iptvChannel.id, favorite)
                     jsonResponse(
-                        iptvChannelJson(iptvChannel, iptvChannel.number, lang, favorite),
+                        iptvChannelJson(iptvChannel, iptvChannel.number, lang, favorite, base),
                     )
                 }
                 parts.size == 2 -> jsonResponse(
-                    iptvChannelJson(iptvChannel, iptvChannel.number, lang, iptvChannel.id in favorites),
+                    iptvChannelJson(iptvChannel, iptvChannel.number, lang, iptvChannel.id in favorites, base),
                 )
                 else -> errorResponse(Response.Status.NOT_FOUND, "Endpoint non trovato")
             }
@@ -518,6 +528,7 @@ class CasaHttpServer(
                                 number = channel.number,
                                 language = lang,
                                 favorite = channel.id in favorites,
+                                baseUrl = base,
                             ),
                         )
                     }
@@ -965,6 +976,11 @@ class CasaHttpServer(
                     activeClients.forEach { add(clientJson(it)) }
                 }
                 put("deviceCount", activeClients.size)
+                putJsonObject("logoCache") {
+                    val (count, bytes) = logoCache.stats()
+                    put("files", count)
+                    put("bytes", bytes)
+                }
                 put("update", updateJson(session.header("x-app-version"), session))
             },
         )
@@ -1366,15 +1382,63 @@ class CasaHttpServer(
         put("updatedAt", profile.updatedAt)
     }
 
+    private fun serveLogo(session: IHTTPSession, rawId: String): Response {
+        val channelId = runCatching {
+            URLDecoder.decode(rawId.trim('/'), "UTF-8")
+        }.getOrDefault(rawId.trim('/'))
+        if (channelId.isBlank()) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Canale non trovato").apply {
+                addHeader("Access-Control-Allow-Origin", "*")
+            }
+        }
+        val channel = db.getChannel(channelId)
+        val rawLogo = channel?.logo?.takeIf { it.isNotBlank() }
+            ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Nessun logo").apply {
+                addHeader("Access-Control-Allow-Origin", "*")
+                addHeader("Cache-Control", "public, max-age=300")
+            }
+
+        val expectedEtag = "\"${logoCache.etagFor(rawLogo)}\""
+        if (session.header("if-none-match") == expectedEtag && logoCache.isCachedOnDisk(rawLogo)) {
+            return newFixedLengthResponse(Response.Status.NOT_MODIFIED, "image/png", "").apply {
+                addHeader("Access-Control-Allow-Origin", "*")
+                addHeader("Cache-Control", "public, max-age=2592000, immutable")
+                addHeader("ETag", expectedEtag)
+            }
+        }
+
+        val cached = logoCache.getOrFetch(rawLogo)
+            ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Logo non disponibile").apply {
+                addHeader("Access-Control-Allow-Origin", "*")
+                addHeader("Cache-Control", "public, max-age=300")
+            }
+
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            cached.mimeType,
+            ByteArrayInputStream(cached.bytes),
+            cached.bytes.size.toLong(),
+        ).apply {
+            addHeader("Access-Control-Allow-Origin", "*")
+            addHeader("Cache-Control", "public, max-age=2592000, immutable")
+            addHeader("ETag", "\"${cached.etag}\"")
+        }
+    }
+
     private fun iptvChannelJson(
         channel: IptvChannel,
         number: Int,
         language: String,
         favorite: Boolean,
+        baseUrl: String,
     ): JsonObject {
         val strings = textOf(language)
         val categoryName = categoryName(channel.category, language)
         val languageCode = M3uParser.normalizeLanguage(channel.language)
+        val cachedLogoUrl = channel.logo?.takeIf { it.isNotBlank() }?.let {
+            val encodedId = URLEncoder.encode(channel.id, "UTF-8").replace("+", "%20")
+            "$baseUrl/logo/$encodedId"
+        }
         return buildJsonObject {
             put("id", channel.id)
             put("number", number)
@@ -1391,7 +1455,7 @@ class CasaHttpServer(
                 if (languageCode.isNotBlank()) add(languageName(languageCode, language))
             }
             put("quality", channel.quality.ifBlank { "SD" })
-            putOrNull("logo", channel.logo)
+            putOrNull("logo", cachedLogoUrl)
             put("favorite", favorite)
             put("hidden", false)
             put("enabled", true)
@@ -1637,7 +1701,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.016"
+        const val TV_LATEST_VERSION = "26.11.017"
     }
 }
 

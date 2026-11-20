@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.016';
+const WEB_APP_VERSION = '26.11.017';
 const CHANNEL_PAGE_SIZE = 96;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -132,6 +132,8 @@ const state = {
   playerSources: [],
   playerSourceIdx: 0,
   hls: null,
+  dashPlayer: null,
+  mpegtsPlayer: null,
   cardPreviewHls: null,
   cardPreviewTimer: null,
   drawerOpen: false,
@@ -1702,19 +1704,30 @@ function pickRandomMixCandidate(excludeIds = new Set()) {
 }
 
 async function probeStreamReachable(url, signal) {
-  if (!window.Hls?.isSupported?.() && !/\.m3u8/i.test(url)) return true;
+  if (!/^https?:\/\//i.test(url)) return false;
+  if (!window.Hls?.isSupported?.() && !isHlsStreamUrl(url) && !isDashStreamUrl(url) && !isMpegTsStreamUrl(url)) {
+    return true;
+  }
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3200);
     if (signal) signal.addEventListener('abort', () => ctrl.abort(), { once: true });
     const res = await fetch(url, { method: 'GET', mode: 'cors', signal: ctrl.signal });
     clearTimeout(timer);
-    if (!res.ok) return false;
+    if (!res.ok) {
+      ctrl.abort();
+      return false;
+    }
+    if (isMpegTsStreamUrl(url)) {
+      ctrl.abort();
+      return true;
+    }
     const text = (await res.text()).slice(0, 1024);
-    if (/\.m3u8/i.test(url)) return text.includes('#EXTM3U');
+    if (isHlsStreamUrl(url)) return text.includes('#EXTM3U');
+    if (isDashStreamUrl(url)) return text.includes('<MPD');
     return text.length > 0;
   } catch (err) {
-    // Abort means navigation moved on; network error/CORS means unplayable in Hls.js
+    // Abort means navigation moved on; network error/CORS means unplayable in browser
     if (err?.name === 'AbortError' && signal?.aborted) throw err;
     return false;
   }
@@ -1841,11 +1854,39 @@ function stopWebRecoveryLoops() {
   if (pill) pill.hidden = true;
 }
 
+function isHlsStreamUrl(url) {
+  return /\.m3u8(\?|$|#)|[/?&]m3u8\b|format=m3u8/i.test(String(url || ''));
+}
+
+function isDashStreamUrl(url) {
+  return /\.mpd(\?|$|#)|format=mpd|application\/dash\+xml/i.test(String(url || ''));
+}
+
+function isMpegTsStreamUrl(url) {
+  const s = String(url || '');
+  return !isHlsStreamUrl(s) && !isDashStreamUrl(s) && (/\.ts(\?|$|#)|[?&](output|type|format)=ts\b/i.test(s));
+}
+
 function stopPlayerStream({ keepFrame = false } = {}) {
   const video = $('#preview-video');
   if (state.hls) {
     state.hls.destroy();
     state.hls = null;
+  }
+  if (state.dashPlayer) {
+    try {
+      state.dashPlayer.reset();
+    } catch (_) {}
+    state.dashPlayer = null;
+  }
+  if (state.mpegtsPlayer) {
+    try {
+      state.mpegtsPlayer.pause();
+      state.mpegtsPlayer.unload();
+      state.mpegtsPlayer.detachMediaElement();
+      state.mpegtsPlayer.destroy();
+    } catch (_) {}
+    state.mpegtsPlayer = null;
   }
   if (video) {
     video.onplaying = null;
@@ -2041,7 +2082,40 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
       }
     };
 
-    if (window.Hls && window.Hls.isSupported() && /\.m3u8|m3u8/i.test(streamUrl)) {
+    if (isDashStreamUrl(streamUrl) && window.dashjs?.MediaPlayer) {
+      const dp = window.dashjs.MediaPlayer().create();
+      dp.updateSettings({
+        streaming: {
+          delay: { liveDelay: state.liveSafetyBuffer ? 8 : 4 },
+          buffer: {
+            bufferTimeAtTopQuality: state.liveSafetyBuffer ? 30 : 14,
+            bufferTimeAtTopQualityLongForm: 40,
+            stableBufferTime: state.liveSafetyBuffer ? 16 : 8,
+          },
+          retryAttempts: {
+            MPD: 4,
+            MediaSegment: state.liveSafetyBuffer ? 6 : 3,
+          },
+          retryIntervals: {
+            MPD: 700,
+            MediaSegment: 700,
+          },
+        },
+      });
+      state.dashPlayer = dp;
+      const ev = window.dashjs.MediaPlayer.events;
+      dp.on(ev.PLAYBACK_PLAYING, () => onReady());
+      dp.on(ev.STREAM_INITIALIZED, () => onReady());
+      dp.on(ev.ERROR, (e) => {
+        if (!state.playerOpen || state.tuneSeq !== seq) return;
+        try {
+          dp.reset();
+        } catch (_) {}
+        if (state.dashPlayer === dp) state.dashPlayer = null;
+        scheduleWebReconnect(e?.error?.code || e?.error?.message || 'dash_error');
+      });
+      dp.initialize(video, streamUrl, true);
+    } else if (window.Hls && window.Hls.isSupported() && isHlsStreamUrl(streamUrl)) {
       const hls = new window.Hls({
         enableWorker: true,
         lowLatencyMode: !state.liveSafetyBuffer,
@@ -2080,6 +2154,33 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
           scheduleWebReconnect(data.details || data.type || 'hls_error');
         }
       });
+    } else if (isMpegTsStreamUrl(streamUrl) && window.mpegts?.isSupported?.()) {
+      const mp = window.mpegts.createPlayer(
+        { type: 'mpegts', isLive: true, url: streamUrl },
+        {
+          enableWorker: true,
+          liveBufferLatencyChasing: !state.liveSafetyBuffer,
+          liveBufferLatencyMaxLatency: state.liveSafetyBuffer ? 12 : 4,
+          liveBufferLatencyMinRemain: state.liveSafetyBuffer ? 4 : 1.5,
+          enableStashBuffer: true,
+          stashInitialSize: state.liveSafetyBuffer ? 393216 : 131072,
+        },
+      );
+      state.mpegtsPlayer = mp;
+      mp.on(window.mpegts.Events.ERROR, (errType, errDetail) => {
+        if (!state.playerOpen || state.tuneSeq !== seq) return;
+        try {
+          mp.pause();
+          mp.unload();
+          mp.detachMediaElement();
+          mp.destroy();
+        } catch (_) {}
+        if (state.mpegtsPlayer === mp) state.mpegtsPlayer = null;
+        scheduleWebReconnect(errDetail || errType || 'mpegts_error');
+      });
+      mp.attachMediaElement(video);
+      mp.load();
+      mp.play().then(onReady).catch(() => {});
     } else {
       video.src = streamUrl;
       video.onloadedmetadata = () => {

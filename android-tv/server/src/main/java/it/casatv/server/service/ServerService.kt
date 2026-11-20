@@ -20,9 +20,11 @@ import android.util.Log
 import androidx.core.app.ServiceCompat
 import it.casatv.server.MainActivity
 import it.casatv.server.R
+import it.casatv.server.core.LogoCache
 import it.casatv.server.core.NetworkUtils
 import it.casatv.server.core.PlaylistManager
 import it.casatv.server.core.Prefs
+import it.casatv.server.core.ServerDatabase
 import it.casatv.server.core.ServerRuntime
 import it.casatv.server.core.textOf
 import it.casatv.server.server.CasaHttpServer
@@ -49,6 +51,7 @@ class ServerService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
     private var watchdogJob: Job? = null
+    private var logoPrewarmJob: Job? = null
     private var server: CasaHttpServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -144,6 +147,7 @@ class ServerService : Service() {
             ServerRuntime.setRunning(port, ip)
             registerMdns(port)
             startPlaylistAutoRefresh()
+            startLogoPrewarm()
             updateNotification()
             scheduleAlarmWatchdog()
             Log.i("CasaTV", "ServerService avviato autonomamente su http://${ip ?: "0.0.0.0"}:$port")
@@ -237,8 +241,44 @@ class ServerService : Service() {
                 val lastImport = Prefs.playlistLastImport(this@ServerService)
                 val nowSeconds = System.currentTimeMillis() / 1000
                 if (url.isNotBlank() && nowSeconds - lastImport >= PLAYLIST_REFRESH_INTERVAL_SECONDS) {
-                    runCatching { playlistManager.refresh() }
+                    val refreshed = runCatching { playlistManager.refresh() }.isSuccess
+                    if (refreshed) startLogoPrewarm()
                 }
+            }
+        }
+    }
+
+    private fun startLogoPrewarm() {
+        logoPrewarmJob?.cancel()
+        logoPrewarmJob = serviceScope.launch {
+            delay(15_000L)
+            val db = ServerDatabase.get(this@ServerService)
+            val profiles = db.listProfiles()
+            val favIds = profiles.flatMap { db.favoriteIds(it.id) }.toSet()
+            val preferredCountries = (profiles.map { it.country } + "IT")
+                .map { it.trim().uppercase() }
+                .filter { it.isNotBlank() }
+                .toSet()
+            val channels = db.listChannels()
+            val urls = ArrayList<String>(512)
+            for (ch in channels) {
+                if (ch.id in favIds && !ch.logo.isNullOrBlank()) {
+                    urls.add(ch.logo)
+                }
+            }
+            for (ch in channels) {
+                if (ch.id !in favIds && ch.country.uppercase() in preferredCountries && !ch.logo.isNullOrBlank()) {
+                    urls.add(ch.logo)
+                }
+            }
+            val cache = LogoCache.getInstance(this@ServerService)
+            val pending = urls.asSequence()
+                .distinct()
+                .filter { !cache.isCachedOnDisk(it) }
+                .take(500)
+                .toList()
+            if (pending.isNotEmpty()) {
+                cache.prefetchUrls(pending, this)
             }
         }
     }
@@ -248,6 +288,8 @@ class ServerService : Service() {
         watchdogJob = null
         refreshJob?.cancel()
         refreshJob = null
+        logoPrewarmJob?.cancel()
+        logoPrewarmJob = null
         unregisterMdns()
         runCatching { server?.stop() }
         server = null

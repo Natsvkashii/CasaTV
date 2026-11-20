@@ -5,8 +5,12 @@ import { config, paths } from './config.js';
 import { db } from './db.js';
 import { sha256 } from './util.js';
 
-const memory = new Map(); // channelId -> { buffer, type, at }
+const memory = new Map(); // channelId -> { buffer, type, at, url }
 const inflight = new Map();
+const failedCache = new Map(); // url -> retryAfterMs
+const FRESH_TTL_MS = 30 * 24 * 3600 * 1000;
+const NEG_PERMANENT_MS = 6 * 3600 * 1000;
+const NEG_TRANSIENT_MS = 2 * 60 * 1000;
 
 function detectImage(buffer) {
   if (!buffer || buffer.length < 12) return null;
@@ -65,6 +69,7 @@ export async function getLogo(req, reply, channelId) {
   const key = sha256(channel.logo);
   const binFile = path.join(paths.logos, `${key}.bin`);
   const metaFile = path.join(paths.logos, `${key}.json`);
+  let stale = null;
 
   try {
     const [buffer, metaRaw] = await Promise.all([
@@ -72,13 +77,21 @@ export async function getLogo(req, reply, channelId) {
       fsp.readFile(metaFile, 'utf8'),
     ]);
     const meta = JSON.parse(metaRaw);
-    if (Date.now() - Number(meta.at || 0) < 7 * 24 * 3600 * 1000) {
+    stale = { buffer, type: meta.type };
+    if (Date.now() - Number(meta.at || 0) < FRESH_TTL_MS) {
       memory.set(channel.id, { buffer, type: meta.type, at: Date.now(), url: channel.logo });
       if (memory.size > 300) memory.delete(memory.keys().next().value);
       return sendImage(reply, buffer, meta.type, channel.logo);
     }
   } catch {
     // cache miss
+  }
+
+  const blockedUntil = failedCache.get(channel.logo);
+  if (blockedUntil && Date.now() < blockedUntil) {
+    if (stale) return sendImage(reply, stale.buffer, stale.type, channel.logo);
+    reply.code(404).header('cache-control', 'public, max-age=300');
+    return reply.send('Logo non disponibile');
   }
 
   const taskKey = `${channel.id}|${channel.logo}`;
@@ -91,15 +104,20 @@ export async function getLogo(req, reply, channelId) {
   inflight.set(taskKey, task);
   try {
     const { buffer, type } = await task;
+    failedCache.delete(channel.logo);
     await fsp.writeFile(binFile, buffer);
     await fsp.writeFile(metaFile, JSON.stringify({ at: Date.now(), type, url: channel.logo }));
     memory.set(channel.id, { buffer, type, at: Date.now(), url: channel.logo });
     if (memory.size > 300) memory.delete(memory.keys().next().value);
     return sendImage(reply, buffer, type, channel.logo);
-  } catch {
-    // Fall back to the original URL: the app's image loader may still reach it.
-    reply.header('cache-control', 'public, max-age=3600');
-    return reply.redirect(channel.logo);
+  } catch (err) {
+    const isPermanent = /400|401|403|404|410|non immagine|troppo grande/i.test(String(err?.message || ''));
+    failedCache.set(channel.logo, Date.now() + (isPermanent ? NEG_PERMANENT_MS : NEG_TRANSIENT_MS));
+    if (stale) {
+      return sendImage(reply, stale.buffer, stale.type, channel.logo);
+    }
+    reply.code(404).header('cache-control', 'public, max-age=300');
+    return reply.send('Logo non disponibile');
   } finally {
     inflight.delete(taskKey);
   }

@@ -1882,7 +1882,7 @@ private fun playableStreamUrl(raw: String): String? {
     return runCatching {
         val uri = android.net.Uri.parse(value)
         when (uri.scheme?.lowercase()) {
-            "http", "https" -> value
+            "http", "https", "rtsp", "rtmp", "rtmps" -> value
             else -> null
         }
     }.getOrNull()
