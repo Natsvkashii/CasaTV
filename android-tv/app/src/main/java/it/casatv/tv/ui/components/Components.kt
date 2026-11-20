@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Precision
+import it.casatv.tv.CasaTvApplication
 import it.casatv.tv.data.Channel
 import it.casatv.tv.data.GlobalSearchResult
 import it.casatv.tv.ui.LocalAppStrings
@@ -180,16 +182,18 @@ fun GridChannelCard(
     showCountryFlag: Boolean = false,
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(20.dp)
+    val shape = remember { RoundedCornerShape(20.dp) }
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .height(168.dp)
-            .zIndex(if (focused) 2f else 0f)
+            .zIndex(if (!isLowRam && focused) 2f else 0f)
             .clip(shape)
             .background(if (focused) (if (isLight) it.casatv.tv.ui.theme.CasaBlue else Color.White) else CasaSurface)
             .border(
@@ -280,19 +284,17 @@ private fun ChannelArtwork(
     focused: Boolean = false,
 ) {
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val context = LocalContext.current
+    val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
+    val lightBrush = remember { Brush.linearGradient(listOf(Color(0xFFE2E8F0), Color(0xFFEDF2F7))) }
+    val darkBrush = remember { Brush.linearGradient(listOf(Color(0xFF0F2238), Color(0xFF07111E))) }
+    val boxModifier = if (isLowRam) {
+        modifier.background(if (isLight) Color(0xFFE8EEF5) else Color(0xFF0A1728))
+    } else {
+        modifier.background(if (isLight) lightBrush else darkBrush)
+    }
     Box(
-        modifier = modifier
-            .background(
-                if (isLight) {
-                    Brush.linearGradient(
-                        listOf(Color(0xFFE2E8F0), Color(0xFFEDF2F7)),
-                    )
-                } else {
-                    Brush.linearGradient(
-                        listOf(Color(0xFF0F2238), Color(0xFF07111E)),
-                    )
-                },
-            ),
+        modifier = boxModifier,
     ) {
         ChannelLogo(
             channel = channel,
@@ -300,11 +302,13 @@ private fun ChannelArtwork(
                 .fillMaxSize()
                 .padding(if (compact) 14.dp else 20.dp),
         )
-        ChannelLivePreviewBox(
-            streamUrl = channel.streamUrl,
-            active = focused,
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (!isLowRam) {
+            ChannelLivePreviewBox(
+                streamUrl = channel.streamUrl,
+                active = focused,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         if (channel.number != null) {
             Box(
                 modifier = Modifier
@@ -400,14 +404,28 @@ fun ChannelLogo(
 ) {
     var failed by remember(channel.logo, channel.id) { mutableStateOf(false) }
     val context = LocalContext.current
+    val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
     if (channel.logo.isNullOrBlank() || failed) {
         FallbackLogo(channel.name, modifier)
     } else {
-        AsyncImage(
-            model = ImageRequest.Builder(context)
+        val request = remember(channel.logo, isLowRam) {
+            ImageRequest.Builder(context)
                 .data(channel.logo)
-                .crossfade(180)
-                .build(),
+                .precision(Precision.INEXACT)
+                .apply {
+                    if (isLowRam) {
+                        size(192, 128)
+                        crossfade(false)
+                        allowRgb565(true)
+                    } else {
+                        size(320, 200)
+                        crossfade(180)
+                    }
+                }
+                .build()
+        }
+        AsyncImage(
+            model = request,
             contentDescription = channel.name,
             contentScale = ContentScale.Fit,
             modifier = modifier,

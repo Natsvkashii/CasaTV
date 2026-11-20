@@ -54,3 +54,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Local device backups
+backups/

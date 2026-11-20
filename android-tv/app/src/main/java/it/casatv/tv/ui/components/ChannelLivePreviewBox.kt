@@ -63,6 +63,10 @@ fun ChannelLivePreviewBox(
     modifier: Modifier = Modifier,
     dwellMs: Long = 850L,
 ) {
+    val previewContext = LocalContext.current
+    val isLowRam = remember(previewContext) { it.casatv.tv.CasaTvApplication.isLowRamDevice(previewContext) }
+    if (isLowRam) return
+
     val cleanUrl = remember(streamUrl) {
         val trimmed = streamUrl.trim()
         val scheme = trimmed.substringBefore("://", "").lowercase()

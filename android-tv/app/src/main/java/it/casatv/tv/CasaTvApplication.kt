@@ -1,6 +1,9 @@
 package it.casatv.tv
 
+import android.app.ActivityManager
 import android.app.Application
+import android.content.Context
+import android.graphics.Bitmap
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
@@ -11,8 +14,9 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class CasaTvApplication : Application(), ImageLoaderFactory {
-    override fun newImageLoader(): ImageLoader =
-        ImageLoader.Builder(this)
+    override fun newImageLoader(): ImageLoader {
+        val lowRam = isLowRamDevice(this)
+        return ImageLoader.Builder(this)
             .okHttpClient {
                 OkHttpClient.Builder()
                     .connectTimeout(10, TimeUnit.SECONDS)
@@ -36,21 +40,39 @@ class CasaTvApplication : Application(), ImageLoaderFactory {
             }
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.20)
+                    .maxSizePercent(if (lowRam) 0.10 else 0.20)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(64L * 1024 * 1024)
+                    .maxSizeBytes(if (lowRam) 32L * 1024 * 1024 else 64L * 1024 * 1024)
                     .build()
             }
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowRgb565(true)
+            .apply {
+                if (lowRam) bitmapConfig(Bitmap.Config.RGB_565)
+            }
             .components {
                 add(SvgDecoder.Factory())
             }
-            .crossfade(true)
+            .crossfade(!lowRam)
             .build()
+    }
+
+    companion object {
+        @Volatile
+        private var cachedLowRam: Boolean? = null
+
+        fun isLowRamDevice(context: Context): Boolean {
+            cachedLowRam?.let { return it }
+            val am = context.applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val lowRam = (am?.isLowRamDevice == true) ||
+                (Runtime.getRuntime().maxMemory() <= 160L * 1024L * 1024L)
+            cachedLowRam = lowRam
+            return lowRam
+        }
+    }
 }
