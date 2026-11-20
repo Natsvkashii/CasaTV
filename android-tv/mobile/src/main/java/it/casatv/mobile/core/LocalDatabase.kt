@@ -123,19 +123,25 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         writableDatabase.update("playlists", cv, "id = ?", arrayOf(playlistId))
     }
 
-    fun sampleChannelUrls(playlistId: String, limit: Int = 3): List<String> {
+    fun sampleChannelUrls(playlistId: String, limit: Int = 6): List<String> {
         val pool = mutableListOf<String>()
         readableDatabase.rawQuery(
-            "SELECT stream_url FROM channels WHERE playlist_id = ? LIMIT 50",
+            "SELECT stream_url FROM channels WHERE playlist_id = ? ORDER BY COALESCE(number, 999999) ASC",
             arrayOf(playlistId),
         ).use { c ->
             while (c.moveToNext()) pool += c.getString(0)
         }
-        if (pool.size <= limit) return pool
+        if (pool.isEmpty()) return emptyList()
+        val preferred = pool.filter { raw ->
+            val u = raw.substringBefore('?').lowercase(java.util.Locale.ROOT)
+            !u.endsWith(".mp4") && !u.endsWith(".jpg") && !u.endsWith(".png")
+        }
+        val source = if (preferred.isNotEmpty()) preferred else pool
+        if (source.size <= limit) return source
         val out = mutableListOf<String>()
         val denom = (limit - 1).coerceAtLeast(1)
         for (i in 0 until limit) {
-            out += pool[(i * (pool.size - 1)) / denom]
+            out += source[(i * (source.size - 1)) / denom]
         }
         return out
     }

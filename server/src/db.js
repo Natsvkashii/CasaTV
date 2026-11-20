@@ -166,6 +166,13 @@ db.exec(`
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS playlist_channels (
+    playlist_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (playlist_id, channel_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_playlist_channels_channel ON playlist_channels(channel_id);
 `);
 
 try {
@@ -182,6 +189,17 @@ try {
 
 try {
   db.exec("ALTER TABLE playlists ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
+} catch (_) {}
+
+try {
+  const pcCount = db.prepare('SELECT COUNT(*) AS n FROM playlist_channels').get().n;
+  if (pcCount === 0) {
+    db.exec(`
+      INSERT OR IGNORE INTO playlist_channels(playlist_id, channel_id, position)
+      SELECT playlist_id, id, number FROM channels
+      WHERE playlist_id IS NOT NULL AND playlist_id != ''
+    `);
+  }
 } catch (_) {}
 
 const defaultSettings = {
@@ -909,7 +927,16 @@ function buildFilters(filters = {}) {
     where.push('c.enabled = ?');
     params.push(enabled ? 1 : 0);
   }
-  where.push('(c.playlist_id IS NULL OR c.playlist_id IN (SELECT id FROM playlists WHERE enabled = 1))');
+  where.push(`(
+    EXISTS (
+      SELECT 1 FROM playlist_channels pcl
+      JOIN playlists pl ON pcl.playlist_id = pl.id
+      WHERE pcl.channel_id = c.id AND pl.enabled = 1
+    ) OR (
+      NOT EXISTS (SELECT 1 FROM playlist_channels pcl2 WHERE pcl2.channel_id = c.id)
+      AND (c.playlist_id IS NULL OR NOT EXISTS (SELECT 1 FROM playlists pl2 WHERE pl2.id = c.playlist_id AND pl2.enabled = 0))
+    )
+  )`);
 
   if (filters.hidden === undefined || filters.hidden === '0' || filters.hidden === 0) {
     where.push('COALESCE(pc.hidden, 0) = 0');
@@ -1485,20 +1512,35 @@ export function updatePlaylistStatus(id, status, lastError = '') {
     .run(status, lastError || '', now, id);
 }
 
-export function samplePlaylistChannels(playlistId, limit = 3) {
-  const rows = db.prepare(`
+export function samplePlaylistChannels(playlistId, limit = 6) {
+  let rows = db.prepare(`
     SELECT c.id, c.name, s.url AS stream_url
-    FROM channels c
+    FROM playlist_channels pcl
+    JOIN channels c ON c.id = pcl.channel_id
     JOIN streams s ON s.channel_id = c.id
-    WHERE c.playlist_id = ?
-    ORDER BY c.number ASC
-    LIMIT 50
+    WHERE pcl.playlist_id = ?
+    ORDER BY pcl.position ASC
   `).all(playlistId);
-  if (rows.length <= limit) return rows;
+  if (!rows.length) {
+    rows = db.prepare(`
+      SELECT c.id, c.name, s.url AS stream_url
+      FROM channels c
+      JOIN streams s ON s.channel_id = c.id
+      WHERE c.playlist_id = ?
+      ORDER BY c.number ASC
+    `).all(playlistId);
+  }
+  if (!rows.length) return [];
+  const preferred = rows.filter((r) => {
+    const u = String(r.stream_url || '').split('?')[0].toLowerCase();
+    return !u.endsWith('.mp4') && !u.endsWith('.jpg') && !u.endsWith('.png');
+  });
+  const pool = preferred.length ? preferred : rows;
+  if (pool.length <= limit) return pool;
   const out = [];
   for (let i = 0; i < limit; i++) {
-    const idx = Math.floor((i * (rows.length - 1)) / Math.max(1, limit - 1));
-    out.push(rows[idx]);
+    const idx = Math.floor((i * (pool.length - 1)) / Math.max(1, limit - 1));
+    out.push(pool[idx]);
   }
   return out;
 }
@@ -1510,15 +1552,33 @@ export function togglePlaylist(id, enabled) {
 }
 
 export function deletePlaylist(id) {
-  const delStreams = db.prepare(
-    'DELETE FROM streams WHERE channel_id IN (SELECT id FROM channels WHERE playlist_id = ?)',
-  );
-  const delChannels = db.prepare('DELETE FROM channels WHERE playlist_id = ?');
+  const delLinks = db.prepare('DELETE FROM playlist_channels WHERE playlist_id = ?');
   const delPlaylist = db.prepare('DELETE FROM playlists WHERE id = ?');
+  const delOrphanStreams = db.prepare(`
+    DELETE FROM streams
+    WHERE channel_id IN (
+      SELECT id FROM channels
+      WHERE NOT EXISTS (SELECT 1 FROM playlist_channels pcl WHERE pcl.channel_id = channels.id)
+        AND (playlist_id = ? OR NOT EXISTS (SELECT 1 FROM playlists pl WHERE pl.id = channels.playlist_id))
+    )
+  `);
+  const delOrphanChannels = db.prepare(`
+    DELETE FROM channels
+    WHERE NOT EXISTS (SELECT 1 FROM playlist_channels pcl WHERE pcl.channel_id = channels.id)
+      AND (playlist_id = ? OR NOT EXISTS (SELECT 1 FROM playlists pl WHERE pl.id = channels.playlist_id))
+  `);
+  const reassignShared = db.prepare(`
+    UPDATE channels
+    SET playlist_id = (SELECT pcl.playlist_id FROM playlist_channels pcl WHERE pcl.channel_id = channels.id LIMIT 1)
+    WHERE playlist_id = ?
+      AND EXISTS (SELECT 1 FROM playlist_channels pcl WHERE pcl.channel_id = channels.id)
+  `);
   transaction(() => {
-    delStreams.run(id);
-    delChannels.run(id);
+    delLinks.run(id);
     delPlaylist.run(id);
+    delOrphanStreams.run(id);
+    delOrphanChannels.run(id);
+    reassignShared.run(id);
   });
 }
 

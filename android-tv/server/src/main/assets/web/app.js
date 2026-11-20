@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.018';
+const WEB_APP_VERSION = '26.11.019';
 const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -3271,9 +3271,12 @@ function renderSettingsSources(detail, stats) {
             const pl = resp.playlist;
             if (pl?.status === 'error') {
               toast(`${pl.name}: ${pl.lastError || t('non funziona', 'not working')}`, 'err');
+            } else if (pl?.status === 'warn') {
+              toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
             } else {
               toast(`${pl?.name || 'Playlist'}: ${t('attiva', 'working')}!`);
             }
+            await loadServerConfig();
             drawPlaylists();
           } catch (err) {
             toast(err.message, 'err');
@@ -3289,6 +3292,8 @@ function renderSettingsSources(detail, stats) {
             const pl = resp.playlist;
             if (pl?.status === 'error') {
               toast(`${pl.name}: ${pl.lastError || t('errore', 'error')}`, 'err');
+            } else if (pl?.status === 'warn') {
+              toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
             } else {
               toast(t('Playlist aggiornata', 'Playlist refreshed'));
             }

@@ -712,53 +712,113 @@ export async function runIngest({ force = false, reason = 'manual' } = {}) {
   return ingestPromise;
 }
 
-async function probeSampleUrls(urls) {
+const CHROME_PROBE_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+function diagnoseEmptyPlaylistError(text) {
+  const trimmed = String(text || '').trimStart();
+  if (!trimmed) return 'Playlist vuota o non leggibile';
+  const sample = trimmed.slice(0, 4096).toLowerCase();
+  if (
+    sample.includes('<html') ||
+    sample.includes('<!doctype') ||
+    sample.includes('<body') ||
+    sample.includes('<title') ||
+    sample.includes('<b>warning</b>') ||
+    sample.includes('<b>fatal error</b>') ||
+    sample.includes('fopen(') ||
+    sample.includes('failed to open stream')
+  ) {
+    return 'Il link non restituisce una lista M3U (il server remoto ha risposto con una pagina HTML o un errore)';
+  }
+  if (
+    (sample.includes('#ext-x-targetduration') ||
+      sample.includes('#ext-x-media-sequence') ||
+      sample.includes('#ext-x-stream-inf')) &&
+    !sample.includes('#extinf:-1')
+  ) {
+    return 'Questo link è un singolo flusso HLS, non una playlist di canali';
+  }
+  return 'Nessun canale IPTV valido trovato (richiesto #EXTM3U / #EXTINF o PLS con stream http/https)';
+}
+
+async function probeSingleStreamUrl(rawUrl, { isPlaylistUrl = false } = {}) {
+  const clean = String(rawUrl || '').trim();
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    return 'URL non HTTP';
+  }
+  try {
+    const headRes = await fetch(clean, {
+      method: 'HEAD',
+      headers: { 'User-Agent': CHROME_PROBE_UA },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (headRes.ok || (headRes.status >= 200 && headRes.status < 400)) {
+      return null;
+    }
+    const cleanPath = clean.split('?')[0].toLowerCase();
+    const isManifest = isPlaylistUrl || cleanPath.endsWith('.m3u8') || cleanPath.endsWith('.m3u');
+    const getRes = await fetch(clean, {
+      method: 'GET',
+      headers: isManifest
+        ? { 'User-Agent': CHROME_PROBE_UA }
+        : { 'User-Agent': CHROME_PROBE_UA, Range: 'bytes=0-1024' },
+      signal: AbortSignal.timeout(4000),
+    });
+    await getRes.body?.cancel?.();
+    if (getRes.ok || (getRes.status >= 200 && getRes.status < 400)) {
+      return null;
+    }
+    return `HTTP ${getRes.status}`;
+  } catch (err) {
+    return err?.name || err?.message || 'Errore connessione';
+  }
+}
+
+async function probeSampleUrls(urls, totalChannels = urls.length) {
   if (!urls.length) return { status: 'error', lastError: 'Nessun canale nella playlist' };
-  const samples = urls.length <= 3
-    ? urls
-    : [urls[0], urls[Math.floor(urls.length / 2)], urls[urls.length - 1]];
+  const preferred = urls.filter((raw) => {
+    const u = String(raw || '').split('?')[0].toLowerCase();
+    return !u.endsWith('.mp4') && !u.endsWith('.jpg') && !u.endsWith('.png');
+  });
+  const pool = preferred.length ? preferred : urls;
+  const targetCount = 6;
+  const samples = pool.length <= targetCount
+    ? pool
+    : Array.from({ length: targetCount }, (_, i) => pool[Math.floor((i * (pool.length - 1)) / (targetCount - 1))]);
   let lastFailure = '';
   for (const rawUrl of samples) {
-    const clean = String(rawUrl || '').trim();
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
-      lastFailure = 'URL non HTTP';
-      continue;
+    const err = await probeSingleStreamUrl(rawUrl);
+    if (err === null) {
+      return { status: 'ok', lastError: '' };
     }
-    try {
-      const headRes = await fetch(clean, {
-        method: 'HEAD',
-        headers: { 'User-Agent': 'Mozilla/5.0 CasaTV/1.0' },
-        signal: AbortSignal.timeout(4000),
-      });
-      if (headRes.ok || (headRes.status >= 200 && headRes.status < 400)) {
-        return { status: 'ok', lastError: '' };
-      }
-      const getRes = await fetch(clean, {
-        method: 'GET',
-        headers: { 'User-Agent': 'Mozilla/5.0 CasaTV/1.0', Range: 'bytes=0-1024' },
-        signal: AbortSignal.timeout(4000),
-      });
-      await getRes.body?.cancel?.();
-      if (getRes.ok || (getRes.status >= 200 && getRes.status < 400)) {
-        return { status: 'ok', lastError: '' };
-      }
-      lastFailure = `HTTP ${getRes.status}`;
-    } catch (err) {
-      lastFailure = err?.name || err?.message || 'Errore connessione';
-    }
+    lastFailure = err;
   }
-  return { status: 'error', lastError: `Flussi non raggiungibili (${lastFailure})` };
+  return {
+    status: 'warn',
+    lastError: `Playlist valida (${totalChannels} canali), ma i flussi di prova non rispondono (${lastFailure})`,
+  };
 }
 
 export async function checkPlaylist(id) {
   const p = getPlaylist(id);
   if (!p) return null;
-  const samples = samplePlaylistChannels(id, 3);
-  if (!samples.length || !p.channelCount) {
+  const samples = samplePlaylistChannels(id, 6);
+  if (!samples.length) {
+    if (p.url) {
+      return importPlaylist({ id: p.id, name: p.name, url: p.url });
+    }
     updatePlaylistStatus(id, 'error', p.lastError || 'Nessun canale valido nella playlist');
     return getPlaylist(id);
   }
-  const probe = await probeSampleUrls(samples.map((s) => s.stream_url));
+  const probe = await probeSampleUrls(samples.map((s) => s.stream_url), p.channelCount || samples.length);
+  if (probe.status !== 'ok' && p.url) {
+    const linkErr = await probeSingleStreamUrl(p.url, { isPlaylistUrl: true });
+    if (linkErr !== null) {
+      updatePlaylistStatus(id, 'error', `Link playlist non raggiungibile (${linkErr})`);
+      return getPlaylist(id);
+    }
+  }
   updatePlaylistStatus(id, probe.status, probe.lastError);
   return getPlaylist(id);
 }
@@ -793,13 +853,22 @@ export async function importPlaylist({ name, url = '', text = null, id = null })
       return failEntry('Indirizzo non valido (deve iniziare con http:// o https://)');
     }
     try {
-      const res = await fetch(cleanUrl, {
+      let res = await fetch(cleanUrl, {
         headers: {
-          'User-Agent': config.userAgent,
+          'User-Agent': CHROME_PROBE_UA,
           'Accept': 'audio/x-mpegurl, application/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*',
         },
         signal: AbortSignal.timeout(30_000),
       });
+      if (res.status === 403 || res.status === 406) {
+        res = await fetch(cleanUrl, {
+          headers: {
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+            'Accept': 'audio/x-mpegurl, application/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*',
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+      }
       if (!res.ok) return failEntry(`Download fallito (HTTP ${res.status})`);
       m3uText = await res.text();
     } catch (err) {
@@ -811,12 +880,12 @@ export async function importPlaylist({ name, url = '', text = null, id = null })
   }
 
   const parsedEntries = parseM3u(m3uText);
-  const validEntries = parsedEntries.filter((e) => e.url && /^https?:\/\//i.test(e.url));
+  const validEntries = parsedEntries.filter((e) => e.url && /^(https?|rtsp|rtmps?):\/\//i.test(e.url));
   if (!validEntries.length) {
-    return failEntry('Nessun canale IPTV valido trovato (richiesto #EXTM3U / #EXTINF o PLS con stream http/https)');
+    return failEntry(diagnoseEmptyPlaylistError(m3uText));
   }
 
-  const probe = await probeSampleUrls(validEntries.slice(0, 20).map((e) => e.url));
+  const probe = await probeSampleUrls(validEntries.map((e) => e.url), validEntries.length);
   const now = Math.floor(Date.now() / 1000);
   const existingMaxNum = db.prepare('SELECT COALESCE(MAX(number), 0) AS max_num FROM channels').get().max_num;
 
@@ -857,9 +926,25 @@ export async function importPlaylist({ name, url = '', text = null, id = null })
       updated_at = excluded.updated_at
   `);
 
+  const insertLink = db.prepare(
+    'INSERT OR REPLACE INTO playlist_channels(playlist_id, channel_id, position) VALUES (?, ?, ?)',
+  );
+
   transaction(() => {
-    db.prepare('DELETE FROM streams WHERE channel_id IN (SELECT id FROM channels WHERE playlist_id = ?)').run(playlistId);
-    db.prepare('DELETE FROM channels WHERE playlist_id = ?').run(playlistId);
+    db.prepare('DELETE FROM playlist_channels WHERE playlist_id = ?').run(playlistId);
+    db.prepare(`
+      DELETE FROM streams
+      WHERE channel_id IN (
+        SELECT id FROM channels
+        WHERE playlist_id = ?
+          AND NOT EXISTS (SELECT 1 FROM playlist_channels pcl WHERE pcl.channel_id = channels.id)
+      )
+    `).run(playlistId);
+    db.prepare(`
+      DELETE FROM channels
+      WHERE playlist_id = ?
+        AND NOT EXISTS (SELECT 1 FROM playlist_channels pcl WHERE pcl.channel_id = channels.id)
+    `).run(playlistId);
 
     let num = existingMaxNum;
     for (let i = 0; i < validEntries.length; i++) {
@@ -885,6 +970,7 @@ export async function importPlaylist({ name, url = '', text = null, id = null })
         now,
         playlistId
       );
+      insertLink.run(playlistId, chId, i);
 
       const streamId = 'st_' + chId;
       const quality = e.attrs['tvg-quality'] || 'HD';

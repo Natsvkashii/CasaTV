@@ -17,6 +17,7 @@ object M3uParser {
     private val QUOTED_ATTR_RE = Regex("""([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"""")
     private val BARE_ATTR_RE = Regex("""([A-Za-z0-9_-]+)\s*=\s*([^\s"]+)""")
     private val PAREN_TOKEN_RE = Regex("""[\(\[]([^\)\]]+)[\)\]]""")
+    private val TRAILING_PIPE_COUNTRY_RE = Regex("""\|\s*([A-Za-z]{2})\s*$""")
     private val DIACRITICS_RE = Regex("""\p{M}+""")
     private val NON_ALNUM_RE = Regex("""[^a-z0-9]+""")
     private val QUALITY_P_RE = Regex("""\b(2160|1080|720|480|360)\s*p\b""", RegexOption.IGNORE_CASE)
@@ -48,8 +49,10 @@ object M3uParser {
         fun flush(url: String) {
             val cleanUrl = sanitizeUrl(url)
             if (cleanUrl.isBlank() || !isPlayable(cleanUrl)) return
-            val name = (title.ifBlank { attrs["tvg-name"].orEmpty() }).trim()
-            if (name.isBlank()) return
+            val fallbackName = attrs["tvg-id"].orEmpty().substringBefore('.').trim().ifBlank {
+                cleanUrl.substringAfterLast('/').substringBefore('?').substringBeforeLast('.').trim()
+            }.ifBlank { "Canale ${result.size + 1}" }
+            val name = title.ifBlank { attrs["tvg-name"].orEmpty() }.trim().ifBlank { fallbackName }
             val id = idFor(cleanUrl)
             if (!seen.add(id)) return
             val categoryRaw = (group.ifBlank { attrs["group-title"].orEmpty() }).trim()
@@ -86,7 +89,7 @@ object M3uParser {
                     group = line.substringAfter(':', "").trim()
                 }
                 line.startsWith("#") -> Unit
-                pending -> {
+                pending || isPlayable(sanitizeUrl(line)) -> {
                     flush(line)
                     pending = false
                     attrs = emptyMap()
@@ -156,6 +159,10 @@ object M3uParser {
         parseCountry(group)?.let { return it }
 
         PAREN_TOKEN_RE.findAll(name).forEach { match ->
+            parseCountry(match.groupValues[1], skipTechnicalCodes = true)?.let { return it }
+        }
+
+        TRAILING_PIPE_COUNTRY_RE.find(name)?.let { match ->
             parseCountry(match.groupValues[1], skipTechnicalCodes = true)?.let { return it }
         }
 
@@ -306,9 +313,19 @@ object M3uParser {
 
     private fun isHlsMediaOrMasterManifest(text: String): Boolean {
         val sample = text.take(16_384)
-        return sample.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
-            sample.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) ||
-            sample.contains("#EXT-X-STREAM-INF", ignoreCase = true)
+        val hasIptvExtinf = sample.contains("#EXTINF:-1", ignoreCase = true)
+        if ((sample.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
+                sample.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true)) &&
+            !hasIptvExtinf
+        ) {
+            return true
+        }
+        if (sample.contains("#EXT-X-STREAM-INF", ignoreCase = true) &&
+            !sample.contains("#EXTINF:", ignoreCase = true)
+        ) {
+            return true
+        }
+        return false
     }
 
     private fun isPlsContent(text: String): Boolean {

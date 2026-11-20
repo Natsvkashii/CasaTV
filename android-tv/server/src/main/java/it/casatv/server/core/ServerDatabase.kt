@@ -115,6 +115,8 @@ class ServerDatabase private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_channels_number ON channels(number)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_channels_category ON channels(category)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_channels_country ON channels(country)")
+        createPlaylistsTable(db)
+        createPlaylistChannelsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -151,6 +153,21 @@ class ServerDatabase private constructor(context: Context) :
         runCatching {
             db.execSQL("ALTER TABLE playlists ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
         }
+        createPlaylistChannelsTable(db)
+        runCatching {
+            val linkCount = db.rawQuery("SELECT COUNT(*) FROM playlist_channels", null).use {
+                if (it.moveToFirst()) it.getInt(0) else 0
+            }
+            if (linkCount == 0) {
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO playlist_channels(playlist_id, channel_id, position)
+                    SELECT playlist_id, id, number FROM channels
+                    WHERE playlist_id IS NOT NULL AND playlist_id != ''
+                    """.trimIndent(),
+                )
+            }
+        }
     }
 
     private fun createPlaylistsTable(db: SQLiteDatabase) {
@@ -169,6 +186,21 @@ class ServerDatabase private constructor(context: Context) :
             )
             """.trimIndent(),
         )
+    }
+
+    private fun createPlaylistChannelsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS playlist_channels (
+                playlist_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (playlist_id, channel_id)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_playlist_channels_channel ON playlist_channels(channel_id)")
+        runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_channels_playlist_id ON channels(playlist_id)") }
     }
 
     /* ------------------------------------------------------------------ */
@@ -353,8 +385,14 @@ class ServerDatabase private constructor(context: Context) :
         readableDatabase.rawQuery(
             """
             SELECT c.* FROM channels c
-            LEFT JOIN playlists p ON c.playlist_id = p.id
-            WHERE p.enabled IS NULL OR p.enabled = 1
+            WHERE EXISTS (
+                SELECT 1 FROM playlist_channels pc
+                JOIN playlists p ON pc.playlist_id = p.id
+                WHERE pc.channel_id = c.id AND p.enabled = 1
+            ) OR (
+                NOT EXISTS (SELECT 1 FROM playlist_channels pc2 WHERE pc2.channel_id = c.id)
+                AND NOT EXISTS (SELECT 1 FROM playlists p2 WHERE p2.id = c.playlist_id AND p2.enabled = 0)
+            )
             ORDER BY c.number ASC
             """.trimIndent(),
             null,
@@ -365,8 +403,14 @@ class ServerDatabase private constructor(context: Context) :
         readableDatabase.rawQuery(
             """
             SELECT COUNT(*) FROM channels c
-            LEFT JOIN playlists p ON c.playlist_id = p.id
-            WHERE p.enabled IS NULL OR p.enabled = 1
+            WHERE EXISTS (
+                SELECT 1 FROM playlist_channels pc
+                JOIN playlists p ON pc.playlist_id = p.id
+                WHERE pc.channel_id = c.id AND p.enabled = 1
+            ) OR (
+                NOT EXISTS (SELECT 1 FROM playlist_channels pc2 WHERE pc2.channel_id = c.id)
+                AND NOT EXISTS (SELECT 1 FROM playlists p2 WHERE p2.id = c.playlist_id AND p2.enabled = 0)
+            )
             """.trimIndent(),
             null,
         ).use {
@@ -660,18 +704,39 @@ class ServerDatabase private constructor(context: Context) :
         writableDatabase.update("playlists", cv, "id = ?", arrayOf(id))
     }
 
-    fun sampleChannelsForPlaylist(playlistId: String, limit: Int = 3): List<IptvChannel> = synchronized(lock) {
-        val pool = readableDatabase.rawQuery(
-            "SELECT * FROM channels WHERE playlist_id = ? ORDER BY number ASC LIMIT 50",
+    fun sampleChannelsForPlaylist(playlistId: String, limit: Int = 6): List<IptvChannel> = synchronized(lock) {
+        val linked = readableDatabase.rawQuery(
+            """
+            SELECT c.* FROM channels c
+            JOIN playlist_channels pc ON pc.channel_id = c.id
+            WHERE pc.playlist_id = ?
+            ORDER BY pc.position ASC
+            """.trimIndent(),
             arrayOf(playlistId),
         ).use { cursor -> cursor.mapAll(::readChannel) }
-        if (pool.size <= limit) return@synchronized pool
-        val step = (pool.size - 1).coerceAtLeast(1)
-        val indices = LinkedHashSet<Int>()
+
+        val pool = if (linked.isNotEmpty()) {
+            linked
+        } else {
+            readableDatabase.rawQuery(
+                "SELECT * FROM channels WHERE playlist_id = ? ORDER BY number ASC",
+                arrayOf(playlistId),
+            ).use { cursor -> cursor.mapAll(::readChannel) }
+        }
+        if (pool.isEmpty()) return@synchronized emptyList()
+
+        val preferred = pool.filter { ch ->
+            val u = ch.url.substringBefore('?').lowercase(java.util.Locale.ROOT)
+            !u.endsWith(".mp4") && !u.endsWith(".jpg") && !u.endsWith(".png")
+        }
+        val source = if (preferred.isNotEmpty()) preferred else pool
+        if (source.size <= limit) return@synchronized source
+        val step = (source.size - 1).coerceAtLeast(1)
+        val indices = LinkedHashSet<Int>(limit)
         for (i in 0 until limit) {
             indices += (i * step) / (limit - 1).coerceAtLeast(1)
         }
-        indices.map { pool[it] }
+        indices.map { source[it] }
     }
 
     fun togglePlaylist(id: String, enabled: Boolean) = synchronized(lock) {
@@ -686,8 +751,25 @@ class ServerDatabase private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            db.delete("channels", "playlist_id = ?", arrayOf(id))
+            db.delete("playlist_channels", "playlist_id = ?", arrayOf(id))
             db.delete("playlists", "id = ?", arrayOf(id))
+            db.execSQL(
+                """
+                DELETE FROM channels
+                WHERE NOT EXISTS (SELECT 1 FROM playlist_channels pc WHERE pc.channel_id = channels.id)
+                  AND (playlist_id = ? OR NOT EXISTS (SELECT 1 FROM playlists p WHERE p.id = channels.playlist_id))
+                """.trimIndent(),
+                arrayOf(id),
+            )
+            db.execSQL(
+                """
+                UPDATE channels
+                SET playlist_id = (SELECT pc.playlist_id FROM playlist_channels pc WHERE pc.channel_id = channels.id LIMIT 1)
+                WHERE playlist_id = ?
+                  AND EXISTS (SELECT 1 FROM playlist_channels pc WHERE pc.channel_id = channels.id)
+                """.trimIndent(),
+                arrayOf(id),
+            )
             reindexChannels(db)
             db.setTransactionSuccessful()
         } finally {
@@ -695,28 +777,114 @@ class ServerDatabase private constructor(context: Context) :
         }
     }
 
+    private data class ExistingChannelMeta(
+        val number: Int,
+        val logo: String?,
+        val category: String,
+        val language: String,
+        val country: String,
+        val tvgId: String,
+        val quality: String,
+        val playlistId: String,
+    )
+
     fun addChannelsForPlaylist(playlist: PlaylistEntry, channels: List<IptvChannel>) = synchronized(lock) {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            db.delete("channels", "playlist_id = ?", arrayOf(playlist.id))
-            channels.forEach { channel ->
-                val cv = ContentValues().apply {
-                    put("id", channel.id)
-                    put("name", channel.name)
-                    put("url", channel.url)
-                    put("logo", channel.logo)
-                    put("category", channel.category)
-                    put("language", channel.language)
-                    put("country", channel.country)
-                    put("tvg_id", channel.tvgId)
-                    put("quality", channel.quality)
-                    put("number", 0)
-                    put("added_at", channel.addedAt)
-                    put("playlist_id", playlist.id)
+            val existingMeta = HashMap<String, ExistingChannelMeta>(16_384)
+            db.rawQuery(
+                "SELECT id, number, logo, category, language, country, tvg_id, quality, playlist_id FROM channels",
+                null,
+            ).use { c ->
+                while (c.moveToNext()) {
+                    existingMeta[c.getString(0)] = ExistingChannelMeta(
+                        number = c.getInt(1),
+                        logo = c.getString(2),
+                        category = c.getString(3).orEmpty(),
+                        language = c.getString(4).orEmpty(),
+                        country = c.getString(5).orEmpty(),
+                        tvgId = c.getString(6).orEmpty(),
+                        quality = c.getString(7).orEmpty(),
+                        playlistId = c.getString(8).orEmpty(),
+                    )
                 }
-                db.insertWithOnConflict("channels", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
             }
+
+            db.delete("playlist_channels", "playlist_id = ?", arrayOf(playlist.id))
+
+            val upsertChannel = db.compileStatement(
+                """
+                INSERT OR REPLACE INTO channels
+                (id, name, url, logo, category, language, country, tvg_id, quality, number, added_at, playlist_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+            )
+            val insertLink = db.compileStatement(
+                "INSERT OR REPLACE INTO playlist_channels(playlist_id, channel_id, position) VALUES (?, ?, ?)",
+            )
+
+            channels.forEachIndexed { idx, channel ->
+                val prev = existingMeta[channel.id]
+                val resolvedLogo = channel.logo?.takeIf { it.isNotBlank() } ?: prev?.logo
+                val resolvedCategory =
+                    if (channel.category != M3uParser.GENERAL_CATEGORY && channel.category.isNotBlank()) {
+                        channel.category
+                    } else {
+                        prev?.category?.takeIf { it.isNotBlank() } ?: channel.category
+                    }
+                val resolvedLang = channel.language.ifBlank { prev?.language.orEmpty() }
+                val resolvedCountry = channel.country.ifBlank { prev?.country.orEmpty() }
+                val resolvedTvgId = channel.tvgId.ifBlank { prev?.tvgId.orEmpty() }
+                val resolvedQuality = channel.quality.ifBlank { prev?.quality.orEmpty() }
+                val resolvedNumber = prev?.number ?: 0
+
+                upsertChannel.clearBindings()
+                upsertChannel.bindString(1, channel.id)
+                upsertChannel.bindString(2, channel.name)
+                upsertChannel.bindString(3, channel.url)
+                if (resolvedLogo != null) upsertChannel.bindString(4, resolvedLogo) else upsertChannel.bindNull(4)
+                upsertChannel.bindString(5, resolvedCategory)
+                upsertChannel.bindString(6, resolvedLang)
+                upsertChannel.bindString(7, resolvedCountry)
+                upsertChannel.bindString(8, resolvedTvgId)
+                upsertChannel.bindString(9, resolvedQuality)
+                upsertChannel.bindLong(10, resolvedNumber.toLong())
+                upsertChannel.bindLong(11, channel.addedAt)
+                upsertChannel.bindString(12, playlist.id)
+                upsertChannel.executeInsert()
+
+                insertLink.clearBindings()
+                insertLink.bindString(1, playlist.id)
+                insertLink.bindString(2, channel.id)
+                insertLink.bindLong(3, idx.toLong())
+                insertLink.executeInsert()
+            }
+
+            db.execSQL(
+                """
+                DELETE FROM channels
+                WHERE playlist_id = ?
+                  AND NOT EXISTS (SELECT 1 FROM playlist_channels pc WHERE pc.channel_id = channels.id)
+                """.trimIndent(),
+                arrayOf(playlist.id),
+            )
+            db.execSQL(
+                """
+                UPDATE channels
+                SET playlist_id = (
+                    SELECT pc.playlist_id FROM playlist_channels pc WHERE pc.channel_id = channels.id LIMIT 1
+                )
+                WHERE playlist_id = ?
+                  AND EXISTS (SELECT 1 FROM playlist_channels pc WHERE pc.channel_id = channels.id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM playlist_channels pc2
+                      WHERE pc2.channel_id = channels.id AND pc2.playlist_id = ?
+                  )
+                """.trimIndent(),
+                arrayOf(playlist.id, playlist.id),
+            )
+
             savePlaylistRecord(playlist.copy(channelCount = channels.size, updatedAt = System.currentTimeMillis() / 1000))
             reindexChannels(db)
             db.setTransactionSuccessful()
@@ -726,13 +894,23 @@ class ServerDatabase private constructor(context: Context) :
     }
 
     private fun reindexChannels(db: SQLiteDatabase) {
-        val cursor = db.rawQuery("SELECT id FROM channels ORDER BY number ASC, added_at ASC", null)
-        val ids = ArrayList<String>()
-        while (cursor.moveToNext()) ids.add(cursor.getString(0))
-        cursor.close()
+        val cursor = db.rawQuery(
+            """
+            SELECT id FROM channels
+            ORDER BY CASE WHEN number > 0 THEN 0 ELSE 1 END ASC, number ASC, added_at ASC, rowid ASC
+            """.trimIndent(),
+            null,
+        )
+        val ids = ArrayList<String>(cursor.count.coerceAtLeast(16))
+        cursor.use {
+            while (it.moveToNext()) ids.add(it.getString(0))
+        }
+        val stmt = db.compileStatement("UPDATE channels SET number = ? WHERE id = ?")
         ids.forEachIndexed { index, id ->
-            val cv = ContentValues().apply { put("number", index + 1) }
-            db.update("channels", cv, "id = ?", arrayOf(id))
+            stmt.clearBindings()
+            stmt.bindLong(1, (index + 1).toLong())
+            stmt.bindString(2, id)
+            stmt.executeUpdateDelete()
         }
     }
 

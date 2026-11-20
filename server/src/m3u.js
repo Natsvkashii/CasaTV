@@ -7,7 +7,14 @@ import { categoryName, countryFlag, countryName } from './db.js';
  */
 function isHlsManifest(text) {
   const head = String(text || '').slice(0, 16384);
-  return /#EXT-X-TARGETDURATION|#EXT-X-MEDIA-SEQUENCE|#EXT-X-STREAM-INF/i.test(head);
+  const hasIptv = /#EXTINF:-1/i.test(head);
+  if ((/#EXT-X-TARGETDURATION|#EXT-X-MEDIA-SEQUENCE/i.test(head)) && !hasIptv) {
+    return true;
+  }
+  if (/#EXT-X-STREAM-INF/i.test(head) && !/#EXTINF:/i.test(head)) {
+    return true;
+  }
+  return false;
 }
 
 function normalizePlsToM3u(text) {
@@ -93,6 +100,16 @@ export function parseM3u(text) {
       }
       entries.push(current);
       current = null;
+    } else if (/^(https?|rtsp|rtmps?):\/\//i.test(line)) {
+      const bareName = line.split('/').pop()?.split('?')[0]?.split('.')[0] || `Canale ${entries.length + 1}`;
+      entries.push({
+        duration: -1,
+        attrs: {},
+        title: bareName,
+        headers: { ...pendingHeaders },
+        url: line,
+      });
+      pendingHeaders = {};
     }
   }
 

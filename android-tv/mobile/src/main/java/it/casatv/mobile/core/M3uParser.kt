@@ -10,6 +10,7 @@ object M3uParser {
     private val ATTR_RE = Regex("""([a-zA-Z0-9_-]+)="([^"]*)"""")
     private val TRAILING_TITLE_RE = Regex(""",\s*(.+)$""")
     private val PAREN_TOKEN_RE = Regex("""[\(\[]([^\)\]]+)[\)\]]""")
+    private val TRAILING_PIPE_COUNTRY_RE = Regex("""\|\s*([A-Za-z]{2})\s*$""")
     private val DIACRITICS_RE = Regex("""\p{M}+""")
     private val NON_ALNUM_RE = Regex("""[^a-z0-9]+""")
 
@@ -144,13 +145,14 @@ object M3uParser {
     }
 
     private fun sanitizeUrl(line: String): String? {
-        val trimmed = line.trim()
+        val trimmed = line.substringBefore('|').trim()
         if (trimmed.isEmpty()) return null
         val lower = trimmed.lowercase(Locale.ROOT)
         val valid = lower.startsWith("http://") ||
             lower.startsWith("https://") ||
             lower.startsWith("rtsp://") ||
             lower.startsWith("rtmp://") ||
+            lower.startsWith("rtmps://") ||
             lower.startsWith("udp://")
         return if (valid) trimmed else null
     }
@@ -238,6 +240,9 @@ object M3uParser {
         PAREN_TOKEN_RE.findAll(name).forEach { match ->
             parseCountryList(match.groupValues[1], allowShortCode = true)?.let { return it }
         }
+        TRAILING_PIPE_COUNTRY_RE.find(name)?.let { match ->
+            parseCountryList(match.groupValues[1], allowShortCode = true)?.let { return it }
+        }
         return extractHostCcTld(streamUrl)
     }
 
@@ -281,9 +286,19 @@ object M3uParser {
 
     private fun isHlsMediaOrMasterManifest(text: String): Boolean {
         val sample = text.take(16_384)
-        return sample.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
-            sample.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) ||
-            sample.contains("#EXT-X-STREAM-INF", ignoreCase = true)
+        val hasIptvExtinf = sample.contains("#EXTINF:-1", ignoreCase = true)
+        if ((sample.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
+                sample.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true)) &&
+            !hasIptvExtinf
+        ) {
+            return true
+        }
+        if (sample.contains("#EXT-X-STREAM-INF", ignoreCase = true) &&
+            !sample.contains("#EXTINF:", ignoreCase = true)
+        ) {
+            return true
+        }
+        return false
     }
 
     private fun isPlsContent(text: String): Boolean {

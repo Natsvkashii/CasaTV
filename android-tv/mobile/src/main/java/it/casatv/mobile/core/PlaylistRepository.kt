@@ -21,16 +21,19 @@ class PlaylistRepository(
     private val db: LocalDatabase,
 ) {
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val probeClient = OkHttpClient.Builder()
-        .connectTimeout(3500, TimeUnit.MILLISECONDS)
-        .readTimeout(4000, TimeUnit.MILLISECONDS)
-        .callTimeout(5000, TimeUnit.MILLISECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
         .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     suspend fun getPlaylists(): List<LocalPlaylist> = withContext(Dispatchers.IO) {
@@ -80,14 +83,7 @@ class PlaylistRepository(
                 return@runCatching failed
             }
             val body = try {
-                val request = Request.Builder()
-                    .url(cleanUrl)
-                    .header("User-Agent", "CasaTV-Mobile/1.0")
-                    .build()
-                httpClient.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) error("Download fallito (HTTP ${resp.code})")
-                    resp.body?.string() ?: error("Risposta vuota")
-                }
+                downloadM3u(cleanUrl)
             } catch (e: Exception) {
                 val failed = LocalPlaylist(
                     id = playlistId,
@@ -113,13 +109,13 @@ class PlaylistRepository(
                     enabled = true,
                     channelCount = 0,
                     status = "error",
-                    lastError = "Nessun canale IPTV valido trovato (#EXTM3U / PLS)",
+                    lastError = diagnoseEmptyPlaylistError(body),
                 )
                 db.savePlaylistRecord(failed)
                 return@runCatching failed
             }
 
-            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl })
+            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl }, channels.size)
             val playlist = LocalPlaylist(
                 id = playlistId,
                 name = fallbackName,
@@ -168,13 +164,13 @@ class PlaylistRepository(
                     enabled = true,
                     channelCount = 0,
                     status = "error",
-                    lastError = "Nessun canale IPTV valido trovato nel file (#EXTINF / PLS)",
+                    lastError = diagnoseEmptyPlaylistError(text),
                 )
                 db.savePlaylistRecord(failed)
                 return@runCatching failed
             }
 
-            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl })
+            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl }, channels.size)
             val playlist = LocalPlaylist(
                 id = playlistId,
                 name = fileName,
@@ -222,14 +218,7 @@ class PlaylistRepository(
                 return@runCatching checkPlaylist(playlist).getOrThrow()
             }
             val body = try {
-                val request = Request.Builder()
-                    .url(playlist.source)
-                    .header("User-Agent", "CasaTV-Mobile/1.0")
-                    .build()
-                httpClient.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                    resp.body?.string() ?: error("Risposta vuota")
-                }
+                downloadM3u(playlist.source)
             } catch (e: Exception) {
                 val msg = e.message ?: "Errore aggiornamento"
                 db.updatePlaylistStatus(playlist.id, "error", msg)
@@ -237,11 +226,11 @@ class PlaylistRepository(
             }
             val channels = M3uParser.parse(body, playlist.id)
             if (channels.isEmpty()) {
-                val msg = "Nessun canale trovato"
+                val msg = diagnoseEmptyPlaylistError(body)
                 db.updatePlaylistStatus(playlist.id, "error", msg)
                 error(msg)
             }
-            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl })
+            val (status, lastError) = probeSampleStreams(channels.map { it.streamUrl }, channels.size)
             val updated = playlist.copy(
                 channelCount = channels.size,
                 updatedAt = System.currentTimeMillis(),
@@ -255,13 +244,27 @@ class PlaylistRepository(
 
     suspend fun checkPlaylist(playlist: LocalPlaylist): Result<LocalPlaylist> = withContext(Dispatchers.IO) {
         runCatching {
-            val sampleUrls = db.sampleChannelUrls(playlist.id, 3)
-            if (sampleUrls.isEmpty() || playlist.channelCount <= 0) {
+            val sampleUrls = db.sampleChannelUrls(playlist.id, 6)
+            if (sampleUrls.isEmpty()) {
+                if (!playlist.isLocalFile &&
+                    (playlist.source.startsWith("http://") || playlist.source.startsWith("https://"))
+                ) {
+                    return@runCatching refreshUrlPlaylist(playlist).getOrThrow()
+                }
                 val err = playlist.lastError.ifBlank { "Nessun canale valido nella playlist" }
                 db.updatePlaylistStatus(playlist.id, "error", err)
                 return@runCatching playlist.copy(status = "error", lastError = err, updatedAt = System.currentTimeMillis())
             }
-            val (status, lastError) = probeSampleStreams(sampleUrls)
+            var (status, lastError) = probeSampleStreams(sampleUrls, playlist.channelCount.coerceAtLeast(sampleUrls.size))
+            if (status != "ok" && !playlist.isLocalFile &&
+                (playlist.source.startsWith("http://") || playlist.source.startsWith("https://"))
+            ) {
+                val linkErr = probeSingleUrl(playlist.source, isPlaylistUrl = true)
+                if (linkErr != null) {
+                    status = "error"
+                    lastError = "Link playlist non raggiungibile ($linkErr)"
+                }
+            }
             db.updatePlaylistStatus(playlist.id, status, lastError)
             playlist.copy(status = status, lastError = lastError, updatedAt = System.currentTimeMillis())
         }
@@ -304,43 +307,114 @@ class PlaylistRepository(
         }
     }
 
-    private fun probeSampleStreams(urls: List<String>): Pair<String, String> {
+    private fun downloadM3u(url: String): String {
+        val first = executeDownload(url, CHROME_USER_AGENT)
+        return if (first.first == 403 || first.first == 406) {
+            val retry = executeDownload(url, VLC_USER_AGENT)
+            if (retry.first !in 200..299) error("Download fallito (HTTP ${retry.first})")
+            retry.second
+        } else {
+            if (first.first !in 200..299) error("Download fallito (HTTP ${first.first})")
+            first.second
+        }
+    }
+
+    private fun executeDownload(url: String, userAgent: String): Pair<Int, String> {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Accept", "audio/x-mpegurl, application/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*")
+            .build()
+        httpClient.newCall(request).execute().use { resp ->
+            val code = resp.code
+            if (!resp.isSuccessful) return code to ""
+            return code to (resp.body?.string() ?: error("Risposta vuota"))
+        }
+    }
+
+    private fun diagnoseEmptyPlaylistError(text: String): String {
+        val trimmed = text.trimStart()
+        if (trimmed.isEmpty()) return "Playlist vuota o non leggibile"
+        val sample = trimmed.take(4096).lowercase(java.util.Locale.ROOT)
+        if (sample.contains("<html") ||
+            sample.contains("<!doctype") ||
+            sample.contains("<body") ||
+            sample.contains("<title") ||
+            sample.contains("<b>warning</b>") ||
+            sample.contains("<b>fatal error</b>") ||
+            sample.contains("fopen(") ||
+            sample.contains("failed to open stream")
+        ) {
+            return "Il link non restituisce una lista M3U (il server remoto ha risposto con una pagina HTML o un errore)"
+        }
+        if ((sample.contains("#ext-x-targetduration") ||
+                sample.contains("#ext-x-media-sequence") ||
+                sample.contains("#ext-x-stream-inf")) &&
+            !sample.contains("#extinf:-1")
+        ) {
+            return "Questo link è un singolo flusso HLS, non una playlist di canali"
+        }
+        return "Nessun canale IPTV valido trovato (#EXTM3U / PLS)"
+    }
+
+    private fun probeSampleStreams(
+        urls: List<String>,
+        totalChannels: Int = urls.size,
+    ): Pair<String, String> {
         if (urls.isEmpty()) return "error" to "Nessun canale nella playlist"
-        val samples = if (urls.size <= 3) urls else listOf(urls[0], urls[urls.size / 2], urls.last())
+        val preferred = urls.filter { raw ->
+            val u = raw.substringBefore('?').lowercase(java.util.Locale.ROOT)
+            !u.endsWith(".mp4") && !u.endsWith(".jpg") && !u.endsWith(".png")
+        }
+        val pool = if (preferred.isNotEmpty()) preferred else urls
+        val targetCount = 6
+        val samples = if (pool.size <= targetCount) {
+            pool
+        } else {
+            val step = (pool.size - 1).coerceAtLeast(1)
+            val indices = LinkedHashSet<Int>(targetCount)
+            for (i in 0 until targetCount) {
+                indices += (i * step) / (targetCount - 1)
+            }
+            indices.map { pool[it] }
+        }
         var lastErr = ""
         for (raw in samples) {
-            val clean = raw.trim()
-            if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
-                lastErr = "URL non HTTP"
-                continue
-            }
-            val ok = try {
-                val headReq = Request.Builder().url(clean).head().header("User-Agent", "Mozilla/5.0 CasaTV/1.0").build()
-                val headCode = probeClient.newCall(headReq).execute().use { it.code }
-                if (headCode in 200..399) {
-                    true
-                } else {
-                    val getReq = Request.Builder()
-                        .url(clean)
-                        .get()
-                        .header("User-Agent", "Mozilla/5.0 CasaTV/1.0")
-                        .header("Range", "bytes=0-1024")
-                        .build()
-                    val getCode = probeClient.newCall(getReq).execute().use { it.code }
-                    if (getCode in 200..399) {
-                        true
-                    } else {
-                        lastErr = "HTTP $getCode"
-                        false
-                    }
-                }
-            } catch (e: Exception) {
-                lastErr = e.javaClass.simpleName
-                false
-            }
-            if (ok) return "ok" to ""
+            val err = probeSingleUrl(raw)
+            if (err == null) return "ok" to ""
+            lastErr = err
         }
-        return "error" to "Flussi non raggiungibili ($lastErr)"
+        return "warn" to "Playlist valida ($totalChannels canali), ma i flussi di prova non rispondono ($lastErr)"
+    }
+
+    private fun probeSingleUrl(raw: String, isPlaylistUrl: Boolean = false): String? {
+        val clean = raw.trim()
+        if (!clean.startsWith("http://") && !clean.startsWith("https://")) return "URL non HTTP"
+        return try {
+            val headReq = Request.Builder().url(clean).head().header("User-Agent", CHROME_USER_AGENT).build()
+            val headCode = probeClient.newCall(headReq).execute().use { it.code }
+            if (headCode in 200..399) return null
+            val isManifest = isPlaylistUrl || clean.substringBefore('?').lowercase(java.util.Locale.ROOT).let {
+                it.endsWith(".m3u8") || it.endsWith(".m3u")
+            }
+            val getReqBuilder = Request.Builder()
+                .url(clean)
+                .get()
+                .header("User-Agent", CHROME_USER_AGENT)
+            if (!isManifest) {
+                getReqBuilder.header("Range", "bytes=0-1024")
+            }
+            val getCode = probeClient.newCall(getReqBuilder.build()).execute().use { it.code }
+            if (getCode in 200..399) null else "HTTP $getCode"
+        } catch (e: Exception) {
+            e.javaClass.simpleName
+        }
+    }
+
+    private companion object {
+        const val CHROME_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        const val VLC_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
     }
 
     private fun resolveRawFileName(uri: Uri): String {
