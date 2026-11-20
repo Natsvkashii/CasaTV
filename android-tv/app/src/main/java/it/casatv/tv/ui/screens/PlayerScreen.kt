@@ -526,6 +526,7 @@ fun PlayerScreen(vm: MainViewModel) {
         var bufferingSinceMs = 0L
         var readySinceMs = 0L
         var lastCushionSpeedChangeMs = 0L
+        var cushionBuilding = false
 
         while (isActive) {
             delay(1000)
@@ -556,9 +557,9 @@ fun PlayerScreen(vm: MainViewModel) {
             if (isReady && errorMessage == null && !reconnecting && currentStreamUrlState != null) {
                 val pos = player.currentPosition
                 if (pos == lastWatchPos) {
-                    if (now - lastAdvanceMs > 10_000L) {
+                    if (now - lastAdvanceMs > 6_000L) {
                         lastAdvanceMs = now
-                        android.util.Log.w("CasaTV", "Flusso bloccato su pos=$pos per 10s, avvio riconnessione automatica")
+                        android.util.Log.w("CasaTV", "Flusso bloccato su pos=$pos per 6s, avvio riconnessione automatica")
                         scheduleAutoReconnect("stall_watchdog")
                     }
                 } else {
@@ -570,8 +571,11 @@ fun PlayerScreen(vm: MainViewModel) {
                 lastAdvanceMs = now
             }
 
-            if (isReady && !multiTvFollowerActive) {
+            if (multiTvFollowerActive) {
+                cushionBuilding = false
+            } else if (isReady) {
                 if (!liveSafetyBufferEnabled || !player.isCurrentMediaItemLive) {
+                    cushionBuilding = false
                     if (kotlin.math.abs(player.playbackParameters.speed - 1.0f) > 0.002f) {
                         runCatching { player.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
                     }
@@ -590,18 +594,21 @@ fun PlayerScreen(vm: MainViewModel) {
                     } else {
                         8_000L
                     }
-                    val targetSpeed = when {
-                        bufferedAheadMs < effectiveTargetMs - 1_500L -> 0.965f
-                        bufferedAheadMs < effectiveTargetMs -> 0.985f
-                        else -> 1.0f
+                    val lowWatermarkMs = (effectiveTargetMs - 2_500L).coerceAtLeast(2_000L)
+                    if (!cushionBuilding && bufferedAheadMs < lowWatermarkMs) {
+                        cushionBuilding = true
+                    } else if (cushionBuilding && bufferedAheadMs >= effectiveTargetMs) {
+                        cushionBuilding = false
                     }
+                    val targetSpeed = if (cushionBuilding) 0.97f else 1.0f
                     val currentSpeed = player.playbackParameters.speed
                     if (kotlin.math.abs(currentSpeed - targetSpeed) > 0.003f &&
-                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 1000L)
+                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 3_000L)
                     ) {
                         runCatching {
                             player.playbackParameters = PlaybackParameters(targetSpeed, 1.0f)
                             lastCushionSpeedChangeMs = now
+                            android.util.Log.d("CasaTV", "LiveBuffer speed=$targetSpeed ahead=${bufferedAheadMs}ms target=${effectiveTargetMs}ms")
                         }
                     }
                 }

@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.015';
+const WEB_APP_VERSION = '26.11.016';
 const CHANNEL_PAGE_SIZE = 96;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -154,6 +154,7 @@ const state = {
   reconnectActive: false,
   hasPlayedCurrentChannel: false,
   cushionTimer: null,
+  cushionBuilding: false,
   lastCushionRateMs: 0,
   lastStallTime: -1,
   lastStallWallMs: 0,
@@ -1835,6 +1836,7 @@ function stopWebRecoveryLoops() {
   clearInterval(state.cushionTimer);
   state.cushionTimer = null;
   state.reconnectActive = false;
+  state.cushionBuilding = false;
   const pill = $('#player-reconnect-pill');
   if (pill) pill.hidden = true;
 }
@@ -1896,6 +1898,7 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   stopPlayerStream();
   state.reconnectAttempt = 0;
   state.reconnectActive = false;
+  state.cushionBuilding = false;
   state.hasPlayedCurrentChannel = false;
   state.bufferingSinceMs = 0;
   state.readySinceMs = 0;
@@ -2126,7 +2129,7 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     if (readyPlaying && errBox.hidden && !state.reconnectActive) {
       const tCur = video.currentTime || 0;
       if (Math.abs(tCur - state.lastStallTime) < 0.01) {
-        if (now - state.lastStallWallMs > 10000) {
+        if (now - state.lastStallWallMs > 6000) {
           state.lastStallWallMs = now;
           scheduleWebReconnect('stall_watchdog');
           return;
@@ -2144,6 +2147,7 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
       const winSec = getVideoLiveWindowSec(video);
       const isLiveLike = !Number.isFinite(video.duration) || video.duration === Infinity || winSec > 0;
       if (!state.liveSafetyBuffer || !isLiveLike) {
+        state.cushionBuilding = false;
         if (Math.abs((video.playbackRate || 1) - 1.0) > 0.002) {
           setVideoPreservesPitch(video, true);
           video.playbackRate = 1.0;
@@ -2151,13 +2155,15 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
       } else {
         const aheadSec = getVideoBufferedAheadSec(video);
         const effectiveTargetSec = winSec > 0 ? Math.max(4, Math.min(8, winSec * 0.55)) : 8;
-        const targetRate = aheadSec < effectiveTargetSec - 1.5
-          ? 0.965
-          : aheadSec < effectiveTargetSec
-            ? 0.985
-            : 1.0;
+        const lowWatermarkSec = Math.max(2, effectiveTargetSec - 2.5);
+        if (!state.cushionBuilding && aheadSec < lowWatermarkSec) {
+          state.cushionBuilding = true;
+        } else if (state.cushionBuilding && aheadSec >= effectiveTargetSec) {
+          state.cushionBuilding = false;
+        }
+        const targetRate = state.cushionBuilding ? 0.97 : 1.0;
         if (Math.abs((video.playbackRate || 1) - targetRate) > 0.003 &&
-            (targetRate === 1.0 || now - state.lastCushionRateMs >= 1000)) {
+            (targetRate === 1.0 || now - state.lastCushionRateMs >= 3000)) {
           setVideoPreservesPitch(video, true);
           video.playbackRate = targetRate;
           state.lastCushionRateMs = now;

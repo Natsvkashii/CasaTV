@@ -354,6 +354,7 @@ fun PlayerScreen(
         var bufferingSinceMs = 0L
         var readySinceMs = 0L
         var lastCushionSpeedChangeMs = 0L
+        var cushionBuilding = false
 
         while (isActive) {
             delay(1000)
@@ -383,7 +384,7 @@ fun PlayerScreen(
             if (isReady && errorText == null && !reconnecting && currentStreamUrlState.isNotBlank()) {
                 val pos = exoPlayer.currentPosition
                 if (pos == lastWatchPos) {
-                    if (now - lastAdvanceMs > 10_000L) {
+                    if (now - lastAdvanceMs > 6_000L) {
                         lastAdvanceMs = now
                         scheduleAutoReconnect("stall_watchdog")
                     }
@@ -398,6 +399,7 @@ fun PlayerScreen(
 
             if (isReady) {
                 if (!liveSafetyBufferEnabled || !exoPlayer.isCurrentMediaItemLive) {
+                    cushionBuilding = false
                     if (kotlin.math.abs(exoPlayer.playbackParameters.speed - 1.0f) > 0.002f) {
                         runCatching { exoPlayer.playbackParameters = PlaybackParameters(1.0f, 1.0f) }
                     }
@@ -416,14 +418,16 @@ fun PlayerScreen(
                     } else {
                         8_000L
                     }
-                    val targetSpeed = when {
-                        bufferedAheadMs < effectiveTargetMs - 1_500L -> 0.965f
-                        bufferedAheadMs < effectiveTargetMs -> 0.985f
-                        else -> 1.0f
+                    val lowWatermarkMs = (effectiveTargetMs - 2_500L).coerceAtLeast(2_000L)
+                    if (!cushionBuilding && bufferedAheadMs < lowWatermarkMs) {
+                        cushionBuilding = true
+                    } else if (cushionBuilding && bufferedAheadMs >= effectiveTargetMs) {
+                        cushionBuilding = false
                     }
+                    val targetSpeed = if (cushionBuilding) 0.97f else 1.0f
                     val currentSpeed = exoPlayer.playbackParameters.speed
                     if (kotlin.math.abs(currentSpeed - targetSpeed) > 0.003f &&
-                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 1000L)
+                        (targetSpeed == 1.0f || now - lastCushionSpeedChangeMs >= 3_000L)
                     ) {
                         runCatching {
                             exoPlayer.playbackParameters = PlaybackParameters(targetSpeed, 1.0f)

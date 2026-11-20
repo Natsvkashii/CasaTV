@@ -13,8 +13,8 @@ android {
         applicationId = "it.casatv.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2611015
-        versionName = "26.11.015"
+        versionCode = 2611016
+        versionName = "26.11.016"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
     }
 
@@ -75,13 +75,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
-    implementation("androidx.media3:media3-exoplayer:1.5.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.5.1")
-    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.5.1")
-    implementation("androidx.media3:media3-exoplayer-rtsp:1.5.1")
-    implementation("androidx.media3:media3-ui:1.5.1")
-    implementation("androidx.media3:media3-common:1.5.1")
+    implementation("androidx.media3:media3-exoplayer:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.6.1")
+    implementation("androidx.media3:media3-ui:1.6.1")
+    implementation("androidx.media3:media3-common:1.6.1")
 
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
