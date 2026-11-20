@@ -73,6 +73,10 @@ class CasaHttpServer(
     private val startedAtSeconds = System.currentTimeMillis() / 1000
     private var lastCpuTicks = -1L
     private var lastCpuAt = 0L
+    @Volatile
+    private var cachedAssetTvApkVersion: String? = null
+    @Volatile
+    private var assetTvApkChecked: Boolean = false
 
     init {
         runCatching { setAsyncRunner(BoundedAsyncRunner()) }
@@ -1009,20 +1013,42 @@ class CasaHttpServer(
         return file to versionName
     }
 
+    private fun validAssetTvApkVersion(): String? {
+        if (assetTvApkChecked) return cachedAssetTvApkVersion
+        synchronized(this) {
+            if (assetTvApkChecked) return cachedAssetTvApkVersion
+            val detected = runCatching {
+                val tmp = File(context.cacheDir, "asset-tv-check.apk")
+                context.assets.open("updates/casatv-tv.apk").use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                val info = context.packageManager.getPackageArchiveInfo(tmp.absolutePath, 0)
+                tmp.delete()
+                if (info?.packageName == "it.casatv.tv") {
+                    info.versionName?.takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            }.getOrNull()
+            cachedAssetTvApkVersion = detected
+            assetTvApkChecked = true
+            return detected
+        }
+    }
+
     private fun updateJson(current: String, session: IHTTPSession? = null): JsonObject {
         val dynamic = validDynamicTvApk()
-        val latest = dynamic?.second ?: TV_LATEST_VERSION
-        val hasApk = dynamic != null || runCatching {
-            context.assets.open("updates/casatv-tv.apk").close()
-            true
-        }.getOrDefault(false)
+        val assetVersion = if (dynamic == null) validAssetTvApkVersion() else null
+        val availableVersion = dynamic?.second ?: assetVersion
+        val hasApk = availableVersion != null
+        val latest = availableVersion ?: TV_LATEST_VERSION
         val base = session?.let { baseUrl(it) } ?: ""
-        val isUpdateAvailable = current.isNotBlank() && compareVersions(latest, current) > 0
+        val isUpdateAvailable = hasApk && current.isNotBlank() && compareVersions(latest, current) > 0
         return buildJsonObject {
             put("latest", latest)
             putOrNull("current", current.takeIf { it.isNotBlank() })
             put("updateAvailable", isUpdateAvailable)
-            put("downloadUrl", "$base/api/update/casatv-tv.apk")
+            putOrNull("downloadUrl", if (hasApk) "$base/api/update/casatv-tv.apk" else null)
             put("hasApk", hasApk)
             put("changelog", "Aggiornamento CasaTV per Android TV v$latest")
             put("minVersion", "1.0.0")
@@ -1070,6 +1096,9 @@ class CasaHttpServer(
                 addHeader("Content-Disposition", "attachment; filename=\"casatv-tv.apk\"")
                 addHeader("Access-Control-Allow-Origin", "*")
             }
+        }
+        if (validAssetTvApkVersion() == null) {
+            return errorResponse(Response.Status.NOT_FOUND, "Aggiornamento APK TV non trovato")
         }
         return try {
             val assetInput = context.assets.open("updates/casatv-tv.apk")
@@ -1707,7 +1736,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.019"
+        const val TV_LATEST_VERSION = "26.11.020"
     }
 }
 

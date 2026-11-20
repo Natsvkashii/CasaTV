@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.019';
+const WEB_APP_VERSION = '26.11.020';
 const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',

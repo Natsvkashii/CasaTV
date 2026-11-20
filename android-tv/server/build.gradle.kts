@@ -5,6 +5,31 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
+abstract class SyncTvUpdateApkTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val tvApkFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copyApk() {
+        val target = outputDir.file("updates/casatv-tv.apk").get().asFile
+        target.parentFile.mkdirs()
+        tvApkFile.get().asFile.copyTo(target, overwrite = true)
+    }
+}
+
 android {
     namespace = "it.casatv.server"
     compileSdk = 35
@@ -15,8 +40,8 @@ android {
         // while still running on older boxes and phones.
         minSdk = 26
         targetSdk = 35
-        versionCode = 2611019
-        versionName = "26.11.019"
+        versionCode = 2611020
+        versionName = "26.11.020"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {
@@ -63,6 +88,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/DEPENDENCIES"
         }
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val syncTask = tasks.register<SyncTvUpdateApkTask>(
+            "sync${variant.name.replaceFirstChar { it.uppercase() }}TvUpdateApk",
+        ) {
+            dependsOn(":app:assembleRelease")
+            tvApkFile.set(project(":app").layout.buildDirectory.file("outputs/apk/release/app-release.apk"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(syncTask, SyncTvUpdateApkTask::outputDir)
     }
 }
 

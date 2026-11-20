@@ -30,8 +30,6 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease
-          mkdir -p server/src/main/assets/updates
-          cp app/build/outputs/apk/release/app-release.apk server/src/main/assets/updates/casatv-tv.apk
           cp app/build/outputs/apk/release/app-release.apk "../casatv-android-tv-${GITHUB_REF_NAME}.apk"
           cp app/build/outputs/apk/release/app-release.apk "../casatv-tv-${GITHUB_REF_NAME}.apk"
 

@@ -3,8 +3,11 @@ package it.casatv.tv.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.core.content.FileProvider
+import it.casatv.tv.BuildConfig
 import it.casatv.tv.data.LocalM3uParser
 import it.casatv.tv.data.UpdateInfo
 import it.casatv.tv.update.GitHubUpdater
@@ -1974,6 +1977,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _updateProgress.value = progress
                     }
                 }
+                var inspected = inspectApk(apkFile)
+                val isLanUrl = !downloadUrl.contains("github.com", ignoreCase = true)
+                if ((inspected == null || inspected.first <= BuildConfig.VERSION_CODE) && isLanUrl) {
+                    val ghFallback = githubUpdater.checkForUpdate(force = true)
+                    val ghUrl = ghFallback?.downloadUrl
+                    if (!ghUrl.isNullOrBlank()) {
+                        if (apkFile.exists()) apkFile.delete()
+                        _updateProgress.value = 0f
+                        githubUpdater.downloadApk(ghUrl, apkFile) { progress ->
+                            _updateProgress.value = progress
+                        }
+                        inspected = inspectApk(apkFile)
+                    }
+                }
+                if (inspected == null || inspected.first <= BuildConfig.VERSION_CODE) {
+                    if (apkFile.exists()) apkFile.delete()
+                    _updateDownloading.value = false
+                    val foundLabel = inspected?.second ?: "?"
+                    _updateError.value = "APK scaricato obsoleto o non valido ($foundLabel <= ${BuildConfig.VERSION_NAME})"
+                    return@launch
+                }
                 _updateDownloading.value = false
                 launchApkInstaller(apkFile)
             } catch (e: Exception) {
@@ -1981,6 +2005,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _updateError.value = e.message ?: "Errore durante il download dell'aggiornamento"
             }
         }
+    }
+
+    private fun inspectApk(apkFile: File): Pair<Long, String>? {
+        val context = getApplication<Application>()
+        val info = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageArchiveInfo(
+                    apkFile.absolutePath,
+                    PackageManager.PackageInfoFlags.of(0L),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+            }
+        }.getOrNull() ?: return null
+        if (info.packageName != context.packageName) return null
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        val versionName = info.versionName.orEmpty().ifBlank { versionCode.toString() }
+        return versionCode to versionName
     }
 
     private fun launchApkInstaller(apkFile: File) {
