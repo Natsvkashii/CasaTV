@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tv
@@ -66,6 +67,7 @@ fun SettingsScreen(
     onSetBackgroundPlay: (Boolean) -> Unit,
     onSetPipOnLeave: (Boolean) -> Unit,
     onSetLiveSafetyBuffer: (Boolean) -> Unit,
+    onSetMixIncludeAudioOnly: (Boolean) -> Unit,
     onSearchServerNow: () -> Unit,
     onSetUpdateFrequency: (UpdateFrequency) -> Unit,
     onCheckUpdatesNow: () -> Unit,
@@ -282,6 +284,24 @@ fun SettingsScreen(
                     ),
                     checked = state.liveSafetyBufferEnabled,
                     onCheckedChange = onSetLiveSafetyBuffer,
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                SettingsToggleRow(
+                    icon = Icons.Default.Radio,
+                    title = tr(
+                        "Canali solo audio in Mix",
+                        "Audio-only channels in Mix",
+                        "Canales solo audio en Mix",
+                    ),
+                    subtitle = tr(
+                        "Esclude di default radio e flussi senza video (es. FM) dallo zapping casuale Mix. Attiva per includerli.",
+                        "Excludes radio and video-less streams (e.g. FM) from Mix shuffle by default. Enable to include them.",
+                        "Excluye por defecto radios y flujos sin vídeo (ej. FM) del Mix aleatorio. Actívalo para incluirlos.",
+                    ),
+                    checked = state.mixIncludeAudioOnly,
+                    onCheckedChange = onSetMixIncludeAudioOnly,
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))

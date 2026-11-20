@@ -62,6 +62,7 @@ data class MobileUiState(
     val backgroundPlayEnabled: Boolean = true,
     val pipOnLeaveEnabled: Boolean = true,
     val liveSafetyBufferEnabled: Boolean = true,
+    val mixIncludeAudioOnly: Boolean = false,
     val isImporting: Boolean = false,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
@@ -105,6 +106,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             backgroundPlayEnabled = prefs.getBoolean(KEY_BACKGROUND_PLAY, true),
             pipOnLeaveEnabled = prefs.getBoolean(KEY_PIP_ON_LEAVE, true),
             liveSafetyBufferEnabled = prefs.getBoolean(KEY_LIVE_SAFETY_BUFFER, true),
+            mixIncludeAudioOnly = prefs.getBoolean(KEY_MIX_INCLUDE_AUDIO_ONLY, false),
             updateFrequency = updater.getFrequency(),
         ),
     )
@@ -126,6 +128,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private val mixHistory = mutableListOf<MobileChannel>()
     private var mixCursor: Int = -1
     private val deadMixUrls = Collections.synchronizedSet(linkedSetOf<String>())
+    private val runtimeAudioOnlyUrls = Collections.synchronizedSet(linkedSetOf<String>())
     @Volatile
     private var verifiedNextMixChannel: MobileChannel? = null
     private var mixPreloadJob: Job? = null
@@ -604,6 +607,20 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(pipOnLeaveEnabled = enabled) }
     }
 
+    fun setMixIncludeAudioOnly(enabled: Boolean) {
+        if (_state.value.mixIncludeAudioOnly == enabled) return
+        prefs.edit().putBoolean(KEY_MIX_INCLUDE_AUDIO_ONLY, enabled).apply()
+        cachedMixSourceRef = null
+        cachedMixIncludeAudioOnly = null
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel = null
+        _state.update { it.copy(mixIncludeAudioOnly = enabled) }
+        if (_state.value.isMixMode) {
+            preverifyNextMixChannel()
+        }
+    }
+
     private fun resetMixSession(resetRegions: Boolean = true) {
         mixPreloadJob?.cancel()
         mixPreloadJob = null
@@ -682,16 +699,23 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile
     private var cachedMixSourceRef: List<MobileChannel>? = null
     @Volatile
+    private var cachedMixIncludeAudioOnly: Boolean? = null
+    @Volatile
     private var cachedMixHttpAll: List<MobileChannel> = emptyList()
     @Volatile
     private var cachedMixBuckets: Map<MixRegion, List<MobileChannel>> = emptyMap()
 
+    private fun isMixChannelExcludedAsAudioOnly(ch: MobileChannel): Boolean =
+        !_state.value.mixIncludeAudioOnly && (ch.streamUrl in runtimeAudioOnlyUrls || isLikelyAudioOnlyChannel(ch))
+
     private fun ensureMixBucketsIndexed(channels: List<MobileChannel>) {
-        if (channels === cachedMixSourceRef) return
+        val includeAudio = _state.value.mixIncludeAudioOnly
+        if (channels === cachedMixSourceRef && includeAudio == cachedMixIncludeAudioOnly) return
         val httpAll = ArrayList<MobileChannel>(channels.size)
         val buckets = java.util.EnumMap<MixRegion, MutableList<MobileChannel>>(MixRegion::class.java)
         channels.forEach { ch ->
             if (!isHttpUrl(ch.streamUrl)) return@forEach
+            if (!includeAudio && isLikelyAudioOnlyChannel(ch)) return@forEach
             httpAll.add(ch)
             resolveMixRegion(ch.country)?.let { region ->
                 buckets.getOrPut(region) { ArrayList() }.add(ch)
@@ -700,6 +724,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         cachedMixHttpAll = httpAll
         cachedMixBuckets = buckets
         cachedMixSourceRef = channels
+        cachedMixIncludeAudioOnly = includeAudio
     }
 
     private fun filteredMixPool(channels: List<MobileChannel>): List<MobileChannel> {
@@ -836,21 +861,66 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         mixPreloadJob = null
         val candidate = verifiedNextMixChannel
         verifiedNextMixChannel = null
-        return candidate?.takeIf { matchesMixRegions(it.country, _state.value.selectedMixRegions) }
+        return candidate?.takeIf {
+            matchesMixRegions(it.country, _state.value.selectedMixRegions) && !isMixChannelExcludedAsAudioOnly(it)
+        }
     }
 
     private fun pickRandomUnvisitedMixChannel(pool: List<MobileChannel>): MobileChannel? {
         if (pool.isEmpty()) return null
         val currentUrl = _state.value.activeChannel?.streamUrl
         val visitedUrls = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.streamUrl } }
-        val fresh = pool.filter { ch ->
+        val eligiblePool = if (_state.value.mixIncludeAudioOnly) {
+            pool
+        } else {
+            pool.filter { !isMixChannelExcludedAsAudioOnly(it) }.ifEmpty { pool }
+        }
+        val fresh = eligiblePool.filter { ch ->
             ch.streamUrl !in visitedUrls && ch.streamUrl !in deadMixUrls && ch.streamUrl != currentUrl
         }
         if (fresh.isNotEmpty()) return fresh.random()
-        val unvisited = pool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
+        val unvisited = eligiblePool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
         if (unvisited.isNotEmpty()) return unvisited.random()
-        val others = pool.filter { it.streamUrl != currentUrl }
-        return (if (others.isNotEmpty()) others else pool).randomOrNull()
+        val others = eligiblePool.filter { it.streamUrl != currentUrl }
+        return (if (others.isNotEmpty()) others else eligiblePool).randomOrNull()
+    }
+
+    fun skipAudioOnlyMixChannel(streamUrl: String): Boolean {
+        runtimeAudioOnlyUrls.add(streamUrl)
+        verifiedNextMixChannel?.let { cand ->
+            if (cand.streamUrl in runtimeAudioOnlyUrls) {
+                mixPreloadJob?.cancel()
+                mixPreloadJob = null
+                verifiedNextMixChannel = null
+            }
+        }
+        val currentState = _state.value
+        if (!currentState.isMixMode || currentState.mixIncludeAudioOnly || currentState.activeChannel?.streamUrl != streamUrl) {
+            return false
+        }
+        val pool = filteredMixPool(currentState.allChannels)
+            .filter { !isMixChannelExcludedAsAudioOnly(it) && it.streamUrl != streamUrl }
+        val nextChannel = consumeVerifiedNextMixChannel()?.takeIf { it.streamUrl != streamUrl }
+            ?: pickRandomUnvisitedMixChannel(pool)?.takeIf { it.streamUrl != streamUrl }
+            ?: return false
+        val pair = synchronized(mixHistory) {
+            if (mixHistory.lastOrNull()?.streamUrl == streamUrl) {
+                mixHistory.removeAt(mixHistory.lastIndex)
+            }
+            mixHistory.add(nextChannel)
+            mixCursor = mixHistory.lastIndex
+            mixCursor to mixHistory.size
+        }
+        _state.update {
+            it.copy(
+                activeChannel = nextChannel,
+                isMixMode = true,
+                mixIndex = pair.first,
+                mixTotal = pair.second,
+            )
+        }
+        preverifyNextMixChannel()
+        return true
     }
 
     private fun <T> pickRandomCandidates(list: List<T>, count: Int): List<T> {
@@ -875,15 +945,20 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 if (pool.isEmpty()) break
                 val currentUrl = _state.value.activeChannel?.streamUrl
                 val visitedUrls = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.streamUrl } }
-                var candidates = pool.filter { ch ->
+                val eligiblePool = if (_state.value.mixIncludeAudioOnly) {
+                    pool
+                } else {
+                    pool.filter { !isMixChannelExcludedAsAudioOnly(it) }.ifEmpty { pool }
+                }
+                var candidates = eligiblePool.filter { ch ->
                     ch.streamUrl !in visitedUrls && ch.streamUrl !in deadMixUrls && ch.streamUrl != currentUrl
                 }
                 if (candidates.isEmpty()) {
                     deadMixUrls.clear()
-                    candidates = pool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
+                    candidates = eligiblePool.filter { it.streamUrl !in visitedUrls && it.streamUrl != currentUrl }
                 }
                 if (candidates.isEmpty()) {
-                    candidates = pool.filter { it.streamUrl != currentUrl }.ifEmpty { pool }
+                    candidates = eligiblePool.filter { it.streamUrl != currentUrl }.ifEmpty { eligiblePool }
                 }
                 val batch = pickRandomCandidates(candidates, 3)
                 if (batch.isEmpty()) break
@@ -1021,6 +1096,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_BACKGROUND_PLAY = "background_play_enabled"
         private const val KEY_PIP_ON_LEAVE = "pip_on_leave_enabled"
         private const val KEY_LIVE_SAFETY_BUFFER = "live_safety_buffer_enabled"
+        private const val KEY_MIX_INCLUDE_AUDIO_ONLY = "mix_include_audio_only"
         private const val EXO_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }

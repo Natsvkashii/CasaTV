@@ -10,6 +10,10 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.appcompat.view.ContextThemeWrapper
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -64,9 +69,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,6 +91,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
+import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -98,6 +109,7 @@ import androidx.media3.ui.PlayerView
 import androidx.mediarouter.app.MediaRouteChooserDialog
 import androidx.mediarouter.app.MediaRouteControllerDialog
 import androidx.mediarouter.media.MediaRouteSelector
+import coil.compose.AsyncImage
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
@@ -109,6 +121,12 @@ import com.google.android.gms.common.images.WebImage
 import it.casatv.mobile.data.MobileChannel
 import it.casatv.mobile.service.MobilePlaybackService
 import it.casatv.mobile.ui.LocalMobileStrings
+import it.casatv.mobile.ui.channelInitials
+import it.casatv.mobile.ui.formatCountryTimeOrNull
+import it.casatv.mobile.ui.formatLocalTime
+import it.casatv.mobile.ui.isLikelyAudioOnlyChannel
+import it.casatv.mobile.ui.resolveMobileCountryFlag
+import it.casatv.mobile.ui.resolveMobileCountryName
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -124,10 +142,12 @@ fun PlayerScreen(
     isInPipMode: Boolean = false,
     backgroundPlayEnabled: Boolean = true,
     liveSafetyBufferEnabled: Boolean = true,
+    mixIncludeAudioOnly: Boolean = false,
     onToggleBackgroundPlay: (Boolean) -> Unit = {},
     onEnterPip: () -> Unit = {},
     onPreviousChannel: () -> Unit = {},
     onNextChannel: () -> Unit = {},
+    onAudioOnlyDetectedInMix: (String) -> Boolean = { false },
     onToggleFavorite: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -156,6 +176,35 @@ fun PlayerScreen(
     var showControls by remember { mutableStateOf(true) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var isLandscape by remember { mutableStateOf(false) }
+    var tracksState by remember { mutableStateOf(Tracks.EMPTY) }
+    var videoSizeState by remember { mutableStateOf(VideoSize.UNKNOWN) }
+    var firstVideoFrameRendered by remember { mutableStateOf(false) }
+    var audioSkipCount by remember { mutableIntStateOf(0) }
+    var clockTick by remember { mutableIntStateOf(0) }
+
+    val isLikelyAudio = remember(channel.id, channel.name, channel.streamUrl, channel.category, channel.quality) {
+        isLikelyAudioOnlyChannel(channel)
+    }
+    val hasAudioTrack = remember(tracksState) {
+        tracksState.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.length > 0 }
+    }
+    val hasPlayableVideoTrack = remember(tracksState) {
+        tracksState.groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSupported && it.length > 0 }
+    }
+    val hasVideoSize = videoSizeState.width > 0 && videoSizeState.height > 0
+
+    val countryFlag = remember(channel.country, channel.flag) {
+        resolveMobileCountryFlag(channel.country, channel.flag)
+    }
+    val countryName = remember(channel.country, channel.countryName, strings.lang) {
+        resolveMobileCountryName(channel.country, channel.countryName, strings.lang)
+    }
+    val countryDisplay = remember(countryFlag, countryName) {
+        listOfNotNull(
+            countryFlag.takeIf { it.isNotBlank() },
+            countryName.takeIf { it.isNotBlank() },
+        ).joinToString(" ")
+    }
 
     val castContext = remember(context) {
         runCatching { CastContext.getSharedInstance(context) }.getOrNull()
@@ -167,6 +216,13 @@ fun PlayerScreen(
         )
     }
     val castDeviceNameState by rememberUpdatedState(castDeviceName)
+
+    val confirmedAudioOnly = castDeviceName == null &&
+        hasPlayedCurrentChannel &&
+        errorText == null &&
+        !firstVideoFrameRendered &&
+        !hasVideoSize &&
+        ((hasAudioTrack && !hasPlayableVideoTrack) || (isLikelyAudio && !hasPlayableVideoTrack))
 
     val canGoPrevious = !isMixMode || mixIndex > 0
 
@@ -327,6 +383,9 @@ fun PlayerScreen(
         reconnectAttempt = 0
         reconnecting = false
         hasPlayedCurrentChannel = false
+        firstVideoFrameRendered = false
+        tracksState = Tracks.EMPTY
+        videoSizeState = VideoSize.UNKNOWN
         errorText = null
         showControls = true
         val activeCast = runCatching { castContext?.sessionManager?.currentCastSession }.getOrNull()
@@ -481,6 +540,22 @@ fun PlayerScreen(
                 }
                 scheduleAutoReconnect(error.errorCodeName)
             }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                tracksState = tracks
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoSizeState = videoSize
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    audioSkipCount = 0
+                }
+            }
+
+            override fun onRenderedFirstFrame() {
+                firstVideoFrameRendered = true
+                audioSkipCount = 0
+            }
         }
         exoPlayer.addListener(listener)
         exoPlayer.setHandleAudioBecomingNoisy(true)
@@ -522,6 +597,24 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(confirmedAudioOnly, channel.streamUrl, isMixMode, mixIncludeAudioOnly) {
+        if (confirmedAudioOnly && isMixMode && !mixIncludeAudioOnly && audioSkipCount < 10) {
+            audioSkipCount += 1
+            onAudioOnlyDetectedInMix(channel.streamUrl)
+        }
+    }
+
+    LaunchedEffect(isMixMode) {
+        if (!isMixMode) audioSkipCount = 0
+    }
+
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(15_000L)
+            clockTick++
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -552,6 +645,20 @@ fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        AnimatedVisibility(
+            visible = confirmedAudioOnly && !isBuffering && errorText == null && castDeviceName == null,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            MobileAudioOnlyStage(
+                channel = channel,
+                countryDisplay = countryDisplay,
+                audioLabel = tr("SOLO AUDIO", "AUDIO ONLY", "SOLO AUDIO"),
+                compactPip = isInPipMode,
+            )
+        }
 
         if (castDeviceName != null) {
             Column(
@@ -722,8 +829,11 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = channel.subtitle,
-                        color = Color.White.copy(alpha = 0.75f),
+                        text = listOfNotNull(
+                            countryDisplay.takeIf { it.isNotBlank() },
+                            channel.subtitle.takeIf { it.isNotBlank() },
+                        ).joinToString(" · "),
+                        color = Color.White.copy(alpha = 0.78f),
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -754,7 +864,10 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    onClick = onPreviousChannel,
+                    onClick = {
+                        audioSkipCount = 0
+                        onPreviousChannel()
+                    },
                     enabled = canGoPrevious,
                     modifier = Modifier
                         .size(54.dp)
@@ -788,7 +901,10 @@ fun PlayerScreen(
                     )
                 }
                 IconButton(
-                    onClick = onNextChannel,
+                    onClick = {
+                        audioSkipCount = 0
+                        onNextChannel()
+                    },
                     modifier = Modifier
                         .size(54.dp)
                         .background(Color.Black.copy(alpha = 0.55f), CircleShape),
@@ -802,17 +918,72 @@ fun PlayerScreen(
                 }
             }
 
-            // Bottom bar: Background Audio toggle, PiP, Aspect Ratio, Screen Rotation
+            // Bottom bar: Country Name + Dual Clocks (left) and Player Controls (right)
+            val localTime = remember(clockTick) { formatLocalTime() }
+            val countryTime = remember(channel.country, clockTick) { formatCountryTimeOrNull(channel.country) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.6f))
+                    .background(Color.Black.copy(alpha = 0.65f))
                     .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 10.dp)
                     .align(Alignment.BottomCenter),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (countryTime != null) {
+                        val countryTimeLabel = listOfNotNull(
+                            countryFlag.takeIf { it.isNotBlank() },
+                            countryName.takeIf { it.isNotBlank() }?.uppercase() ?: channel.country?.uppercase(),
+                        ).joinToString(" ").ifBlank { tr("PAESE", "COUNTRY", "PAÍS") }
+                        Column {
+                            Text(
+                                text = countryTimeLabel,
+                                color = Color(0xFF38BDF8),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 110.dp),
+                            )
+                            Text(
+                                text = countryTime,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(22.dp)
+                                .background(Color.White.copy(alpha = 0.2f)),
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = tr("ORA LOCALE", "LOCAL TIME", "HORA LOCAL"),
+                            color = Color.White.copy(alpha = 0.68f),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = localTime,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = { onToggleBackgroundPlay(!backgroundPlayEnabled) },
                 ) {
@@ -861,6 +1032,124 @@ fun PlayerScreen(
                         contentDescription = "Ruota schermo",
                         tint = Color.White,
                     )
+                }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileAudioOnlyStage(
+    channel: MobileChannel,
+    countryDisplay: String,
+    audioLabel: String,
+    compactPip: Boolean,
+) {
+    var logoFailed by remember(channel.logo, channel.id) { mutableStateOf(false) }
+    val catParts = listOfNotNull(
+        countryDisplay.takeIf { it.isNotBlank() },
+        channel.category.takeIf { it.isNotBlank() && !it.equals(countryDisplay, ignoreCase = true) },
+    ).joinToString(" · ")
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    listOf(Color(0xFF0D213B), Color(0xFF060D19), Color(0xFF03060C)),
+                ),
+            )
+            .padding(if (compactPip) 12.dp else 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(
+                        width = if (compactPip) 96.dp else 184.dp,
+                        height = if (compactPip) 68.dp else 124.dp,
+                    )
+                    .clip(RoundedCornerShape(if (compactPip) 14.dp else 24.dp))
+                    .background(Color(0xE6101F35))
+                    .border(1.5.dp, Color(0x5938BDF8), RoundedCornerShape(if (compactPip) 14.dp else 24.dp))
+                    .padding(if (compactPip) 10.dp else 18.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!channel.logo.isNullOrBlank() && !logoFailed) {
+                    AsyncImage(
+                        model = channel.logo,
+                        contentDescription = channel.name,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                        onError = { logoFailed = true },
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(if (compactPip) 40.dp else 64.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x2638BDF8))
+                            .border(1.dp, Color(0x6638BDF8), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = channelInitials(channel.name),
+                            color = Color(0xFF38BDF8),
+                            fontSize = if (compactPip) 15.sp else 22.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+            if (!compactPip) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    text = channel.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color(0x2638BDF8))
+                            .border(1.dp, Color(0x6638BDF8), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 10.dp, vertical = 3.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8)),
+                        )
+                        Text(
+                            text = audioLabel,
+                            color = Color(0xFF7DD3FC),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                        )
+                    }
+                    if (catParts.isNotBlank()) {
+                        Text(
+                            text = catParts,
+                            color = Color(0xFF94A3B8),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

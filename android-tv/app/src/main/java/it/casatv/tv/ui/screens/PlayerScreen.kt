@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -114,8 +115,13 @@ import it.casatv.tv.ui.components.extractOsdAudioTracks
 import it.casatv.tv.ui.components.extractOsdSubtitleTracks
 import it.casatv.tv.ui.components.formatStreamInfo
 import it.casatv.tv.ui.countryFacet
+import it.casatv.tv.ui.countryFlag
+import it.casatv.tv.ui.countryName
+import it.casatv.tv.ui.countryTimeTextOrNull
 import it.casatv.tv.ui.currentTimeText
 import it.casatv.tv.ui.formatTime
+import it.casatv.tv.ui.isLikelyAudioOnlyChannel
+import it.casatv.tv.ui.normalizeCountryCode
 import it.casatv.tv.ui.programProgress
 import it.casatv.tv.ui.programRemaining
 import it.casatv.tv.ui.theme.CasaAmber
@@ -228,8 +234,15 @@ fun PlayerScreen(vm: MainViewModel) {
     var tracksState by remember { mutableStateOf(Tracks.EMPTY) }
     var videoSizeState by remember { mutableStateOf(VideoSize.UNKNOWN) }
     val multiTvSyncEnabled by vm.multiTvSync.collectAsStateWithLifecycle()
+    val mixIncludeAudioOnly by vm.mixIncludeAudioOnly.collectAsStateWithLifecycle()
+    val showRemoteHintsBanner by vm.showRemoteHintsBanner.collectAsStateWithLifecycle()
     val showMixRegionPicker by vm.showMixRegionPicker.collectAsStateWithLifecycle()
     val selectedMixRegions by vm.selectedMixRegions.collectAsStateWithLifecycle()
+    var firstVideoFrameRendered by remember { mutableStateOf(false) }
+    var audioSkipCount by remember { mutableIntStateOf(0) }
+    var hintsBannerVisible by remember { mutableStateOf(false) }
+    var hintsBannerTick by remember { mutableIntStateOf(0) }
+    var clockTick by remember { mutableIntStateOf(0) }
     var syncState by remember { mutableStateOf<SyncStateResponse?>(null) }
     var inSyncByDelta by remember { mutableStateOf(false) }
     var lastZapTimeMs by remember { mutableLongStateOf(0L) }
@@ -246,10 +259,39 @@ fun PlayerScreen(vm: MainViewModel) {
     val streamDetails = remember(videoSizeState, player.videoFormat) {
         formatStreamInfo(videoSizeState, player.videoFormat)
     }
+    val isLikelyAudio = remember(channel.id, channel.name, channel.streamUrl, channel.categories, channel.categoryNames, channel.quality) {
+        isLikelyAudioOnlyChannel(channel)
+    }
+    val hasAudioTrack = remember(tracksState) {
+        tracksState.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.length > 0 }
+    }
+    val hasPlayableVideoTrack = remember(tracksState) {
+        tracksState.groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSupported && it.length > 0 }
+    }
+    val hasVideoSize = videoSizeState.width > 0 && videoSizeState.height > 0
+    val confirmedAudioOnly = hasPlayedCurrentChannel &&
+        errorMessage == null &&
+        !firstVideoFrameRendered &&
+        !hasVideoSize &&
+        ((hasAudioTrack && !hasPlayableVideoTrack) || (isLikelyAudio && !hasPlayableVideoTrack))
+
+    val channelCountryCode = remember(channel.country) { normalizeCountryCode(channel.country) }
+    val channelCountryName = remember(channelCountryCode, channel.countryName, strings.language) {
+        channelCountryCode?.let { countryName(it, strings.language) }
+            ?: channel.countryName.takeIf { it.isNotBlank() }
+    }
+    val channelFlag = remember(channel.flag, channelCountryCode) {
+        channel.flag.takeIf { it.isNotBlank() }
+            ?: channelCountryCode?.let { code -> countryFlag(code) }.orEmpty()
+    }
 
     fun wakeControls() {
         controlsVisible = true
         hideTick++
+        if (showRemoteHintsBanner) {
+            hintsBannerVisible = true
+            hintsBannerTick++
+        }
     }
 
     fun cancelNumberEntry() {
@@ -313,6 +355,7 @@ fun PlayerScreen(vm: MainViewModel) {
     }
 
     fun zap(offset: Int) {
+        audioSkipCount = 0
         cancelNumberEntry()
         wakeControls()
         vm.playRelative(offset)
@@ -473,6 +516,14 @@ fun PlayerScreen(vm: MainViewModel) {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 videoSizeState = videoSize
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    audioSkipCount = 0
+                }
+            }
+
+            override fun onRenderedFirstFrame() {
+                firstVideoFrameRendered = true
+                audioSkipCount = 0
             }
         }
         player.addListener(listener)
@@ -772,6 +823,9 @@ fun PlayerScreen(vm: MainViewModel) {
     LaunchedEffect(session.channel.id, session.playToken, session.sourceIndex) {
         reconnectJob?.cancel()
         hasPlayedCurrentChannel = false
+        firstVideoFrameRendered = false
+        tracksState = Tracks.EMPTY
+        videoSizeState = VideoSize.UNKNOWN
         reconnectAttempt = 0
         reconnecting = false
         errorMessage = null
@@ -824,6 +878,35 @@ fun PlayerScreen(vm: MainViewModel) {
         if (controlsVisible && numberEntry.isEmpty() && !countryPickerOpen && !osdMenuOpen && !quickDrawerOpen && !showMixRegionPicker) {
             delay(6000)
             controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(hintsBannerVisible, hintsBannerTick, showRemoteHintsBanner) {
+        if (!showRemoteHintsBanner) {
+            hintsBannerVisible = false
+            return@LaunchedEffect
+        }
+        if (hintsBannerVisible) {
+            delay(6000)
+            hintsBannerVisible = false
+        }
+    }
+
+    LaunchedEffect(confirmedAudioOnly, session.channel.id, session.playToken, session.isMixMode, mixIncludeAudioOnly) {
+        if (confirmedAudioOnly && session.isMixMode && !mixIncludeAudioOnly && audioSkipCount < 10) {
+            audioSkipCount += 1
+            vm.skipAudioOnlyMixChannel(session.channel.id)
+        }
+    }
+
+    LaunchedEffect(session.isMixMode) {
+        if (!session.isMixMode) audioSkipCount = 0
+    }
+
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(15_000L)
+            clockTick++
         }
     }
 
@@ -1138,6 +1221,12 @@ fun PlayerScreen(vm: MainViewModel) {
                         } else {
                             controlsVisible = !controlsVisible
                             hideTick++
+                            if (controlsVisible && showRemoteHintsBanner) {
+                                hintsBannerVisible = true
+                                hintsBannerTick++
+                            } else {
+                                hintsBannerVisible = false
+                            }
                         }
                         true
                     }
@@ -1181,6 +1270,21 @@ fun PlayerScreen(vm: MainViewModel) {
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        AnimatedVisibility(
+            visible = confirmedAudioOnly && !buffering && !failingOver && errorMessage == null,
+            enter = fadeIn(tween(240)),
+            exit = fadeOut(tween(180)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            AudioOnlyLogoStage(
+                channel = channel,
+                countryDisplay = listOfNotNull(
+                    channelFlag.takeIf { it.isNotBlank() },
+                    channelCountryName,
+                ).joinToString(" ").takeIf { it.isNotBlank() },
+            )
+        }
 
         if (buffering && errorMessage == null && !failingOver && !reconnecting) {
             Column(
@@ -1229,6 +1333,15 @@ fun PlayerScreen(vm: MainViewModel) {
         }
 
         AnimatedVisibility(
+            visible = showRemoteHintsBanner && hintsBannerVisible && errorMessage == null && !osdMenuOpen && !quickDrawerOpen && !countryPickerOpen && !showMixRegionPicker,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(280)),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            PlayerRemoteHintsBanner(isMixMode = session.isMixMode)
+        }
+
+        AnimatedVisibility(
             visible = controlsVisible && errorMessage == null && !osdMenuOpen && !quickDrawerOpen,
             enter = fadeIn(),
             exit = fadeOut(),
@@ -1236,6 +1349,9 @@ fun PlayerScreen(vm: MainViewModel) {
         ) {
             PlayerBottomStrip(
                 channel = channel,
+                countryFlag = channelFlag,
+                countryName = channelCountryName,
+                clockTick = clockTick,
                 syncState = syncState,
                 inSync = inSyncByDelta,
                 isMixMode = session.isMixMode,
@@ -1555,8 +1671,136 @@ private fun QuickChannelDrawer(
 
 
 @Composable
+private fun AudioOnlyLogoStage(
+    channel: Channel,
+    countryDisplay: String? = null,
+) {
+    val strings = LocalAppStrings.current
+    val categoryLabel = channel.categoryNames.firstOrNull()
+        ?: channel.categories.firstOrNull()?.replaceFirstChar { it.uppercase() }
+    val subtitleParts = listOfNotNull(
+        countryDisplay,
+        categoryLabel?.takeIf { it.isNotBlank() && !it.equals(countryDisplay, ignoreCase = true) },
+    ).joinToString(" · ")
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    listOf(Color(0xFF0D213B), Color(0xFF060D19), Color(0xFF03060C)),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 48.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 236.dp, height = 158.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color(0xE6101F35))
+                    .border(1.5.dp, Color(0x5938BDF8), RoundedCornerShape(28.dp))
+                    .padding(22.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                ChannelLogo(
+                    channel = channel,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Spacer(Modifier.height(22.dp))
+            Text(
+                text = channel.name,
+                color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 680.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color(0x2638BDF8))
+                        .border(1.dp, Color(0x6638BDF8), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF38BDF8)),
+                    )
+                    Text(
+                        text = strings.t("SOLO AUDIO", "AUDIO ONLY", "SOLO AUDIO"),
+                        color = Color(0xFF7DD3FC),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                    )
+                }
+                if (subtitleParts.isNotBlank()) {
+                    Text(
+                        text = subtitleParts,
+                        color = Color(0xFF94A3B8),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerRemoteHintsBanner(isMixMode: Boolean) {
+    val strings = LocalAppStrings.current
+    val isLight = it.casatv.tv.ui.theme.CasaIsLight
+    val containerBg = if (isLight) Color(0xF5FFFFFF) else Color(0xEB08111E)
+    val containerBorder = if (isLight) CasaBorder else Color(0xFF1E3A5F)
+
+    Row(
+        modifier = Modifier
+            .padding(top = 24.dp, start = 24.dp, end = 24.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(containerBg)
+            .border(1.dp, containerBorder, RoundedCornerShape(999.dp))
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        if (!isMixMode) {
+            Hint("◀", strings.t("Lista", "List", "Lista"), isLight)
+            Hint("▲ ▼", strings.t("Canali", "Channels", "Canales"), isLight)
+            Hint("0-9", strings.t("Numero", "Number", "Número"), isLight)
+        } else {
+            Hint("◀", strings.t("Prec.", "Prev", "Ant."), isLight)
+            Hint("▲ ▼ ▶", strings.t("Mix", "Mix", "Mix"), isLight)
+        }
+        Hint("MENU", strings.t("Opzioni", "Options", "Opciones"), isLight)
+        Hint("BACK", strings.t("Esci", "Exit", "Salir"), isLight)
+    }
+}
+
+@Composable
 private fun PlayerBottomStrip(
     channel: Channel,
+    countryFlag: String,
+    countryName: String?,
+    clockTick: Int,
     syncState: SyncStateResponse? = null,
     inSync: Boolean = false,
     isMixMode: Boolean = false,
@@ -1570,12 +1814,18 @@ private fun PlayerBottomStrip(
     val containerBorder = if (isLight) CasaBorder else Color(0xFF1E3A5F)
     val textColor = if (isLight) CasaText else Color(0xFFF8FAFC)
     val textDim = if (isLight) CasaDim else Color(0xFF94A3B8)
+    val accentBlue = if (isLight) CasaBlue else Color(0xFF38BDF8)
+
+    val tvLocalTime = remember(clockTick) { currentTimeText() }
+    val countryLocalTime = remember(channel.country, clockTick) {
+        countryTimeTextOrNull(channel.country)
+    }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 32.dp, start = 40.dp, end = 40.dp)
-            .height(54.dp)
+            .height(58.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(containerBg)
             .border(1.dp, containerBorder, RoundedCornerShape(18.dp))
@@ -1586,7 +1836,7 @@ private fun PlayerBottomStrip(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            // Channel Info (fixed flex slot so long channel names truncate cleanly)
+            // Channel Info + Country Flag & Localized Country Name
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f),
@@ -1649,37 +1899,51 @@ private fun PlayerBottomStrip(
                         modifier = Modifier.size(14.dp),
                     )
                 }
-                if (!channel.flag.isNullOrBlank() || !channel.quality.isNullOrBlank()) {
-                    Spacer(Modifier.width(10.dp))
+                val countryText = listOfNotNull(
+                    countryFlag.takeIf { it.isNotBlank() },
+                    countryName?.takeIf { it.isNotBlank() },
+                ).joinToString(" ")
+                if (countryText.isNotBlank()) {
+                    Spacer(Modifier.width(12.dp))
                     Text(
-                        text = listOfNotNull(channel.flag, channel.quality).joinToString(" · "),
-                        color = textDim,
-                        fontSize = 11.sp,
+                        text = countryText,
+                        color = textColor.copy(alpha = 0.85f),
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         softWrap = false,
-                        overflow = TextOverflow.Clip,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 180.dp),
                     )
+                }
+                if (channel.quality.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(accentBlue.copy(alpha = 0.14f))
+                            .border(1.dp, accentBlue.copy(alpha = 0.35f), RoundedCornerShape(5.dp))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            text = channel.quality,
+                            color = accentBlue,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
                 }
             }
 
             Spacer(Modifier.width(16.dp))
 
-            // Key Hints
+            // Dual Clocks (Channel Country Local Time + TV Local Time) & Multi-TV Sync Status
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Hint("◀", strings.t("Lista", "List", "Lista"), isLight)
-                Hint("▲ ▼", strings.t("Canali", "Channels", "Canales"), isLight)
-                Hint("0-9", strings.t("Numero", "Number", "Número"), isLight)
-                Hint("MENU", strings.t("Opzioni", "Options", "Opciones"), isLight)
-                Hint("BACK", strings.t("Esci", "Exit", "Salir"), isLight)
-            }
-
-            Spacer(Modifier.width(16.dp))
-
-            // Clock & Status
-            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (syncState?.syncActive == true) {
                     Box(
                         modifier = Modifier
@@ -1687,16 +1951,65 @@ private fun PlayerBottomStrip(
                             .clip(CircleShape)
                             .background(if (inSync) CasaGreen else Color(0xFFFFB300)),
                     )
-                    Spacer(Modifier.width(8.dp))
                 }
-                Text(
-                    text = currentTimeText(),
-                    color = textColor,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    softWrap = false,
-                )
+                if (countryLocalTime != null) {
+                    val countryShortLabel = listOfNotNull(
+                        countryFlag.takeIf { it.isNotBlank() },
+                        countryName?.uppercase() ?: channel.country?.uppercase(),
+                    ).joinToString(" ").ifBlank { strings.t("PAESE", "COUNTRY", "PAÍS") }
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = countryShortLabel,
+                            color = accentBlue,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 136.dp),
+                        )
+                        Text(
+                            text = countryLocalTime,
+                            color = textColor,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(26.dp)
+                            .background(containerBorder),
+                    )
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = strings.t("ORA TV", "TV TIME", "HORA TV"),
+                        color = textDim,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                    Text(
+                        text = tvLocalTime,
+                        color = textColor,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
             }
         }
     }

@@ -1,7 +1,7 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.020';
+const WEB_APP_VERSION = '26.11.021';
 const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -47,6 +47,117 @@ function countryFlag(code) {
   return String.fromCodePoint(norm.charCodeAt(0) + 127397, norm.charCodeAt(1) + 127397);
 }
 
+const COUNTRY_TIMEZONES = {
+  AD: 'Europe/Andorra', AE: 'Asia/Dubai', AF: 'Asia/Kabul', AG: 'America/Antigua', AL: 'Europe/Tirane',
+  AM: 'Asia/Yerevan', AO: 'Africa/Luanda', AR: 'America/Argentina/Buenos_Aires', AT: 'Europe/Vienna',
+  AU: 'Australia/Sydney', AW: 'America/Aruba', AZ: 'Asia/Baku', BA: 'Europe/Sarajevo', BB: 'America/Barbados',
+  BD: 'Asia/Dhaka', BE: 'Europe/Brussels', BF: 'Africa/Ouagadougou', BG: 'Europe/Sofia', BH: 'Asia/Bahrain',
+  BI: 'Africa/Bujumbura', BJ: 'Africa/Porto-Novo', BM: 'Atlantic/Bermuda', BN: 'Asia/Brunei', BO: 'America/La_Paz',
+  BR: 'America/Sao_Paulo', BS: 'America/Nassau', BT: 'Asia/Thimphu', BW: 'Africa/Gaborone', BY: 'Europe/Minsk',
+  BZ: 'America/Belize', CA: 'America/Toronto', CD: 'Africa/Kinshasa', CF: 'Africa/Bangui', CG: 'Africa/Brazzaville',
+  CH: 'Europe/Zurich', CI: 'Africa/Abidjan', CL: 'America/Santiago', CM: 'Africa/Douala', CN: 'Asia/Shanghai',
+  CO: 'America/Bogota', CR: 'America/Costa_Rica', CU: 'America/Havana', CV: 'Atlantic/Cape_Verde',
+  CW: 'America/Curacao', CY: 'Asia/Nicosia', CZ: 'Europe/Prague', DE: 'Europe/Berlin', DJ: 'Africa/Djibouti',
+  DK: 'Europe/Copenhagen', DM: 'America/Dominica', DO: 'America/Santo_Domingo', DZ: 'Africa/Algiers',
+  EC: 'America/Guayaquil', EE: 'Europe/Tallinn', EG: 'Africa/Cairo', ER: 'Africa/Asmara', ES: 'Europe/Madrid',
+  ET: 'Africa/Addis_Ababa', FI: 'Europe/Helsinki', FJ: 'Pacific/Fiji', FO: 'Atlantic/Faroe', FR: 'Europe/Paris',
+  GA: 'Africa/Libreville', GB: 'Europe/London', UK: 'Europe/London', GD: 'America/Grenada', GE: 'Asia/Tbilisi',
+  GF: 'America/Cayenne', GH: 'Africa/Accra', GI: 'Europe/Gibraltar', GL: 'America/Godthab', GM: 'Africa/Banjul',
+  GN: 'Africa/Conakry', GP: 'America/Guadeloupe', GQ: 'Africa/Malabo', GR: 'Europe/Athens', GT: 'America/Guatemala',
+  GU: 'Pacific/Guam', GW: 'Africa/Bissau', GY: 'America/Guyana', HK: 'Asia/Hong_Kong', HN: 'America/Tegucigalpa',
+  HR: 'Europe/Zagreb', HT: 'America/Port-au-Prince', HU: 'Europe/Budapest', ID: 'Asia/Jakarta', IE: 'Europe/Dublin',
+  IL: 'Asia/Jerusalem', IN: 'Asia/Kolkata', IQ: 'Asia/Baghdad', IR: 'Asia/Tehran', IS: 'Atlantic/Reykjavik',
+  IT: 'Europe/Rome', JM: 'America/Jamaica', JO: 'Asia/Amman', JP: 'Asia/Tokyo', KE: 'Africa/Nairobi',
+  KG: 'Asia/Bishkek', KH: 'Asia/Phnom_Penh', KM: 'Indian/Comoro', KN: 'America/St_Kitts', KP: 'Asia/Pyongyang',
+  KR: 'Asia/Seoul', KW: 'Asia/Kuwait', KY: 'America/Cayman', KZ: 'Asia/Almaty', LA: 'Asia/Vientiane',
+  LB: 'Asia/Beirut', LC: 'America/St_Lucia', LI: 'Europe/Vaduz', LK: 'Asia/Colombo', LR: 'Africa/Monrovia',
+  LS: 'Africa/Maseru', LT: 'Europe/Vilnius', LU: 'Europe/Luxembourg', LV: 'Europe/Riga', LY: 'Africa/Tripoli',
+  MA: 'Africa/Casablanca', MC: 'Europe/Monaco', MD: 'Europe/Chisinau', ME: 'Europe/Podgorica',
+  MG: 'Indian/Antananarivo', MK: 'Europe/Skopje', ML: 'Africa/Bamako', MM: 'Asia/Yangon', MN: 'Asia/Ulaanbaatar',
+  MO: 'Asia/Macau', MQ: 'America/Martinique', MR: 'Africa/Nouakchott', MT: 'Europe/Malta', MU: 'Indian/Mauritius',
+  MV: 'Indian/Maldives', MW: 'Africa/Blantyre', MX: 'America/Mexico_City', MY: 'Asia/Kuala_Lumpur',
+  MZ: 'Africa/Maputo', NA: 'Africa/Windhoek', NC: 'Pacific/Noumea', NE: 'Africa/Niamey', NG: 'Africa/Lagos',
+  NI: 'America/Managua', NL: 'Europe/Amsterdam', NO: 'Europe/Oslo', NP: 'Asia/Kathmandu', NZ: 'Pacific/Auckland',
+  OM: 'Asia/Muscat', PA: 'America/Panama', PE: 'America/Lima', PF: 'Pacific/Tahiti', PG: 'Pacific/Port_Moresby',
+  PH: 'Asia/Manila', PK: 'Asia/Karachi', PL: 'Europe/Warsaw', PR: 'America/Puerto_Rico', PS: 'Asia/Gaza',
+  PT: 'Europe/Lisbon', PY: 'America/Asuncion', QA: 'Asia/Qatar', RO: 'Europe/Bucharest', RS: 'Europe/Belgrade',
+  RU: 'Europe/Moscow', RW: 'Africa/Kigali', SA: 'Asia/Riyadh', SD: 'Africa/Khartoum', SE: 'Europe/Stockholm',
+  SG: 'Asia/Singapore', SI: 'Europe/Ljubljana', SK: 'Europe/Bratislava', SL: 'Africa/Freetown',
+  SM: 'Europe/San_Marino', SN: 'Africa/Dakar', SO: 'Africa/Mogadishu', SR: 'America/Paramaribo',
+  SS: 'Africa/Juba', SV: 'America/El_Salvador', SY: 'Asia/Damascus', SZ: 'Africa/Mbabane', TD: 'Africa/Ndjamena',
+  TG: 'Africa/Lome', TH: 'Asia/Bangkok', TJ: 'Asia/Dushanbe', TL: 'Asia/Dili', TM: 'Asia/Ashgabat',
+  TN: 'Africa/Tunis', TR: 'Europe/Istanbul', TT: 'America/Port_of_Spain', TW: 'Asia/Taipei',
+  TZ: 'Africa/Dar_es_Salaam', UA: 'Europe/Kiev', UG: 'Africa/Kampala', US: 'America/New_York',
+  UY: 'America/Montevideo', UZ: 'Asia/Tashkent', VA: 'Europe/Vatican', VC: 'America/St_Vincent',
+  VE: 'America/Caracas', VG: 'America/Tortola', VI: 'America/St_Thomas', VN: 'Asia/Ho_Chi_Minh',
+  WS: 'Pacific/Apia', XK: 'Europe/Belgrade', YE: 'Asia/Aden', ZA: 'Africa/Johannesburg',
+  ZM: 'Africa/Lusaka', ZW: 'Africa/Harare',
+};
+
+function getLocalizedCountryName(code, fallback = '') {
+  const clean = String(code || '').trim().toUpperCase();
+  const norm = clean === 'UK' ? 'GB' : clean;
+  if (/^[A-Z]{2}$/.test(norm)) {
+    const facetMatch = state.config?.facets?.countries?.find((c) => {
+      const fc = String(c.code || '').trim().toUpperCase();
+      return (fc === 'UK' ? 'GB' : fc) === norm;
+    });
+    try {
+      if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+        const dn = new Intl.DisplayNames([getLang()], { type: 'region' });
+        const resolved = dn.of(norm);
+        if (resolved && resolved !== norm) return resolved;
+      }
+    } catch (_) {}
+    if (facetMatch?.name) return facetMatch.name;
+  }
+  return String(fallback || clean || '').trim();
+}
+
+function getCountryTimeText(code) {
+  const clean = String(code || '').trim().toUpperCase();
+  const norm = clean === 'UK' ? 'GB' : clean;
+  const tz = COUNTRY_TIMEZONES[norm] || COUNTRY_TIMEZONES[clean];
+  if (!tz) return null;
+  try {
+    return new Intl.DateTimeFormat([], {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date());
+  } catch (_) {
+    return null;
+  }
+}
+
+const WEB_AUDIO_EXT_RE = /\.(mp3|aac|aacp|ogg|oga|opus|flac|m4a|wav|wma|pls)(\?|#|$)/i;
+const WEB_AUDIO_EP_RE = /(\/stream(\?|\/|$)|;stream|icecast|shoutcast|streamtheworld|radionomy|radioking|listen2myradio|zeno\.fm|radiojar)/i;
+const WEB_VIDEO_QUALITIES = new Set(['HD', 'FHD', '4K', 'UHD', '1080P', '720P']);
+const WEB_VIDEO_NAME_RE = /(^|[\s\-_|/(\[.])(tv|television|televisión|televisió|tele|bfm|vision|visió|video|vídeo|canal|channel|radiotv|radio-tv|visual\s*radio|radiovision|hd|uhd|fhd|4k|1080p|720p|576p|480p|360p|240p)([\s\-_|/)\].]|$)/i;
+const WEB_RADIO_NAME_RE = /(^|[\s\-_|/(\[])(fm|am|radio|rádio|rádió|irratia|dab\+?|webradio)([\s\-_|/)\].]|$)/i;
+
+function isLikelyAudioOnlyChannel(ch) {
+  if (!ch) return false;
+  const url = String(ch.streamUrl || '').trim();
+  const urlLower = url.toLowerCase();
+  if (WEB_AUDIO_EXT_RE.test(urlLower)) return true;
+  const isContainer = urlLower.includes('.m3u8') || urlLower.includes('.mpd') || urlLower.includes('.ts');
+  if (!isContainer && WEB_AUDIO_EP_RE.test(urlLower)) return true;
+
+  const cats = [...(ch.categories || []), ...(ch.categoryNames || [])];
+  if (cats.some((raw) => {
+    const c = String(raw || '').toLowerCase();
+    return (c.includes('radio') || c.includes('irratia')) && !c.includes('tv') && !c.includes('video') && !c.includes('tele');
+  })) {
+    return true;
+  }
+
+  const q = String(ch.quality || '').trim().toUpperCase();
+  const hasVideoHint = WEB_VIDEO_QUALITIES.has(q) || WEB_VIDEO_NAME_RE.test(String(ch.name || ''));
+  return !hasVideoHint && WEB_RADIO_NAME_RE.test(String(ch.name || ''));
+}
+
 /* ---------------- Device Detection (Smartphone / Tablet / PC) ---------------- */
 function detectDeviceProfile() {
   const ua = navigator.userAgent || '';
@@ -87,6 +198,8 @@ const state = {
   theme: localStorage.getItem('casatv_theme') === 'light' ? 'light' : 'dark',
   multiTvSync: localStorage.getItem('casatv_multi_tv_sync') !== 'false',
   liveSafetyBuffer: localStorage.getItem('casatv_live_safety_buffer') !== 'false',
+  mixIncludeAudioOnly: localStorage.getItem('casatv_mix_include_audio_only') === 'true',
+  showRemoteHintsBanner: localStorage.getItem('casatv_show_remote_hints') !== 'false',
   updateFrequency: localStorage.getItem('casatv_update_freq') || 'WEEKLY',
   page: 'channels', // 'channels' | 'favorites' | 'settings'
   settingsSection: 'profile', // 'profile' | 'sources' | 'server' | 'guide'
@@ -123,6 +236,8 @@ const state = {
   mixHistory: [],
   mixIndex: -1,
   deadMixIds: new Set(),
+  runtimeAudioOnlyIds: new Set(),
+  mixAudioSkipCount: 0,
   verifiedNextMix: null,
   mixVerifyAbort: null,
   hoveredMixRegion: 'EUROPE',
@@ -151,6 +266,9 @@ const state = {
   playbackState: 'idle',
   playbackChannel: '',
   idleTimer: null,
+  hintsBannerTimer: null,
+  audioCheckTimer: null,
+  currentStreamAudioOnly: false,
   numBuffer: '',
   numTimer: null,
   syncTimer: null,
@@ -1904,7 +2022,13 @@ function updateMappamondoUI() {
 
 function getRegionalMixPool() {
   const base = state.allWorldPool.length ? state.allWorldPool : state.channels;
-  const httpPool = base.filter((c) => /^https?:\/\//i.test(c.streamUrl || '') && !state.deadMixIds.has(c.id));
+  const httpPool = base.filter((c) => {
+    if (!/^https?:\/\//i.test(c.streamUrl || '') || state.deadMixIds.has(c.id)) return false;
+    if (!state.mixIncludeAudioOnly && (state.runtimeAudioOnlyIds.has(c.id) || isLikelyAudioOnlyChannel(c))) {
+      return false;
+    }
+    return true;
+  });
   if (state.selectedMixRegions.has('ALL_WORLD')) return httpPool;
   return httpPool.filter((c) => {
     const reg = resolveMixRegion(c.country);
@@ -1974,6 +2098,7 @@ function preverifyNextMixCandidate() {
 async function startMixPlayback() {
   $('#mix-modal').hidden = true;
   resetMixState(false);
+  state.mixAudioSkipCount = 0;
   await ensureMixPoolLoaded();
   const pool = getRegionalMixPool();
   if (!pool.length) {
@@ -2042,6 +2167,8 @@ function closePlayer() {
   stopPlayerStream();
   stopMultiTvSync();
   closeDrawerPreview();
+  hideTemporaryHintsBanner();
+  renderAudioOnlyStage(null, false);
   state.drawerOpen = false;
   $('#player-quick-drawer').hidden = true;
   $('#player-modal').hidden = true;
@@ -2061,12 +2188,103 @@ function stopWebRecoveryLoops() {
   state.reconnectTimer = null;
   clearTimeout(state.playerTuneFailTimer);
   state.playerTuneFailTimer = null;
+  clearTimeout(state.audioCheckTimer);
+  state.audioCheckTimer = null;
   clearInterval(state.cushionTimer);
   state.cushionTimer = null;
   state.reconnectActive = false;
   state.cushionBuilding = false;
   const pill = $('#player-reconnect-pill');
   if (pill) pill.hidden = true;
+}
+
+function hideTemporaryHintsBanner() {
+  clearTimeout(state.hintsBannerTimer);
+  state.hintsBannerTimer = null;
+  const banner = $('#player-hints-banner');
+  if (banner) banner.hidden = true;
+}
+
+function showTemporaryHintsBanner() {
+  hideTemporaryHintsBanner();
+  const banner = $('#player-hints-banner');
+  if (
+    !banner ||
+    !state.showRemoteHintsBanner ||
+    !state.playerOpen ||
+    state.drawerOpen ||
+    state.deviceType === 'smartphone'
+  ) {
+    return;
+  }
+  const chips = state.playerIsMix
+    ? [
+        `<span class="hint-chip"><kbd>◀</kbd> ${t('Prec.', 'Prev', 'Ant.')}</span>`,
+        `<span class="hint-chip"><kbd>▲▼▶</kbd> Mix</span>`,
+        `<span class="hint-chip"><kbd>M</kbd> ${t('Preferito', 'Favorite', 'Favorito')}</span>`,
+        `<span class="hint-chip"><kbd>Esc</kbd> ${t('Esci', 'Exit', 'Salir')}</span>`,
+      ]
+    : [
+        `<span class="hint-chip"><kbd>◀</kbd> ${t('Lista', 'List', 'Lista')}</span>`,
+        `<span class="hint-chip"><kbd>▲▼</kbd> ${t('Canali', 'Channels', 'Canales')}</span>`,
+        `<span class="hint-chip"><kbd>0-9</kbd> ${t('Numero', 'Number', 'Número')}</span>`,
+        `<span class="hint-chip"><kbd>M</kbd> ${t('Preferito', 'Favorite', 'Favorito')}</span>`,
+        `<span class="hint-chip"><kbd>Esc</kbd> ${t('Esci', 'Exit', 'Salir')}</span>`,
+      ];
+  banner.innerHTML = chips.join('');
+  banner.hidden = false;
+  state.hintsBannerTimer = setTimeout(() => {
+    banner.hidden = true;
+    state.hintsBannerTimer = null;
+  }, 6000);
+}
+
+function renderAudioOnlyStage(ch, visible) {
+  const stage = $('#player-audio-stage');
+  if (!stage) return;
+  if (!visible || !ch) {
+    stage.hidden = true;
+    return;
+  }
+  const logoEl = $('#player-audio-logo');
+  const monoEl = $('#player-audio-monogram');
+  const titleEl = $('#player-audio-title');
+  const badgeEl = $('#player-audio-badge');
+  const subEl = $('#player-audio-sub');
+
+  if (titleEl) titleEl.textContent = ch.name || 'Canale';
+  if (badgeEl) badgeEl.textContent = t('SOLO AUDIO', 'AUDIO ONLY', 'SOLO AUDIO');
+  if (monoEl) monoEl.textContent = initials(ch.name || 'TV');
+
+  const cName = getLocalizedCountryName(ch.country, ch.countryName);
+  const flag = ch.flag || (ch.country ? countryFlag(ch.country) : '');
+  const cLabel = [flag, cName].filter(Boolean).join(' ');
+  const catLabel = (ch.categoryNames && ch.categoryNames[0]) || (ch.categories && ch.categories[0]) || '';
+  const subParts = [cLabel, catLabel && catLabel.toLowerCase() !== cName.toLowerCase() ? catLabel : ''].filter(Boolean);
+  if (subEl) subEl.textContent = subParts.join(' · ');
+
+  if (logoEl && monoEl) {
+    if (ch.logo) {
+      monoEl.hidden = true;
+      logoEl.hidden = false;
+      logoEl.onload = () => {
+        if (state.playerChannel?.id === ch.id) {
+          logoEl.hidden = false;
+          monoEl.hidden = true;
+        }
+      };
+      logoEl.onerror = () => {
+        logoEl.hidden = true;
+        monoEl.hidden = false;
+      };
+      logoEl.src = ch.logo;
+    } else {
+      logoEl.hidden = true;
+      logoEl.removeAttribute('src');
+      monoEl.hidden = false;
+    }
+  }
+  stage.hidden = false;
 }
 
 function isHlsStreamUrl(url) {
@@ -2107,6 +2325,8 @@ function stopPlayerStream({ keepFrame = false } = {}) {
     video.onplaying = null;
     video.oncanplay = null;
     video.onloadedmetadata = null;
+    video.onloadeddata = null;
+    video.onresize = null;
     video.onended = null;
     video.onerror = null;
     if (!keepFrame) {
@@ -2156,6 +2376,7 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   state.reconnectActive = false;
   state.cushionBuilding = false;
   state.hasPlayedCurrentChannel = false;
+  state.currentStreamAudioOnly = false;
   state.bufferingSinceMs = 0;
   state.readySinceMs = 0;
   state.lastStallTime = -1;
@@ -2165,8 +2386,9 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   state.playerSourceIdx = 0;
   state.playbackState = 'playing';
   state.playbackChannel = ch.name;
+  renderAudioOnlyStage(ch, false);
 
-  // Update Bottom OSD Strip (strictly fixed 54px height)
+  // Update Bottom OSD Strip (strictly fixed 58px height)
   const mixBadge = $('#strip-mix-badge');
   mixBadge.hidden = !isMix;
   if (isMix) {
@@ -2174,7 +2396,20 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   }
   $('#strip-num-badge').textContent = ch.number ? String(ch.number) : ch.flag || countryFlag(ch.country);
   $('#player-ch-name').textContent = ch.name || 'Canale';
-  $('#player-ch-flag').textContent = ch.flag || (ch.country ? countryFlag(ch.country) : '');
+
+  const resolvedFlag = ch.flag || (ch.country ? countryFlag(ch.country) : '');
+  const resolvedCountryName = getLocalizedCountryName(ch.country, ch.countryName);
+  const countryWrap = $('#player-ch-country');
+  if (countryWrap) {
+    if (resolvedFlag || resolvedCountryName) {
+      $('#player-ch-flag').textContent = resolvedFlag;
+      $('#player-ch-country-name').textContent = resolvedCountryName;
+      countryWrap.hidden = false;
+    } else {
+      countryWrap.hidden = true;
+    }
+  }
+
   const qBadge = $('#player-ch-quality');
   if (ch.quality) {
     qBadge.hidden = false;
@@ -2185,6 +2420,7 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   $('#player-mix-regions-btn').hidden = !isMix;
   updatePlayerFavButton();
   updateClock();
+  showTemporaryHintsBanner();
 
   const video = $('#preview-video');
   const loading = $('#player-loading');
@@ -2197,6 +2433,37 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   $('#player-tuning-label').textContent = t('Sintonizzazione…', 'Tuning…', 'Sintonizando…');
 
   const url = ch.streamUrl;
+  const clearAudioOnlyIfVideo = () => {
+    if (!state.playerOpen || state.tuneSeq !== seq) return;
+    if ((video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0) {
+      clearTimeout(state.audioCheckTimer);
+      state.audioCheckTimer = null;
+      state.currentStreamAudioOnly = false;
+      state.mixAudioSkipCount = 0;
+      state.mixErrorRetryCount = 0;
+      renderAudioOnlyStage(ch, false);
+    }
+  };
+  const handleConfirmedAudioOnly = () => {
+    if (!state.playerOpen || state.tuneSeq !== seq || state.currentStreamAudioOnly) return;
+    if ((video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0) return;
+    clearTimeout(state.audioCheckTimer);
+    state.audioCheckTimer = null;
+    state.currentStreamAudioOnly = true;
+    if (isMix && !state.mixIncludeAudioOnly && state.mixAudioSkipCount < 10) {
+      state.runtimeAudioOnlyIds.add(ch.id);
+      if (state.mixHistory[state.mixHistory.length - 1]?.id === ch.id) {
+        state.mixHistory.pop();
+        state.mixIndex = Math.max(-1, state.mixHistory.length - 1);
+      }
+      state.mixAudioSkipCount += 1;
+      stepMixChannel(1);
+      return;
+    }
+    state.mixErrorRetryCount = 0;
+    renderAudioOnlyStage(ch, true);
+  };
+
   const onReady = () => {
     if (!state.playerOpen || state.tuneSeq !== seq) return;
     loading.hidden = true;
@@ -2204,7 +2471,22 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     if (reconnectPill) reconnectPill.hidden = true;
     state.reconnectActive = false;
     state.hasPlayedCurrentChannel = true;
-    state.mixErrorRetryCount = 0;
+    if (!(isMix && !state.mixIncludeAudioOnly && isLikelyAudioOnlyChannel(ch))) {
+      state.mixErrorRetryCount = 0;
+    }
+    if ((video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0) {
+      clearAudioOnlyIfVideo();
+    } else if (isLikelyAudioOnlyChannel(ch)) {
+      handleConfirmedAudioOnly();
+    } else if (!state.audioCheckTimer) {
+      state.audioCheckTimer = setTimeout(() => {
+        state.audioCheckTimer = null;
+        if (!state.playerOpen || state.tuneSeq !== seq) return;
+        if (!video.paused && video.readyState >= 2 && (video.videoWidth || 0) === 0 && (video.videoHeight || 0) === 0) {
+          handleConfirmedAudioOnly();
+        }
+      }, 650);
+    }
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: ch.name,
@@ -2216,6 +2498,8 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   const onFail = (msg) => {
     if (!state.playerOpen || state.tuneSeq !== seq) return;
     loading.hidden = true;
+    renderAudioOnlyStage(ch, false);
+    hideTemporaryHintsBanner();
     if (reconnectPill) reconnectPill.hidden = true;
     state.reconnectActive = false;
     if (isMix && state.mixErrorRetryCount < 5) {
@@ -2291,6 +2575,8 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     setVideoPreservesPitch(video, true);
     video.playbackRate = 1.0;
     video.onplaying = onReady;
+    video.onloadeddata = clearAudioOnlyIfVideo;
+    video.onresize = clearAudioOnlyIfVideo;
     video.onended = () => {
       if (state.playerOpen && state.tuneSeq === seq && (state.hasPlayedCurrentChannel || !Number.isFinite(video.duration))) {
         scheduleWebReconnect('ended');
@@ -2320,7 +2606,12 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
       state.dashPlayer = dp;
       const ev = window.dashjs.MediaPlayer.events;
       dp.on(ev.PLAYBACK_PLAYING, () => onReady());
-      dp.on(ev.STREAM_INITIALIZED, () => onReady());
+      dp.on(ev.STREAM_INITIALIZED, () => {
+        onReady();
+        const hasAudio = dp.getTracksFor?.('audio')?.length > 0;
+        const hasVideo = dp.getTracksFor?.('video')?.length > 0;
+        if (hasAudio && !hasVideo) handleConfirmedAudioOnly();
+      });
       dp.on(ev.ERROR, (e) => {
         if (!state.playerOpen || state.tuneSeq !== seq) return;
         try {
@@ -2352,6 +2643,12 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
       hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
         video.play().then(onReady).catch(() => {});
+      });
+      hls.on(window.Hls.Events.BUFFER_CREATED, (_, data) => {
+        const trackKeys = Object.keys(data?.tracks || {});
+        if (trackKeys.length && trackKeys.includes('audio') && !trackKeys.includes('video') && !trackKeys.includes('audiovideo')) {
+          handleConfirmedAudioOnly();
+        }
       });
       hls.on(window.Hls.Events.ERROR, (_, data) => {
         if (!state.playerOpen || state.tuneSeq !== seq || !data.fatal) return;
@@ -2460,6 +2757,11 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     }
 
     if (readyPlaying) {
+      if ((video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0) {
+        clearAudioOnlyIfVideo();
+      } else if ((video.currentTime || 0) > 0.45 && errBox.hidden && !state.reconnectActive) {
+        handleConfirmedAudioOnly();
+      }
       const winSec = getVideoLiveWindowSec(video);
       const isLiveLike = !Number.isFinite(video.duration) || video.duration === Infinity || winSec > 0;
       if (!state.liveSafetyBuffer || !isLiveLike) {
@@ -2547,12 +2849,41 @@ function wakePlayerControls() {
 }
 
 function updateClock() {
-  const el = $('#strip-clock');
-  if (el) {
-    el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const localLabelEl = $('#strip-local-clock-label');
+  const localTimeEl = $('#strip-clock');
+  const countryBlock = $('#strip-country-clock-block');
+  const countryLabelEl = $('#strip-country-clock-label');
+  const countryTimeEl = $('#strip-country-clock');
+  const divider = $('#strip-clock-divider');
+
+  if (localLabelEl) {
+    localLabelEl.textContent = t('ORA LOCALE', 'LOCAL TIME', 'HORA LOCAL');
+  }
+  if (localTimeEl) {
+    localTimeEl.textContent = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
+
+  const ch = state.playerChannel;
+  const countryTime = ch?.country ? getCountryTimeText(ch.country) : null;
+  if (countryBlock && countryTimeEl && countryLabelEl) {
+    if (countryTime) {
+      const flag = ch.flag || countryFlag(ch.country);
+      const name = getLocalizedCountryName(ch.country, ch.countryName) || ch.country;
+      countryLabelEl.textContent = [flag, String(name || '').toUpperCase()].filter(Boolean).join(' ');
+      countryTimeEl.textContent = countryTime;
+      countryBlock.hidden = false;
+      if (divider) divider.hidden = false;
+    } else {
+      countryBlock.hidden = true;
+      if (divider) divider.hidden = true;
+    }
   }
 }
-setInterval(updateClock, 20000);
+setInterval(updateClock, 15000);
 
 /* Quick Left-Side Channel Drawer inside Player */
 function togglePlayerDrawer(forceOpen) {
@@ -2562,6 +2893,7 @@ function togglePlayerDrawer(forceOpen) {
   const drawer = $('#player-quick-drawer');
   drawer.hidden = !next;
   if (next) {
+    hideTemporaryHintsBanner();
     const idx = Math.max(0, state.playerQueue.findIndex((c) => c.id === state.playerChannel?.id));
     state.drawerCursorIdx = idx;
     renderDrawerList();
@@ -3000,6 +3332,42 @@ function renderSettingsProfile(detail, p) {
         </button>
       </div>
     </section>
+
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3>${t('Canali solo audio in Mix', 'Audio-only channels in Mix', 'Canales solo audio en Mix')}</h3>
+        <p>${t('Esclude di default radio e flussi senza video (es. FM) dallo zapping casuale Mix.', 'Excludes radio and video-less streams (e.g. FM) from Mix shuffle by default.', 'Excluye por defecto radios y flujos sin vídeo (ej. FM) del Mix aleatorio.')}</p>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong style="color:${state.mixIncludeAudioOnly ? 'var(--accent)' : 'var(--muted)'};font-size:14px">
+            ${state.mixIncludeAudioOnly ? t('Inclusi nello zapping Mix', 'Included in Mix shuffle', 'Incluidos en el Mix') : t('Esclusi di default (solo canali con video)', 'Excluded by default (video channels only)', 'Excluidos por defecto (solo vídeo)')}
+          </strong>
+          <div style="font-size:11.5px;color:var(--dim)">${t('Attiva se vuoi includere le stazioni radio e i canali solo audio durante lo zapping Mix.', 'Enable to include radio stations and audio-only streams during Mix zapping.', 'Actívalo si deseas incluir emisoras de radio y flujos solo audio en Mix.')}</div>
+        </div>
+        <button type="button" class="casa-btn ${!state.mixIncludeAudioOnly ? 'primary' : 'ghost'}" id="btn-toggle-mix-audio">
+          ${state.mixIncludeAudioOnly ? t('Disattiva', 'Disable', 'Desactivar') : t('Attiva', 'Enable', 'Activar')}
+        </button>
+      </div>
+    </section>
+
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3>${t('Banner comandi telecomando', 'Remote controls hint banner', 'Banner de controles del mando')}</h3>
+        <p>${t('Mostra in alto per 6 secondi le indicazioni dei tasti quando cambi canale.', 'Shows key hints at the top for 6 seconds when switching channels.', 'Muestra arriba durante 6 segundos los atajos de teclado al cambiar de canal.')}</p>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong style="color:${state.showRemoteHintsBanner ? 'var(--accent)' : 'var(--muted)'};font-size:14px">
+            ${state.showRemoteHintsBanner ? t('Banner temporaneo attivo (6s)', 'Temporary banner enabled (6s)', 'Banner temporal activo (6s)') : t('Banner nascosto', 'Banner disabled', 'Banner desactivado')}
+          </strong>
+          <div style="font-size:11.5px;color:var(--dim)">${t('Se disattivato, resta visibile solo la barra inferiore essenziale con nome, paese e orari.', 'When disabled, only the essential bottom bar with channel, country and clocks stays visible.', 'Si está desactivado, solo queda visible la barra inferior con canal, país y relojes.')}</div>
+        </div>
+        <button type="button" class="casa-btn ${!state.showRemoteHintsBanner ? 'primary' : 'ghost'}" id="btn-toggle-hints-banner">
+          ${state.showRemoteHintsBanner ? t('Disattiva', 'Disable', 'Desactivar') : t('Attiva', 'Enable', 'Activar')}
+        </button>
+      </div>
+    </section>
   `;
 
   $('#btn-set-switch-prof')?.addEventListener('click', () => openProfileGate(true));
@@ -3024,6 +3392,18 @@ function renderSettingsProfile(detail, p) {
     if (v && !state.liveSafetyBuffer) {
       v.playbackRate = 1.0;
     }
+    renderCurrentScreen();
+  });
+  $('#btn-toggle-mix-audio')?.addEventListener('click', () => {
+    state.mixIncludeAudioOnly = !state.mixIncludeAudioOnly;
+    localStorage.setItem('casatv_mix_include_audio_only', String(state.mixIncludeAudioOnly));
+    state.verifiedNextMix = null;
+    renderCurrentScreen();
+  });
+  $('#btn-toggle-hints-banner')?.addEventListener('click', () => {
+    state.showRemoteHintsBanner = !state.showRemoteHintsBanner;
+    localStorage.setItem('casatv_show_remote_hints', String(state.showRemoteHintsBanner));
+    if (!state.showRemoteHintsBanner) hideTemporaryHintsBanner();
     renderCurrentScreen();
   });
 

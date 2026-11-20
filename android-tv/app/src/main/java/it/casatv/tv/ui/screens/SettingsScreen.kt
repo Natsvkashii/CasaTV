@@ -275,6 +275,8 @@ fun SettingsScreen(
     val systemBusy by vm.systemBusy.collectAsStateWithLifecycle()
     val multiTvSync by vm.multiTvSync.collectAsStateWithLifecycle()
     val liveSafetyBuffer by vm.liveSafetyBufferEnabled.collectAsStateWithLifecycle()
+    val mixIncludeAudioOnly by vm.mixIncludeAudioOnly.collectAsStateWithLifecycle()
+    val showRemoteHintsBanner by vm.showRemoteHintsBanner.collectAsStateWithLifecycle()
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
     val isServerDisconnected by vm.isServerDisconnected.collectAsStateWithLifecycle()
     val updateInfo by vm.updateInfo.collectAsStateWithLifecycle()
@@ -527,6 +529,94 @@ fun SettingsScreen(
                                     text = if (liveSafetyBuffer) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
                                     onClick = { vm.setLiveSafetyBufferEnabled(!liveSafetyBuffer) },
                                     primary = !liveSafetyBuffer,
+                                )
+                            }
+                        }
+
+                        SettingsCard(
+                            title = strings.t("Canali solo audio in Mix", "Audio-only channels in Mix", "Canales solo audio en Mix"),
+                            subtitle = strings.t(
+                                "Esclude di default radio e flussi senza video (es. FM) dallo zapping casuale Mix.",
+                                "Excludes radio and video-less streams (e.g. FM) from Mix shuffle by default.",
+                                "Excluye por defecto radios y flujos sin vídeo (ej. FM) del Mix aleatorio.",
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (mixIncludeAudioOnly) {
+                                            strings.t("Inclusi nello zapping Mix", "Included in Mix shuffle", "Incluidos en el Mix")
+                                        } else {
+                                            strings.t("Esclusi di default (solo canali con video)", "Excluded by default (video channels only)", "Excluidos por defecto (solo vídeo)")
+                                        },
+                                        color = if (mixIncludeAudioOnly) CasaGreen else CasaMuted,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        text = strings.t(
+                                            "Attiva se vuoi includere le stazioni radio e i canali audio durante lo zapping Mix.",
+                                            "Enable to include radio stations and audio-only channels during Mix zapping.",
+                                            "Actívalo si deseas incluir emisoras de radio y canales de solo audio en Mix.",
+                                        ),
+                                        color = CasaDim,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                TvButton(
+                                    text = if (mixIncludeAudioOnly) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
+                                    onClick = { vm.setMixIncludeAudioOnly(!mixIncludeAudioOnly) },
+                                    primary = !mixIncludeAudioOnly,
+                                )
+                            }
+                        }
+
+                        SettingsCard(
+                            title = strings.t("Banner comandi telecomando", "Remote controls hint banner", "Banner de controles del mando"),
+                            subtitle = strings.t(
+                                "Mostra in alto per 6 secondi le indicazioni dei tasti quando cambi canale.",
+                                "Shows remote key hints at the top for 6 seconds when switching channels.",
+                                "Muestra arriba durante 6 segundos las teclas del mando al cambiar de canal.",
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (showRemoteHintsBanner) {
+                                            strings.t("Banner temporaneo attivo (6s)", "Temporary banner enabled (6s)", "Banner temporal activo (6s)")
+                                        } else {
+                                            strings.t("Banner nascosto", "Banner disabled", "Banner desactivado")
+                                        },
+                                        color = if (showRemoteHintsBanner) CasaGreen else CasaMuted,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        text = strings.t(
+                                            "Se disattivato, resta visibile solo la barra inferiore essenziale con nome, paese e orario.",
+                                            "When disabled, only the minimal bottom bar with channel name, country and clocks stays visible.",
+                                            "Si está desactivado, solo se muestra la barra inferior con canal, país y relojes.",
+                                        ),
+                                        color = CasaDim,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                TvButton(
+                                    text = if (showRemoteHintsBanner) strings.t("Disattiva", "Disable", "Desactivar") else strings.t("Attiva", "Enable", "Activar"),
+                                    onClick = { vm.setShowRemoteHintsBanner(!showRemoteHintsBanner) },
+                                    primary = !showRemoteHintsBanner,
                                 )
                             }
                         }

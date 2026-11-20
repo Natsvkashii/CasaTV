@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#060B14" id="meta-theme-color" />
     <title>CasaTV</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=26.11.020" />
+    <link rel="stylesheet" href="/styles.css?v=26.11.021" />
   </head>
   <body>
     <div class="bg-glow" aria-hidden="true"></div>
@@ -110,6 +110,27 @@
       <div class="player-stage" id="player-stage" role="dialog" aria-modal="true" aria-labelledby="player-ch-name">
         <video id="preview-video" playsinline autoplay></video>
 
+        <!-- Full-Stage Logo View for Audio-Only / Radio Channels -->
+        <div class="player-audio-stage" id="player-audio-stage" hidden>
+          <div class="player-audio-card">
+            <div class="player-audio-logo-box">
+              <img id="player-audio-logo" alt="" hidden />
+              <span class="player-audio-monogram" id="player-audio-monogram"></span>
+            </div>
+            <h2 class="player-audio-title" id="player-audio-title">Canale</h2>
+            <div class="player-audio-meta">
+              <span class="player-audio-pill">
+                <span class="audio-live-dot"></span>
+                <span id="player-audio-badge">SOLO AUDIO</span>
+              </span>
+              <span class="player-audio-sub" id="player-audio-sub"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Temporary Top Remote / Keyboard Hints Banner (auto-hides after 6s) -->
+        <div class="player-hints-banner" id="player-hints-banner" hidden></div>
+
         <!-- Buffering / Tuning Spinner (unified cyan accent, zero green) -->
         <div class="player-tuning" id="player-loading" hidden>
           <div class="spinner"></div>
@@ -179,17 +200,24 @@
           </div>
           <div class="strip-channel-meta">
             <span class="strip-ch-name" id="player-ch-name">Canale</span>
-            <span class="strip-ch-flag" id="player-ch-flag"></span>
+            <span class="strip-ch-country" id="player-ch-country" hidden>
+              <span class="strip-ch-flag" id="player-ch-flag"></span>
+              <span class="strip-ch-country-name" id="player-ch-country-name"></span>
+            </span>
             <span class="strip-ch-quality" id="player-ch-quality" hidden></span>
             <span class="strip-sync-pill" id="player-sync-pill" hidden>● Sync Multi-TV</span>
           </div>
-          <div class="strip-hints" id="strip-hints">
-            <span class="hint-chip"><kbd>◀</kbd> Lista</span>
-            <span class="hint-chip"><kbd>▲▼</kbd> Canali</span>
-            <span class="hint-chip"><kbd>M</kbd> Preferito</span>
-            <span class="hint-chip"><kbd>Esc</kbd> Esci</span>
+          <div class="strip-clocks" id="strip-clocks">
+            <div class="strip-clock-block is-country" id="strip-country-clock-block" hidden>
+              <span class="strip-clock-label" id="strip-country-clock-label"></span>
+              <strong class="strip-clock-time" id="strip-country-clock">00:00</strong>
+            </div>
+            <span class="strip-clock-divider" id="strip-clock-divider" hidden></span>
+            <div class="strip-clock-block">
+              <span class="strip-clock-label" id="strip-local-clock-label">ORA LOCALE</span>
+              <strong class="strip-clock-time" id="strip-clock">00:00</strong>
+            </div>
           </div>
-          <div class="strip-clock" id="strip-clock">00:00</div>
         </div>
       </div>
     </div>
@@ -335,6 +363,6 @@
     <script src="/vendor/hls.min.js"></script>
     <script src="/vendor/mpegts.min.js"></script>
     <script src="/vendor/dash.mediaplayer.min.js"></script>
-    <script type="module" src="/app.js?v=26.11.020"></script>
+    <script type="module" src="/app.js?v=26.11.021"></script>
   </body>
 </html>

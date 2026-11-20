@@ -209,6 +209,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val mixHistory = mutableListOf<Channel>()
     private var mixIndex: Int = -1
     private val deadMixChannelIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+    private val runtimeAudioOnlyMixIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
     @Volatile
     private var verifiedNextMixChannel: Channel? = null
     private var mixPreloadJob: Job? = null
@@ -298,6 +299,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLiveSafetyBufferEnabled(enabled: Boolean) {
         _liveSafetyBufferEnabled.value = enabled
         prefs.edit().putBoolean(KEY_LIVE_SAFETY_BUFFER, enabled).apply()
+    }
+
+    private val _mixIncludeAudioOnly = MutableStateFlow(prefs.getBoolean(KEY_MIX_INCLUDE_AUDIO_ONLY, false))
+    val mixIncludeAudioOnly: StateFlow<Boolean> = _mixIncludeAudioOnly.asStateFlow()
+
+    fun setMixIncludeAudioOnly(enabled: Boolean) {
+        if (_mixIncludeAudioOnly.value == enabled) return
+        _mixIncludeAudioOnly.value = enabled
+        prefs.edit().putBoolean(KEY_MIX_INCLUDE_AUDIO_ONLY, enabled).apply()
+        cachedMixSourceRef = null
+        cachedMixIncludeAudioOnly = null
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel = null
+        if (_playback.value?.isMixMode == true) {
+            preverifyNextMixChannel()
+        }
+    }
+
+    private val _showRemoteHintsBanner = MutableStateFlow(prefs.getBoolean(KEY_SHOW_REMOTE_HINTS_BANNER, true))
+    val showRemoteHintsBanner: StateFlow<Boolean> = _showRemoteHintsBanner.asStateFlow()
+
+    fun setShowRemoteHintsBanner(enabled: Boolean) {
+        _showRemoteHintsBanner.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_REMOTE_HINTS_BANNER, enabled).apply()
     }
 
     private val _themeMode = MutableStateFlow(prefs.getString(KEY_THEME_MODE, "light") ?: "light")
@@ -931,6 +957,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile
     private var cachedMixSourceRef: List<Channel>? = null
     @Volatile
+    private var cachedMixIncludeAudioOnly: Boolean? = null
+    @Volatile
     private var cachedMixHttpAll: List<Channel> = emptyList()
     @Volatile
     private var cachedMixBuckets: Map<MixRegion, List<Channel>> = emptyMap()
@@ -940,15 +968,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return clean.startsWith("http://") || clean.startsWith("https://")
     }
 
+    private fun isMixChannelExcludedAsAudioOnly(ch: Channel): Boolean =
+        !_mixIncludeAudioOnly.value && (ch.id in runtimeAudioOnlyMixIds || isLikelyAudioOnlyChannel(ch))
+
     private fun ensureMixBucketsIndexed() {
         val rawSource = _mixChannels.value
             .ifEmpty { _zapQueue.value }
             .ifEmpty { offlineCache.cachedData.channels }
-        if (rawSource === cachedMixSourceRef) return
+        val includeAudio = _mixIncludeAudioOnly.value
+        if (rawSource === cachedMixSourceRef && includeAudio == cachedMixIncludeAudioOnly) return
         val httpAll = ArrayList<Channel>(rawSource.size)
         val buckets = java.util.EnumMap<MixRegion, MutableList<Channel>>(MixRegion::class.java)
         rawSource.forEach { ch ->
             if (!isHttpUrl(ch.streamUrl)) return@forEach
+            if (!includeAudio && isLikelyAudioOnlyChannel(ch)) return@forEach
             httpAll.add(ch)
             resolveMixRegion(ch.country)?.let { region ->
                 buckets.getOrPut(region) { ArrayList() }.add(ch)
@@ -957,6 +990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cachedMixHttpAll = httpAll
         cachedMixBuckets = buckets
         cachedMixSourceRef = rawSource
+        cachedMixIncludeAudioOnly = includeAudio
     }
 
     private fun regionalPoolFor(regions: Set<MixRegion>): List<Channel> {
@@ -981,19 +1015,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val verified = verifiedNextMixChannel
         verifiedNextMixChannel = null
         val regions = _selectedMixRegions.value
-        return verified?.takeIf { matchesMixRegions(it.country, regions) }
+        return verified?.takeIf {
+            matchesMixRegions(it.country, regions) && !isMixChannelExcludedAsAudioOnly(it)
+        }
     }
 
     private fun pickRandomUnvisitedMixChannel(pool: List<Channel>): Channel? {
         if (pool.isEmpty()) return null
         val currentId = _playback.value?.channel?.id
         val visitedIds = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.id } }
-        val fresh = pool.filter { it.id !in visitedIds && it.id !in deadMixChannelIds && it.id != currentId }
+        val eligiblePool = if (_mixIncludeAudioOnly.value) {
+            pool
+        } else {
+            pool.filter { !isMixChannelExcludedAsAudioOnly(it) }.ifEmpty { pool }
+        }
+        val fresh = eligiblePool.filter { it.id !in visitedIds && it.id !in deadMixChannelIds && it.id != currentId }
         if (fresh.isNotEmpty()) return fresh.random()
-        val unvisited = pool.filter { it.id !in visitedIds && it.id != currentId }
+        val unvisited = eligiblePool.filter { it.id !in visitedIds && it.id != currentId }
         if (unvisited.isNotEmpty()) return unvisited.random()
-        val others = pool.filter { it.id != currentId }
-        return (if (others.isNotEmpty()) others else pool).randomOrNull()
+        val others = eligiblePool.filter { it.id != currentId }
+        return (if (others.isNotEmpty()) others else eligiblePool).randomOrNull()
     }
 
     private suspend fun fetchAllRemoteMixChannels(): List<Channel> {
@@ -1048,15 +1089,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (pool.isEmpty()) break
                 val currentId = _playback.value?.channel?.id
                 val visitedIds = synchronized(mixHistory) { mixHistory.mapTo(hashSetOf()) { it.id } }
-                var candidates = pool.filter { ch ->
+                val eligiblePool = if (_mixIncludeAudioOnly.value) {
+                    pool
+                } else {
+                    pool.filter { !isMixChannelExcludedAsAudioOnly(it) }.ifEmpty { pool }
+                }
+                var candidates = eligiblePool.filter { ch ->
                     ch.id !in visitedIds && ch.id !in deadMixChannelIds && ch.id != currentId
                 }
                 if (candidates.isEmpty()) {
                     deadMixChannelIds.clear()
-                    candidates = pool.filter { it.id !in visitedIds && it.id != currentId }
+                    candidates = eligiblePool.filter { it.id !in visitedIds && it.id != currentId }
                 }
                 if (candidates.isEmpty()) {
-                    candidates = pool.filter { it.id != currentId }.ifEmpty { pool }
+                    candidates = eligiblePool.filter { it.id != currentId }.ifEmpty { eligiblePool }
                 }
                 val batch = pickRandomCandidates(candidates, 3)
                 if (batch.isEmpty()) break
@@ -1246,7 +1292,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _mixChannels.value = combined
                 mixPoolFullLoaded = remote.isNotEmpty()
-                val pool = combined.filter { matchesMixRegions(it.country, regions) }.ifEmpty { combined }
+                val pool = regionalPoolFor(regions)
+                    .ifEmpty { cachedMixHttpAll }
+                    .ifEmpty { combined }
                 val nextChannel = consumeVerifiedNextMixChannel()
                     ?: pickRandomUnvisitedMixChannel(pool)
                     ?: pool.first()
@@ -1255,6 +1303,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _mixLoading.value = false
             }
         }
+    }
+
+    fun skipAudioOnlyMixChannel(channelId: String): Boolean {
+        runtimeAudioOnlyMixIds.add(channelId)
+        verifiedNextMixChannel?.let { cand ->
+            if (cand.id in runtimeAudioOnlyMixIds) {
+                mixPreloadJob?.cancel()
+                mixPreloadJob = null
+                verifiedNextMixChannel = null
+            }
+        }
+        val session = _playback.value ?: return false
+        if (!session.isMixMode || session.channel.id != channelId || _mixIncludeAudioOnly.value) {
+            return false
+        }
+        val pool = currentMixPool().filter { !isMixChannelExcludedAsAudioOnly(it) && it.id != channelId }
+        val nextChannel = consumeVerifiedNextMixChannel()?.takeIf { it.id != channelId }
+            ?: pickRandomUnvisitedMixChannel(pool)?.takeIf { it.id != channelId }
+            ?: return false
+        synchronized(mixHistory) {
+            if (mixHistory.lastOrNull()?.id == channelId) {
+                mixHistory.removeAt(mixHistory.lastIndex)
+                mixIndex = (mixHistory.lastIndex).coerceAtLeast(-1)
+            }
+        }
+        startMixWithPoolChannel(nextChannel)
+        return true
     }
 
     fun loadFavorites(showLoading: Boolean = true) {
@@ -2200,6 +2275,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_ASPECT_RATIO_MODE = "aspect_ratio_mode"
         private const val KEY_MULTI_TV_SYNC = "multi_tv_sync"
         private const val KEY_LIVE_SAFETY_BUFFER = "live_safety_buffer_enabled"
+        private const val KEY_MIX_INCLUDE_AUDIO_ONLY = "mix_include_audio_only"
+        private const val KEY_SHOW_REMOTE_HINTS_BANNER = "show_remote_hints_banner"
         private const val KEY_THEME_MODE = "theme_mode"
 
         private val DEFAULT_AVATARS = listOf(

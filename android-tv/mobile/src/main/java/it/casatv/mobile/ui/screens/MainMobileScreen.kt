@@ -76,6 +76,7 @@ import it.casatv.mobile.ui.MixRegion
 import it.casatv.mobile.ui.MixRegionPickerDialog
 import it.casatv.mobile.ui.MobileUiState
 import it.casatv.mobile.ui.computeMixRegionCounts
+import it.casatv.mobile.ui.isLikelyAudioOnlyChannel
 import it.casatv.mobile.update.UpdateFrequency
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -105,6 +106,7 @@ fun MainMobileScreen(
     onSetBackgroundPlay: (Boolean) -> Unit,
     onSetPipOnLeave: (Boolean) -> Unit,
     onSetLiveSafetyBuffer: (Boolean) -> Unit,
+    onSetMixIncludeAudioOnly: (Boolean) -> Unit,
     onSearchServerNow: () -> Unit,
     onSetUpdateFrequency: (UpdateFrequency) -> Unit,
     onCheckUpdatesNow: () -> Unit,
@@ -224,6 +226,7 @@ fun MainMobileScreen(
                     onSetBackgroundPlay = onSetBackgroundPlay,
                     onSetPipOnLeave = onSetPipOnLeave,
                     onSetLiveSafetyBuffer = onSetLiveSafetyBuffer,
+                    onSetMixIncludeAudioOnly = onSetMixIncludeAudioOnly,
                     onSearchServerNow = onSearchServerNow,
                     onSetUpdateFrequency = onSetUpdateFrequency,
                     onCheckUpdatesNow = onCheckUpdatesNow,
@@ -287,14 +290,21 @@ fun MainMobileScreen(
     }
 
     if (state.showMixRegionPicker) {
-        val regionCounts = remember(state.allChannels) {
-            computeMixRegionCounts(state.allChannels)
+        val mixPoolChannels = remember(state.allChannels, state.mixIncludeAudioOnly) {
+            if (state.mixIncludeAudioOnly) {
+                state.allChannels
+            } else {
+                state.allChannels.filter { !isLikelyAudioOnlyChannel(it) }
+            }
+        }
+        val regionCounts = remember(mixPoolChannels) {
+            computeMixRegionCounts(mixPoolChannels)
         }
         MixRegionPickerDialog(
             language = state.language,
             selectedRegions = state.selectedMixRegions,
             regionCounts = regionCounts,
-            totalChannels = state.allChannels.size,
+            totalChannels = mixPoolChannels.size,
             onToggleRegion = onToggleMixRegion,
             onStartMix = onStartMixFromRegions,
             onDismiss = onDismissMixPicker,
