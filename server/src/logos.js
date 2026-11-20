@@ -38,7 +38,7 @@ async function downloadLogo(url) {
       'accept-language': 'it-IT,it;q=0.9,en;q=0.8',
     },
     redirect: 'follow',
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const buffer = Buffer.from(await response.arrayBuffer());

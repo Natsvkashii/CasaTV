@@ -6,6 +6,7 @@ import android.util.LruCache
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -34,12 +35,21 @@ data class CachedLogo(
 class LogoCache private constructor(context: Context) {
 
     private val dir = File(context.applicationContext.filesDir, "logos").apply { mkdirs() }
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+    private val baseClient = OkHttpClient.Builder()
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
+    private val interactiveClient = baseClient.newBuilder()
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(3500, TimeUnit.MILLISECONDS)
+        .callTimeout(4500, TimeUnit.MILLISECONDS)
+        .build()
+    private val prefetchClient = baseClient.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(7, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build()
+    private val interactiveDownloadPermits = Semaphore(10)
 
     private val memory = object : LruCache<String, CachedLogo>(MAX_MEMORY_BYTES) {
         override fun sizeOf(key: String, value: CachedLogo): Int = value.bytes.size.coerceAtLeast(1)
@@ -59,7 +69,7 @@ class LogoCache private constructor(context: Context) {
         return bin.exists() && bin.length() > 0L
     }
 
-    fun getOrFetch(rawUrl: String): CachedLogo? {
+    fun getOrFetch(rawUrl: String, interactive: Boolean = true): CachedLogo? {
         val url = rawUrl.trim()
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
             return null
@@ -92,21 +102,36 @@ class LogoCache private constructor(context: Context) {
                 return stale
             }
 
-            return when (val outcome = download(url, hash, innerNow)) {
-                is DownloadOutcome.Success -> {
-                    negativeCache.remove(hash)
-                    writeToDisk(hash, outcome.logo)
-                    memory.put(hash, outcome.logo)
-                    maybeTriggerPrune()
-                    outcome.logo
+            if (interactive) {
+                val acquired = runCatching {
+                    interactiveDownloadPermits.tryAcquire(1500, TimeUnit.MILLISECONDS)
+                }.getOrDefault(false)
+                if (!acquired) {
+                    return stale
                 }
-                is DownloadOutcome.Failure -> {
-                    val negTtl = if (outcome.permanent) NEGATIVE_PERMANENT_MS else NEGATIVE_TRANSIENT_MS
-                    negativeCache[hash] = innerNow + negTtl
-                    if (stale != null) {
-                        memory.put(hash, stale)
+            }
+
+            return try {
+                when (val outcome = download(url, hash, innerNow, interactive)) {
+                    is DownloadOutcome.Success -> {
+                        negativeCache.remove(hash)
+                        writeToDisk(hash, outcome.logo)
+                        memory.put(hash, outcome.logo)
+                        maybeTriggerPrune()
+                        outcome.logo
                     }
-                    stale
+                    is DownloadOutcome.Failure -> {
+                        val negTtl = if (outcome.permanent) NEGATIVE_PERMANENT_MS else NEGATIVE_TRANSIENT_MS
+                        negativeCache[hash] = innerNow + negTtl
+                        if (stale != null) {
+                            memory.put(hash, stale)
+                        }
+                        stale
+                    }
+                }
+            } finally {
+                if (interactive) {
+                    interactiveDownloadPermits.release()
                 }
             }
         }
@@ -146,7 +171,7 @@ class LogoCache private constructor(context: Context) {
                 pending.chunked(3).forEach { batch ->
                     batch.map { url ->
                         async {
-                            if (getOrFetch(url) != null) 1 else 0
+                            if (getOrFetch(url, interactive = false) != null) 1 else 0
                         }
                     }.awaitAll().forEach { downloaded += it }
                 }
@@ -226,7 +251,7 @@ class LogoCache private constructor(context: Context) {
         data class Failure(val permanent: Boolean) : DownloadOutcome
     }
 
-    private fun download(url: String, hash: String, now: Long): DownloadOutcome {
+    private fun download(url: String, hash: String, now: Long, interactive: Boolean): DownloadOutcome {
         return try {
             val req = Request.Builder()
                 .url(url)
@@ -234,7 +259,8 @@ class LogoCache private constructor(context: Context) {
                 .header("Accept", "image/avif,image/webp,image/png,image/jpeg,image/svg+xml,*/*")
                 .header("Accept-Language", "it-IT,it;q=0.9,en;q=0.8")
                 .build()
-            client.newCall(req).execute().use { res ->
+            val httpClient = if (interactive) interactiveClient else prefetchClient
+            httpClient.newCall(req).execute().use { res ->
                 if (!res.isSuccessful) {
                     val permanent = res.code in intArrayOf(400, 401, 403, 404, 410, 451)
                     return DownloadOutcome.Failure(permanent)

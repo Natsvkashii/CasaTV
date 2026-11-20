@@ -518,6 +518,12 @@ class CasaHttpServer(
         val offset = session.parm("offset").toIntOrNull()?.coerceAtLeast(0) ?: 0
         val total = filtered.size
         val slice = filtered.drop(offset).take(limit)
+        if (offset + slice.size < total) {
+            val nextLogos = filtered.drop(offset + slice.size).take(limit).mapNotNull { it.logo }
+            if (nextLogos.isNotEmpty()) {
+                logoCache.prefetchUrls(nextLogos, bgScope)
+            }
+        }
         return jsonResponse(
             buildJsonObject {
                 putJsonArray("items") {
@@ -1701,13 +1707,13 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.017"
+        const val TV_LATEST_VERSION = "26.11.018"
     }
 }
 
 private class BoundedAsyncRunner(
-    coreThreads: Int = 4,
-    maxThreads: Int = 24,
+    coreThreads: Int = 8,
+    maxThreads: Int = 64,
     keepAliveSeconds: Long = 30L,
 ) : NanoHTTPD.AsyncRunner {
     private val executor = java.util.concurrent.ThreadPoolExecutor(
@@ -1716,7 +1722,9 @@ private class BoundedAsyncRunner(
         keepAliveSeconds,
         java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.SynchronousQueue(),
-        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy(),
+        java.util.concurrent.RejectedExecutionHandler { runnable, _ ->
+            runCatching { (runnable as? NanoHTTPD.ClientHandler)?.close() }
+        },
     )
     private val runningHandlers = java.util.Collections.synchronizedList(ArrayList<NanoHTTPD.ClientHandler>())
 

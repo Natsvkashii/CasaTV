@@ -13,8 +13,8 @@ android {
         applicationId = "it.casatv.tv"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2611017
-        versionName = "26.11.017"
+        versionCode = 2611018
+        versionName = "26.11.018"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {

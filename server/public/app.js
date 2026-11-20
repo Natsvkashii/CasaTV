@@ -1,8 +1,8 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.017';
-const CHANNEL_PAGE_SIZE = 96;
+const WEB_APP_VERSION = '26.11.018';
+const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
   '🐳', '🦉', '🐻', '🐧', '🦖', '🐝', '🐬', '🦋', '🐰', '🐲',
@@ -103,6 +103,9 @@ const state = {
   channelsTotal: 0,
   channelsLoading: false,
   channelsFallback: false,
+  channelsRequestSeq: 0,
+  localVisibleLimit: CHANNEL_PAGE_SIZE,
+  channelsObserver: null,
   favorites: [],
   favoritesLoading: false,
   localOverrideChannels: null,
@@ -136,10 +139,15 @@ const state = {
   mpegtsPlayer: null,
   cardPreviewHls: null,
   cardPreviewTimer: null,
+  cardPreviewVideo: null,
+  cardPreviewCard: null,
+  hoveredPreviewCard: null,
   drawerOpen: false,
   drawerCursorIdx: 0,
   drawerPreviewHls: null,
   drawerPreviewTimer: null,
+  drawerPreviewVideo: null,
+  drawerPreviewItem: null,
   playbackState: 'idle',
   playbackChannel: '',
   idleTimer: null,
@@ -781,32 +789,142 @@ function sortProfiles(list) {
   });
 }
 
+function currentCountryTitle() {
+  const countries = state.config?.facets?.countries || [];
+  const countryObj = countries.find((c) => c.code === state.tvCountry);
+  return countryObj?.name || state.tvCountry;
+}
+
+function channelsGridListKey() {
+  const src = state.localOverrideChannels ? `local:${state.localSourceLabel}` : state.tvCountry;
+  const fb = state.channelsFallback ? 'fb' : 'ok';
+  return `channels:${src}:${fb}:${state.deviceType}`;
+}
+
+function disconnectChannelsObserver() {
+  if (state.channelsObserver) {
+    state.channelsObserver.disconnect();
+    state.channelsObserver = null;
+  }
+}
+
+function setupChannelsInfiniteScroll() {
+  disconnectChannelsObserver();
+  if (state.page !== 'channels' || state.searchQuery) return;
+  if (state.channels.length >= state.channelsTotal) return;
+  const sentinel = $('#channels-load-sentinel');
+  if (!sentinel || typeof IntersectionObserver === 'undefined') return;
+  const obs = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        obs.disconnect();
+        if (state.channelsObserver === obs) state.channelsObserver = null;
+        if (!state.channelsLoading && state.channels.length < state.channelsTotal) {
+          loadChannels({ reset: false });
+        }
+      }
+    },
+    { rootMargin: '500px 0px' },
+  );
+  obs.observe(sentinel);
+  state.channelsObserver = obs;
+}
+
+function updateChannelsFooterDom() {
+  const root = $('#app');
+  const footer = root ? $('.grid-footer', root) : null;
+  if (!footer) return false;
+  const hasMore = state.channels.length < state.channelsTotal;
+  const countryTitle = currentCountryTitle();
+  footer.innerHTML = `
+    ${hasMore ? `<div class="channels-load-sentinel" id="channels-load-sentinel" aria-hidden="true"></div><button type="button" class="casa-btn ghost" id="btn-load-more-ch">${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})</button>` : ''}
+    <p id="channels-footer-summary">${t('Diretta TV', 'Live TV')} · ${esc(countryTitle)} · ${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded')}</p>
+  `;
+  $('#btn-load-more-ch')?.addEventListener('click', () => loadChannels({ reset: false }));
+  return true;
+}
+
+function appendChannelCardsToDom(newItems, startIdx, { showFlag = false } = {}) {
+  if (state.page !== 'channels' || state.searchQuery) return false;
+  const root = $('#app');
+  if (!root) return false;
+  const isMobile = state.deviceType === 'smartphone';
+  const gridSel = isMobile ? '.mobile-channels-list' : '.channels-grid';
+  const gridEl = $(gridSel, root);
+  if (!gridEl || gridEl.dataset.listKey !== channelsGridListKey()) return false;
+  if (newItems.length > 0) {
+    const html = newItems
+      .map((ch, i) => renderChannelItemHtml(ch, startIdx + i, { showFlag, isMobile, eager: false }))
+      .join('');
+    gridEl.insertAdjacentHTML('beforeend', html);
+  }
+  gridEl._channelList = state.channels;
+  updateChannelsFooterDom();
+  setupChannelsInfiniteScroll();
+  return true;
+}
+
+function syncChannelFavoriteButtons(channelId, isFav) {
+  const targetId = String(channelId || '');
+  if (!targetId) return;
+  for (const card of $$('#app [data-id]')) {
+    if (card.dataset.id === targetId) {
+      const btn = $('[data-fav-idx]', card);
+      if (btn) {
+        btn.classList.toggle('is-fav', isFav);
+        btn.textContent = isFav ? '★' : '☆';
+      }
+    }
+  }
+}
+
 async function loadChannels({ reset = true } = {}) {
+  if (!reset && state.channelsLoading) return;
+
   if (state.localOverrideChannels) {
     const all = state.localOverrideChannels;
-    state.channels = state.tvCountry
+    let filtered = state.tvCountry
       ? all.filter((c) => c.country?.toUpperCase() === state.tvCountry.toUpperCase())
       : all;
-    if (!state.channels.length) {
-      state.channels = all;
-      state.channelsFallback = true;
-    } else {
-      state.channelsFallback = false;
+    let fallback = false;
+    if (!filtered.length) {
+      filtered = all;
+      fallback = all.length > 0;
     }
-    state.channelsTotal = state.channels.length;
+    const prevLen = reset ? 0 : state.channels.length;
+    state.localVisibleLimit = reset ? CHANNEL_PAGE_SIZE : prevLen + CHANNEL_PAGE_SIZE;
+    state.channelsFallback = fallback;
+    state.channelsTotal = filtered.length;
+    const nextVisible = filtered.slice(0, state.localVisibleLimit);
+    const appendedItems = reset ? nextVisible : nextVisible.slice(prevLen);
+    state.channels = nextVisible;
     updateShellChrome();
-    if (state.page === 'channels' && !state.searchQuery) renderCurrentScreen();
+    if (state.page === 'channels' && !state.searchQuery) {
+      if (reset || !appendChannelCardsToDom(appendedItems, prevLen, { showFlag: true })) {
+        renderCurrentScreen();
+      }
+    }
     return;
   }
 
+  const seq = reset ? ++state.channelsRequestSeq : state.channelsRequestSeq;
+  const prevLen = reset ? 0 : state.channels.length;
   state.channelsLoading = true;
   if (reset) {
     state.channels = [];
     state.channelsFallback = false;
+  } else {
+    const btn = $('#btn-load-more-ch');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('Caricamento…', 'Loading…');
+    }
   }
   updateShellChrome();
   if (state.page === 'channels' && reset && !state.searchQuery) renderCurrentScreen();
 
+  let items = [];
+  let loadFailed = false;
   try {
     const offset = reset ? 0 : state.channels.length;
     const qs = new URLSearchParams({
@@ -816,30 +934,48 @@ async function loadChannels({ reset = true } = {}) {
     });
     if (state.tvCountry) qs.set('country', state.tvCountry);
     let data = await api(`/api/channels?${qs.toString()}`);
-    let items = data.items || [];
+    if (seq !== state.channelsRequestSeq) return;
+    items = data.items || [];
     let fallback = false;
     if (reset && items.length === 0 && state.tvCountry) {
       data = await api(`/api/channels?limit=${CHANNEL_PAGE_SIZE}&offset=0&sort=number`);
+      if (seq !== state.channelsRequestSeq) return;
       items = data.items || [];
       fallback = items.length > 0;
     }
     state.channels = reset ? items : state.channels.concat(items);
     state.channelsTotal = Number(data.total ?? state.channels.length);
-    state.channelsFallback = fallback;
+    if (reset) state.channelsFallback = fallback;
     state.serverDisconnected = false;
   } catch (err) {
+    if (seq !== state.channelsRequestSeq) return;
+    loadFailed = true;
     state.serverDisconnected = true;
     toast(`${t('Errore caricamento canali', 'Channel load error')}: ${err.message}`, 'err');
   } finally {
-    state.channelsLoading = false;
-    updateShellChrome();
-    if (state.page === 'channels' && !state.searchQuery) renderCurrentScreen();
+    if (seq === state.channelsRequestSeq) {
+      state.channelsLoading = false;
+      updateShellChrome();
+      if (state.page === 'channels' && !state.searchQuery) {
+        if (reset) {
+          renderCurrentScreen();
+        } else if (loadFailed) {
+          const btn = $('#btn-load-more-ch');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = `${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})`;
+          }
+        } else if (!appendChannelCardsToDom(items, prevLen, { showFlag: state.channelsFallback })) {
+          renderCurrentScreen();
+        }
+      }
+    }
   }
 }
 
 async function loadFavorites() {
   state.favoritesLoading = true;
-  if (state.page === 'favorites') renderCurrentScreen();
+  if (state.page === 'favorites' && !state.searchQuery) renderCurrentScreen();
   try {
     if (state.localOverrideChannels) {
       state.favorites = state.localOverrideChannels.filter((c) => c.favorite);
@@ -864,7 +1000,11 @@ async function toggleFavorite(ch) {
     state.favorites = state.localOverrideChannels.filter((c) => c.favorite);
     updateShellChrome();
     updatePlayerFavButton();
-    renderCurrentScreen();
+    if (state.page === 'favorites') {
+      renderCurrentScreen();
+    } else if (state.page !== 'settings') {
+      syncChannelFavoriteButtons(ch.id, next);
+    }
     return;
   }
   try {
@@ -886,7 +1026,9 @@ async function toggleFavorite(ch) {
     );
     await loadFavorites();
     updatePlayerFavButton();
-    if (state.page !== 'settings') renderCurrentScreen();
+    if (state.page !== 'settings' && state.page !== 'favorites') {
+      syncChannelFavoriteButtons(ch.id, next);
+    }
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -930,31 +1072,54 @@ function performGlobalSearch(query) {
 
 /* ---------------- Renderers: Channels / Favorites / Search ---------------- */
 function stopCardPreview() {
+  state.hoveredPreviewCard = null;
   clearTimeout(state.cardPreviewTimer);
   state.cardPreviewTimer = null;
   if (state.cardPreviewHls) {
     state.cardPreviewHls.destroy();
     state.cardPreviewHls = null;
   }
-  $$('.card-preview-video').forEach((v) => {
-    v.classList.remove('is-visible');
-    v.pause();
-    v.removeAttribute('src');
-    v.load();
-  });
-  $$('.card-live-tag').forEach((el) => el.classList.remove('is-visible'));
+  const video = state.cardPreviewVideo;
+  if (video) {
+    video.onloadeddata = null;
+    video.classList.remove('is-visible');
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch (_) {}
+    video.remove();
+    state.cardPreviewVideo = null;
+  }
+  if (state.cardPreviewCard) {
+    $('.card-live-tag', state.cardPreviewCard)?.classList.remove('is-visible');
+    state.cardPreviewCard = null;
+  }
 }
 
 function attachCardPreview(cardEl, streamUrl) {
-  if (state.deviceType === 'smartphone' || !streamUrl || !/^https?:\/\//i.test(streamUrl)) return;
   stopCardPreview();
+  state.hoveredPreviewCard = cardEl;
+  if (state.deviceType === 'smartphone' || !streamUrl || !/^https?:\/\//i.test(streamUrl)) return;
   state.cardPreviewTimer = setTimeout(() => {
-    const video = $('.card-preview-video', cardEl);
-    const liveTag = $('.card-live-tag', cardEl);
-    if (!video || !document.body.contains(video)) return;
+    if (!cardEl || !document.body.contains(cardEl) || state.hoveredPreviewCard !== cardEl) return;
+    const artwork = $('.card-artwork', cardEl);
+    if (!artwork) return;
+    const video = document.createElement('video');
+    video.className = 'card-preview-video';
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
+    const overlayAnchor = artwork.querySelector('.card-num-badge, .card-top-right, .card-status-dot, .card-live-tag');
+    if (overlayAnchor) artwork.insertBefore(video, overlayAnchor);
+    else artwork.appendChild(video);
+
+    state.cardPreviewVideo = video;
+    state.cardPreviewCard = cardEl;
+    const liveTag = $('.card-live-tag', cardEl);
     const onPlaying = () => {
+      if (state.cardPreviewVideo !== video) return;
       video.classList.add('is-visible');
       liveTag?.classList.add('is-visible');
     };
@@ -964,6 +1129,7 @@ function attachCardPreview(cardEl, streamUrl) {
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        if (state.cardPreviewVideo !== video) return;
         video.play().then(onPlaying).catch(() => {});
       });
     } else {
@@ -974,115 +1140,165 @@ function attachCardPreview(cardEl, streamUrl) {
   }, 850);
 }
 
-function renderLogoOrFallback(ch, mobile = false) {
+function renderLogoOrFallback(ch, mobile = false, eager = false) {
+  const loading = eager ? 'eager' : 'lazy';
+  const priority = eager ? 'high' : 'low';
   if (mobile) {
     if (ch.logo) {
-      return `<img src="${esc(ch.logo)}" alt="${esc(ch.name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'row-num-fallback',textContent:'${esc(ch.number || initials(ch.name))}'}))" />`;
+      return `<img src="${esc(ch.logo)}" alt="${esc(ch.name)}" loading="${loading}" decoding="async" fetchpriority="${priority}" data-fallback="${esc(ch.number || initials(ch.name))}" data-fallback-mobile="1" />`;
     }
     return `<span class="row-num-fallback">${esc(ch.number || initials(ch.name))}</span>`;
   }
   if (ch.logo) {
-    return `<img class="card-logo-img" src="${esc(ch.logo)}" alt="${esc(ch.name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'fallback-monogram',textContent:'${esc(initials(ch.name))}'}))" />`;
+    return `<img class="card-logo-img" src="${esc(ch.logo)}" alt="${esc(ch.name)}" loading="${loading}" decoding="async" fetchpriority="${priority}" data-fallback="${esc(initials(ch.name))}" data-fallback-mobile="0" />`;
   }
   return `<div class="fallback-monogram">${esc(initials(ch.name))}</div>`;
 }
 
-function renderChannelGridCards(channels, { showFlag = false } = {}) {
-  const isMobile = state.deviceType === 'smartphone';
+function renderChannelItemHtml(ch, idx, { showFlag = false, isMobile = false, eager = false } = {}) {
   if (isMobile) {
     return `
-      <div class="mobile-channels-list">
-        ${channels
-          .map(
-            (ch, idx) => `
-          <div class="mobile-channel-row" data-idx="${idx}" data-id="${esc(ch.id)}" tabindex="0" role="button">
-            <div class="row-logo-box">${renderLogoOrFallback(ch, true)}</div>
-            <div class="row-text">
-              <strong>${esc(ch.name)}</strong>
-              <small>${showFlag && (ch.flag || ch.country) ? `${ch.flag || countryFlag(ch.country)} ` : ''}${esc((ch.categoryNames && ch.categoryNames[0]) || ch.countryName || ch.quality || '')}</small>
-            </div>
-            <button type="button" class="row-fav-btn ${ch.favorite ? 'is-fav' : ''}" data-fav-idx="${idx}" aria-label="Preferito">
-              ${ch.favorite ? '★' : '☆'}
-            </button>
-          </div>
-        `,
-          )
-          .join('')}
+      <div class="mobile-channel-row" data-idx="${idx}" data-id="${esc(ch.id)}" tabindex="0" role="button">
+        <div class="row-logo-box">${renderLogoOrFallback(ch, true, eager)}</div>
+        <div class="row-text">
+          <strong>${esc(ch.name)}</strong>
+          <small>${showFlag && (ch.flag || ch.country) ? `${ch.flag || countryFlag(ch.country)} ` : ''}${esc((ch.categoryNames && ch.categoryNames[0]) || ch.countryName || ch.quality || '')}</small>
+        </div>
+        <button type="button" class="row-fav-btn ${ch.favorite ? 'is-fav' : ''}" data-fav-idx="${idx}" aria-label="Preferito">
+          ${ch.favorite ? '★' : '☆'}
+        </button>
       </div>
     `;
   }
 
   return `
-    <div class="channels-grid">
+    <article class="grid-channel-card" data-idx="${idx}" data-id="${esc(ch.id)}" tabindex="0" role="button">
+      <div class="card-artwork">
+        ${renderLogoOrFallback(ch, false, eager)}
+        ${ch.number ? `<span class="card-num-badge">${esc(ch.number)}</span>` : ''}
+        <div class="card-top-right">
+          ${showFlag && (ch.flag || ch.country) ? `<span class="card-flag-badge">${ch.flag || countryFlag(ch.country)}</span>` : ''}
+          <button type="button" class="card-fav-btn ${ch.favorite ? 'is-fav' : ''}" data-fav-idx="${idx}" title="${t('Preferito', 'Favorite', 'Favorito')}">${ch.favorite ? '★' : '☆'}</button>
+        </div>
+        <span class="card-status-dot"><span></span></span>
+        <span class="card-live-tag"><i></i>LIVE</span>
+      </div>
+      <div class="card-meta">
+        <div class="card-title-row">
+          <h4 class="card-title">${esc(ch.name)}</h4>
+        </div>
+        <p class="card-sub">${esc((ch.categoryNames && ch.categoryNames[0]) || ch.countryName || ch.quality || '')}</p>
+      </div>
+    </article>
+  `;
+}
+
+function renderChannelGridCards(channels, { showFlag = false, listKey = '' } = {}) {
+  const isMobile = state.deviceType === 'smartphone';
+  const cls = isMobile ? 'mobile-channels-list' : 'channels-grid';
+  const keyAttr = listKey ? ` data-list-key="${esc(listKey)}"` : '';
+  return `
+    <div class="${cls}"${keyAttr}>
       ${channels
-        .map(
-          (ch, idx) => `
-        <article class="grid-channel-card" data-idx="${idx}" data-id="${esc(ch.id)}" tabindex="0" role="button">
-          <div class="card-artwork">
-            ${renderLogoOrFallback(ch, false)}
-            <video class="card-preview-video" muted playsinline></video>
-            ${ch.number ? `<span class="card-num-badge">${esc(ch.number)}</span>` : ''}
-            <div class="card-top-right">
-              ${showFlag && (ch.flag || ch.country) ? `<span class="card-flag-badge">${ch.flag || countryFlag(ch.country)}</span>` : ''}
-              <button type="button" class="card-fav-btn ${ch.favorite ? 'is-fav' : ''}" data-fav-idx="${idx}" title="${t('Preferito', 'Favorite', 'Favorito')}">${ch.favorite ? '★' : '☆'}</button>
-            </div>
-            <span class="card-status-dot"><span></span></span>
-            <span class="card-live-tag"><i></i>LIVE</span>
-          </div>
-          <div class="card-meta">
-            <div class="card-title-row">
-              <h4 class="card-title">${esc(ch.name)}</h4>
-            </div>
-            <p class="card-sub">${esc((ch.categoryNames && ch.categoryNames[0]) || ch.countryName || ch.quality || '')}</p>
-          </div>
-        </article>
-      `,
-        )
+        .map((ch, idx) => renderChannelItemHtml(ch, idx, { showFlag, isMobile, eager: idx < 18 }))
         .join('')}
     </div>
   `;
 }
 
 function bindChannelListEvents(container, list) {
-  const cardSel = state.deviceType === 'smartphone' ? '.mobile-channel-row' : '.grid-channel-card';
-  $$(cardSel, container).forEach((card) => {
+  const isMobile = state.deviceType === 'smartphone';
+  const gridSel = isMobile ? '.mobile-channels-list' : '.channels-grid';
+  const gridEl = $(gridSel, container);
+  if (!gridEl) return;
+  gridEl._channelList = list;
+  if (gridEl.dataset.bound === '1') return;
+  gridEl.dataset.bound = '1';
+
+  const cardSel = isMobile ? '.mobile-channel-row' : '.grid-channel-card';
+
+  gridEl.addEventListener('click', (e) => {
+    const favBtn = e.target.closest('[data-fav-idx]');
+    if (favBtn && gridEl.contains(favBtn)) {
+      e.stopPropagation();
+      const idx = Number(favBtn.dataset.favIdx);
+      const curList = gridEl._channelList || [];
+      toggleFavorite(curList[idx]);
+      return;
+    }
+    const card = e.target.closest(cardSel);
+    if (!card || !gridEl.contains(card)) return;
     const idx = Number(card.dataset.idx);
-    const ch = list[idx];
+    const curList = gridEl._channelList || [];
+    const ch = curList[idx];
     if (!ch) return;
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('[data-fav-idx]')) return;
+    stopCardPreview();
+    openPlayer(ch, curList, { isMix: false });
+  });
+
+  gridEl.addEventListener('keydown', (e) => {
+    const card = e.target.closest(cardSel);
+    if (!card || !gridEl.contains(card)) return;
+    const idx = Number(card.dataset.idx);
+    const curList = gridEl._channelList || [];
+    const ch = curList[idx];
+    if (!ch) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (e.target.closest('[data-fav-idx]') && e.key === 'Enter') return;
+      e.preventDefault();
       stopCardPreview();
-      openPlayer(ch, list, { isMix: false });
-    });
-    card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        stopCardPreview();
-        openPlayer(ch, list, { isMix: false });
-      } else if (e.key.toLowerCase() === 'm') {
-        e.preventDefault();
-        toggleFavorite(ch);
-      }
-    });
-    if (state.deviceType !== 'smartphone') {
-      card.addEventListener('mouseenter', () => attachCardPreview(card, ch.streamUrl));
-      card.addEventListener('mouseleave', stopCardPreview);
-      card.addEventListener('focus', () => attachCardPreview(card, ch.streamUrl));
-      card.addEventListener('blur', stopCardPreview);
+      openPlayer(ch, curList, { isMix: false });
+    } else if (e.key.toLowerCase() === 'm') {
+      e.preventDefault();
+      toggleFavorite(ch);
     }
   });
 
-  $$('[data-fav-idx]', container).forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = Number(btn.dataset.favIdx);
-      toggleFavorite(list[idx]);
+  if (!isMobile) {
+    gridEl.addEventListener('mouseover', (e) => {
+      const card = e.target.closest(cardSel);
+      if (!card || !gridEl.contains(card) || card === state.hoveredPreviewCard) return;
+      const idx = Number(card.dataset.idx);
+      const ch = (gridEl._channelList || [])[idx];
+      if (ch) attachCardPreview(card, ch.streamUrl);
     });
-  });
+    gridEl.addEventListener('mouseout', (e) => {
+      const card = e.target.closest(cardSel);
+      if (!card || card !== state.hoveredPreviewCard) return;
+      if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+      stopCardPreview();
+    });
+    gridEl.addEventListener('focusin', (e) => {
+      const card = e.target.closest(cardSel);
+      if (!card || !gridEl.contains(card) || card === state.hoveredPreviewCard) return;
+      const idx = Number(card.dataset.idx);
+      const ch = (gridEl._channelList || [])[idx];
+      if (ch) attachCardPreview(card, ch.streamUrl);
+    });
+    gridEl.addEventListener('focusout', (e) => {
+      const card = e.target.closest(cardSel);
+      if (!card || (e.relatedTarget && card.contains(e.relatedTarget))) return;
+      if (state.hoveredPreviewCard === card) stopCardPreview();
+    });
+  }
+
+  gridEl.addEventListener(
+    'error',
+    (e) => {
+      const img = e.target;
+      if (!img || img.tagName !== 'IMG' || img.dataset.fallback == null) return;
+      const fallbackEl = document.createElement(img.dataset.fallbackMobile === '1' ? 'span' : 'div');
+      fallbackEl.className = img.dataset.fallbackMobile === '1' ? 'row-num-fallback' : 'fallback-monogram';
+      fallbackEl.textContent = img.dataset.fallback;
+      img.replaceWith(fallbackEl);
+    },
+    true,
+  );
 }
 
 function renderCurrentScreen() {
   stopCardPreview();
+  disconnectChannelsObserver();
   const root = $('#app');
   if (!root) return;
 
@@ -1173,23 +1389,21 @@ function renderCurrentScreen() {
     return;
   }
 
-  const countries = state.config?.facets?.countries || [];
-  const countryObj = countries.find((c) => c.code === state.tvCountry);
-  const countryTitle = countryObj?.name || state.tvCountry;
+  const countryTitle = currentCountryTitle();
   const fallbackBanner = state.channelsFallback
     ? `<div class="fallback-notice">${t(
         `Nessun canale per ${countryTitle}: mostro l'intero catalogo.`,
         `No channels for ${countryTitle}: showing the entire catalog.`,
       )}</div>`
     : '';
-  const hasMore = !state.localOverrideChannels && state.channels.length < state.channelsTotal;
+  const hasMore = state.channels.length < state.channelsTotal;
 
   root.innerHTML = `
-    ${state.localOverrideChannels ? `<div class="fallback-notice">📁 ${esc(state.localSourceLabel)} · ${state.channels.length} canali · <button type="button" class="casa-btn ghost sm" id="btn-exit-local-m3u">${t('Torna al server', 'Back to server')}</button></div>` : fallbackBanner}
-    ${renderChannelGridCards(state.channels, { showFlag: state.channelsFallback || Boolean(state.localOverrideChannels) })}
+    ${state.localOverrideChannels ? `<div class="fallback-notice">📁 ${esc(state.localSourceLabel)} · ${fmtNum(state.channelsTotal)} canali · <button type="button" class="casa-btn ghost sm" id="btn-exit-local-m3u">${t('Torna al server', 'Back to server')}</button></div>` : fallbackBanner}
+    ${renderChannelGridCards(state.channels, { showFlag: state.channelsFallback || Boolean(state.localOverrideChannels), listKey: channelsGridListKey() })}
     <div class="grid-footer">
-      ${hasMore ? `<button type="button" class="casa-btn ghost" id="btn-load-more-ch">${t('Carica altri canali', 'Load more channels')} (${state.channels.length} / ${fmtNum(state.channelsTotal)})</button>` : ''}
-      <p>${t('Diretta TV', 'Live TV')} · ${esc(countryTitle)} · ${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded')}</p>
+      ${hasMore ? `<div class="channels-load-sentinel" id="channels-load-sentinel" aria-hidden="true"></div><button type="button" class="casa-btn ghost" id="btn-load-more-ch">${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})</button>` : ''}
+      <p id="channels-footer-summary">${t('Diretta TV', 'Live TV')} · ${esc(countryTitle)} · ${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded')}</p>
     </div>
   `;
   $('#btn-exit-local-m3u')?.addEventListener('click', () => {
@@ -1200,6 +1414,7 @@ function renderCurrentScreen() {
   });
   $('#btn-load-more-ch')?.addEventListener('click', () => loadChannels({ reset: false }));
   bindChannelListEvents(root, state.channels);
+  setupChannelsInfiniteScroll();
 }
 
 /* ---------------- Navigation ---------------- */
@@ -2369,27 +2584,48 @@ function closeDrawerPreview() {
     state.drawerPreviewHls.destroy();
     state.drawerPreviewHls = null;
   }
-  $$('#drawer-list video').forEach((v) => {
-    v.classList.remove('is-visible');
-    v.pause();
-    v.removeAttribute('src');
-  });
+  const video = state.drawerPreviewVideo;
+  if (video) {
+    video.onloadeddata = null;
+    video.classList.remove('is-visible');
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch (_) {}
+    video.remove();
+    state.drawerPreviewVideo = null;
+  }
+  state.drawerPreviewItem = null;
 }
 
 function startDrawerPreview(itemEl, streamUrl) {
   closeDrawerPreview();
+  state.drawerPreviewItem = itemEl;
   if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) return;
   state.drawerPreviewTimer = setTimeout(() => {
-    const video = $('video', itemEl);
-    if (!video || !state.drawerOpen) return;
+    if (!itemEl || !state.drawerOpen || state.drawerPreviewItem !== itemEl) return;
+    const box = $('.drawer-item-box', itemEl);
+    if (!box) return;
+    const video = document.createElement('video');
     video.muted = true;
-    const onShow = () => video.classList.add('is-visible');
+    video.playsInline = true;
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
+    box.appendChild(video);
+    state.drawerPreviewVideo = video;
+    const onShow = () => {
+      if (state.drawerPreviewVideo === video) video.classList.add('is-visible');
+    };
     if (window.Hls && window.Hls.isSupported() && /\.m3u8|m3u8/i.test(streamUrl)) {
       const hls = new window.Hls({ enableWorker: true, lowLatencyMode: true });
       state.drawerPreviewHls = hls;
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
-      hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().then(onShow).catch(() => {}));
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        if (state.drawerPreviewVideo !== video) return;
+        video.play().then(onShow).catch(() => {});
+      });
     } else {
       video.src = streamUrl;
       video.onloadeddata = onShow;
@@ -2403,13 +2639,13 @@ function renderDrawerList() {
   const queue = state.playerQueue;
   $('#drawer-title').textContent = t('Canali', 'Channels', 'Canales');
   $('#drawer-sub').textContent = t('Sfoglia senza interrompere · Invio o clic per sintonizzare', 'Browse smoothly · Enter or click to tune');
+  listEl._drawerQueue = queue;
   listEl.innerHTML = queue
     .map(
       (ch, i) => `
     <button type="button" class="drawer-item ${ch.id === state.playerChannel?.id ? 'is-playing' : ''} ${i === state.drawerCursorIdx ? 'is-cursor' : ''}" data-d-idx="${i}">
       <div class="drawer-item-box">
-        ${ch.logo ? `<img src="${esc(ch.logo)}" alt="" onerror="this.remove()"/>` : `<span style="font-size:10px;font-weight:800;color:var(--accent)">${esc(initials(ch.name))}</span>`}
-        <video muted playsinline></video>
+        ${ch.logo ? `<img src="${esc(ch.logo)}" alt="" loading="lazy" decoding="async" />` : `<span style="font-size:10px;font-weight:800;color:var(--accent)">${esc(initials(ch.name))}</span>`}
       </div>
       <div class="drawer-item-meta">
         <strong>${ch.number ? `${ch.number}. ` : ''}${esc(ch.name)}</strong>
@@ -2420,22 +2656,40 @@ function renderDrawerList() {
     )
     .join('');
 
-  $$('.drawer-item', listEl).forEach((el) => {
-    const i = Number(el.dataset.dIdx);
-    const ch = queue[i];
-    el.addEventListener('click', () => {
+  if (listEl.dataset.bound !== '1') {
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', (e) => {
+      const item = e.target.closest('.drawer-item');
+      if (!item || !listEl.contains(item)) return;
+      const i = Number(item.dataset.dIdx);
+      const ch = (listEl._drawerQueue || [])[i];
+      if (!ch) return;
       closeDrawerPreview();
       tunePlayerChannel(ch, { isMix: false });
       togglePlayerDrawer(false);
     });
-    const onHighlight = () => {
+    const onHighlight = (e) => {
+      const item = e.target.closest('.drawer-item');
+      if (!item || !listEl.contains(item)) return;
+      const i = Number(item.dataset.dIdx);
+      if (state.drawerPreviewItem === item && state.drawerCursorIdx === i) return;
       state.drawerCursorIdx = i;
-      $$('.drawer-item', listEl).forEach((n, idx) => n.classList.toggle('is-cursor', idx === i));
-      startDrawerPreview(el, ch?.streamUrl);
+      const prevCursor = $('.drawer-item.is-cursor', listEl);
+      if (prevCursor && prevCursor !== item) prevCursor.classList.remove('is-cursor');
+      item.classList.add('is-cursor');
+      const ch = (listEl._drawerQueue || [])[i];
+      startDrawerPreview(item, ch?.streamUrl);
     };
-    el.addEventListener('mouseenter', onHighlight);
-    el.addEventListener('focus', onHighlight);
-  });
+    listEl.addEventListener('mouseover', onHighlight);
+    listEl.addEventListener('focusin', onHighlight);
+    listEl.addEventListener(
+      'error',
+      (e) => {
+        if (e.target?.tagName === 'IMG') e.target.remove();
+      },
+      true,
+    );
+  }
 }
 
 /* Multi-TV Synchronization (/api/sync) */
@@ -2938,6 +3192,7 @@ function renderSettingsSources(detail, stats) {
     state.localSourceLabel = '';
     state.localSourceError = '';
     toast(t('Lista locale rimossa', 'Local playlist removed'));
+    loadChannels({ reset: true });
     renderCurrentScreen();
   });
 
@@ -3083,6 +3338,7 @@ function applyLocalM3u(text, label) {
   state.localSourceLabel = label;
   state.localSourceError = '';
   toast(`${t('Caricati', 'Loaded')} ${parsed.length} ${t('canali in locale', 'local channels')}`);
+  loadChannels({ reset: true });
   navigate('channels');
 }
 
