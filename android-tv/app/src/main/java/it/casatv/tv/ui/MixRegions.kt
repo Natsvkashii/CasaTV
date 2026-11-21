@@ -40,9 +40,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -1119,6 +1121,7 @@ fun MixRegionPickerDialog(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TvMixFiltersOverlay(
     scale: Float,
@@ -1135,6 +1138,10 @@ private fun TvMixFiltersOverlay(
     var activeTab by remember { mutableStateOf(0) } // 0 = Languages, 1 = Genres
     val sortedLanguages = remember(language) { sortedMixLanguages(language) }
     val sortedGenres = remember(language) { sortedMixGenres(language) }
+    val clearFocus = remember { FocusRequester() }
+    val applyFocus = remember { FocusRequester() }
+    val langTabFocus = remember { FocusRequester() }
+    val genreTabFocus = remember { FocusRequester() }
     val firstChipFocus = remember { FocusRequester() }
     val panelShape = RoundedCornerShape((22 * scale).dp)
 
@@ -1143,127 +1150,180 @@ private fun TvMixFiltersOverlay(
         runCatching { firstChipFocus.requestFocus() }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xD902060D)),
-        contentAlignment = Alignment.Center,
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxSize(0.93f)
-                .clip(panelShape)
-                .background(Brush.verticalGradient(listOf(Color(0xFF0C1728), Color(0xFF060B14))))
-                .border(1.5.dp, Color(0xFF28507E), panelShape)
-                .padding((20 * scale).dp),
+                .fillMaxSize()
+                .background(Color(0xD902060D)),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+            Column(
+                modifier = Modifier
+                    .fillMaxSize(0.93f)
+                    .clip(panelShape)
+                    .background(Brush.verticalGradient(listOf(Color(0xFF0C1728), Color(0xFF060B14))))
+                    .border(1.5.dp, Color(0xFF28507E), panelShape)
+                    .padding((20 * scale).dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = strings.t("FILTRI MIX · LINGUE E GENERI", "MIX FILTERS · LANGUAGES & GENRES", "FILTROS MIX · IDIOMAS Y GÉNEROS"),
-                        color = Color.White,
-                        fontSize = (17 * scale).sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    val totalActive = selectedLanguages.size + selectedGenres.size
-                    val countLabel = if (matchingChannelCount != null) {
-                        " · ${formatCount(matchingChannelCount)} ${strings.t("canali", "channels", "canales")}"
-                    } else ""
-                    Text(
-                        text = if (totalActive == 0) {
-                            strings.t("Nessun filtro attivo (tutti i canali)", "No active filters (all channels)", "Sin filtros activos") + countLabel
-                        } else {
-                            strings.t("$totalActive filtri selezionati", "$totalActive filters selected", "$totalActive filtros activos") + countLabel
-                        },
-                        color = Color(0xFF7DD3FC),
-                        fontSize = (11.5f * scale).sp,
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy((8 * scale).dp)) {
-                    MixTopActionButton(
-                        text = strings.t("Azzera", "Clear", "Borrar"),
-                        selected = false,
-                        accent = false,
-                        scale = scale,
-                        onClick = onClearFilters,
-                    )
-                    MixTopActionButton(
-                        text = strings.t("✓ Applica", "✓ Apply", "✓ Aplicar"),
-                        selected = true,
-                        accent = true,
-                        scale = scale,
-                        onClick = onClose,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height((12 * scale).dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy((10 * scale).dp)) {
-                val langLabel = strings.t("Lingue", "Languages", "Idiomas") +
-                    " (${sortedLanguages.size})" +
-                    if (selectedLanguages.isNotEmpty()) " · ${selectedLanguages.size}" else ""
-                val genreLabel = strings.t("Generi", "Genres", "Géneros") +
-                    " (${sortedGenres.size})" +
-                    if (selectedGenres.isNotEmpty()) " · ${selectedGenres.size}" else ""
-                MixTopActionButton(
-                    text = langLabel,
-                    selected = activeTab == 0,
-                    accent = activeTab == 0,
-                    scale = scale,
-                    onClick = { activeTab = 0 },
-                )
-                MixTopActionButton(
-                    text = genreLabel,
-                    selected = activeTab == 1,
-                    accent = activeTab == 1,
-                    scale = scale,
-                    onClick = { activeTab = 1 },
-                )
-            }
-
-            Spacer(Modifier.height((12 * scale).dp))
-
-            if (activeTab == 0) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues((4 * scale).dp),
-                    horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
-                    verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    items(sortedLanguages.indices.toList(), key = { sortedLanguages[it].code }) { idx ->
-                        val item = sortedLanguages[idx]
-                        TvFilterChip(
-                            label = item.label(language),
-                            selected = item.code in selectedLanguages,
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = strings.t("FILTRI MIX · LINGUE E GENERI", "MIX FILTERS · LANGUAGES & GENRES", "FILTROS MIX · IDIOMAS Y GÉNEROS"),
+                            color = Color.White,
+                            fontSize = (17 * scale).sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        val totalActive = selectedLanguages.size + selectedGenres.size
+                        val countLabel = if (matchingChannelCount != null) {
+                            " · ${formatCount(matchingChannelCount)} ${strings.t("canali", "channels", "canales")}"
+                        } else ""
+                        Text(
+                            text = if (totalActive == 0) {
+                                strings.t("Nessun filtro attivo (tutti i canali)", "No active filters (all channels)", "Sin filtros activos") + countLabel
+                            } else {
+                                strings.t("$totalActive filtri selezionati", "$totalActive filters selected", "$totalActive filtros activos") + countLabel
+                            },
+                            color = Color(0xFF7DD3FC),
+                            fontSize = (11.5f * scale).sp,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy((8 * scale).dp)) {
+                        MixTopActionButton(
+                            text = strings.t("Azzera", "Clear", "Borrar"),
+                            selected = false,
+                            accent = false,
                             scale = scale,
-                            onClick = { onToggleLanguage(item.code) },
-                            modifier = if (idx == 0) Modifier.focusRequester(firstChipFocus) else Modifier,
+                            onClick = onClearFilters,
+                            modifier = Modifier
+                                .focusRequester(clearFocus)
+                                .focusProperties {
+                                    up = FocusRequester.Cancel
+                                    left = genreTabFocus
+                                    right = applyFocus
+                                    down = genreTabFocus
+                                },
+                        )
+                        MixTopActionButton(
+                            text = strings.t("✓ Applica", "✓ Apply", "✓ Aplicar"),
+                            selected = true,
+                            accent = true,
+                            scale = scale,
+                            onClick = onClose,
+                            modifier = Modifier
+                                .focusRequester(applyFocus)
+                                .focusProperties {
+                                    up = FocusRequester.Cancel
+                                    right = FocusRequester.Cancel
+                                    left = clearFocus
+                                    down = if (activeTab == 0) langTabFocus else genreTabFocus
+                                },
                         )
                     }
                 }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues((4 * scale).dp),
-                    horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
-                    verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
-                ) {
-                    items(sortedGenres.indices.toList(), key = { sortedGenres[it].id }) { idx ->
-                        val item = sortedGenres[idx]
-                        TvFilterChip(
-                            label = item.label(language),
-                            selected = item.id in selectedGenres,
-                            scale = scale,
-                            onClick = { onToggleGenre(item.id) },
-                            modifier = if (idx == 0) Modifier.focusRequester(firstChipFocus) else Modifier,
-                        )
+
+                Spacer(Modifier.height((12 * scale).dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy((10 * scale).dp)) {
+                    val langLabel = strings.t("Lingue", "Languages", "Idiomas") +
+                        " (${sortedLanguages.size})" +
+                        if (selectedLanguages.isNotEmpty()) " · ${selectedLanguages.size}" else ""
+                    val genreLabel = strings.t("Generi", "Genres", "Géneros") +
+                        " (${sortedGenres.size})" +
+                        if (selectedGenres.isNotEmpty()) " · ${selectedGenres.size}" else ""
+                    MixTopActionButton(
+                        text = langLabel,
+                        selected = activeTab == 0,
+                        accent = activeTab == 0,
+                        scale = scale,
+                        onClick = { activeTab = 0 },
+                        modifier = Modifier
+                            .focusRequester(langTabFocus)
+                            .focusProperties {
+                                up = applyFocus
+                                left = FocusRequester.Cancel
+                                right = genreTabFocus
+                            },
+                    )
+                    MixTopActionButton(
+                        text = genreLabel,
+                        selected = activeTab == 1,
+                        accent = activeTab == 1,
+                        scale = scale,
+                        onClick = { activeTab = 1 },
+                        modifier = Modifier
+                            .focusRequester(genreTabFocus)
+                            .focusProperties {
+                                up = applyFocus
+                                left = langTabFocus
+                                right = clearFocus
+                            },
+                    )
+                }
+
+                Spacer(Modifier.height((12 * scale).dp))
+
+                if (activeTab == 0) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues((4 * scale).dp),
+                        horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                        verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                    ) {
+                        items(sortedLanguages.indices.toList(), key = { sortedLanguages[it].code }) { idx ->
+                            val item = sortedLanguages[idx]
+                            val chipModifier = when (idx) {
+                                0 -> Modifier
+                                    .focusRequester(firstChipFocus)
+                                    .focusProperties { up = langTabFocus }
+                                1 -> Modifier.focusProperties { up = langTabFocus }
+                                2 -> Modifier.focusProperties { up = clearFocus }
+                                3 -> Modifier.focusProperties { up = applyFocus }
+                                else -> Modifier
+                            }
+                            TvFilterChip(
+                                label = item.label(language),
+                                selected = item.code in selectedLanguages,
+                                scale = scale,
+                                onClick = { onToggleLanguage(item.code) },
+                                modifier = chipModifier,
+                            )
+                        }
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues((4 * scale).dp),
+                        horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                        verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                    ) {
+                        items(sortedGenres.indices.toList(), key = { sortedGenres[it].id }) { idx ->
+                            val item = sortedGenres[idx]
+                            val chipModifier = when (idx) {
+                                0 -> Modifier
+                                    .focusRequester(firstChipFocus)
+                                    .focusProperties { up = genreTabFocus }
+                                1 -> Modifier.focusProperties { up = genreTabFocus }
+                                2 -> Modifier.focusProperties { up = clearFocus }
+                                3 -> Modifier.focusProperties { up = applyFocus }
+                                else -> Modifier
+                            }
+                            TvFilterChip(
+                                label = item.label(language),
+                                selected = item.id in selectedGenres,
+                                scale = scale,
+                                onClick = { onToggleGenre(item.id) },
+                                modifier = chipModifier,
+                            )
+                        }
                     }
                 }
             }

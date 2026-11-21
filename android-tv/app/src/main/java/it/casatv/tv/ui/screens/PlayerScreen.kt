@@ -246,8 +246,7 @@ fun PlayerScreen(vm: MainViewModel) {
     val zapQueue by vm.zapQueue.collectAsStateWithLifecycle()
     var firstVideoFrameRendered by remember { mutableStateOf(false) }
     var audioSkipCount by remember { mutableIntStateOf(0) }
-    var hintsBannerVisible by remember { mutableStateOf(false) }
-    var hintsBannerTick by remember { mutableIntStateOf(0) }
+    var hintsBannerVisible by remember { mutableStateOf(showRemoteHintsBanner) }
     var clockTick by remember { mutableIntStateOf(0) }
     var syncState by remember { mutableStateOf<SyncStateResponse?>(null) }
     var inSyncByDelta by remember { mutableStateOf(false) }
@@ -294,10 +293,6 @@ fun PlayerScreen(vm: MainViewModel) {
     fun wakeControls() {
         controlsVisible = true
         hideTick++
-        if (showRemoteHintsBanner) {
-            hintsBannerVisible = true
-            hintsBannerTick++
-        }
     }
 
     fun cancelNumberEntry() {
@@ -887,11 +882,12 @@ fun PlayerScreen(vm: MainViewModel) {
         }
     }
 
-    LaunchedEffect(hintsBannerVisible, hintsBannerTick, showRemoteHintsBanner) {
+    LaunchedEffect(showRemoteHintsBanner) {
         if (!showRemoteHintsBanner) {
             hintsBannerVisible = false
-            return@LaunchedEffect
         }
+    }
+    LaunchedEffect(Unit) {
         if (hintsBannerVisible) {
             delay(6000)
             hintsBannerVisible = false
@@ -1227,10 +1223,7 @@ fun PlayerScreen(vm: MainViewModel) {
                         } else {
                             controlsVisible = !controlsVisible
                             hideTick++
-                            if (controlsVisible && showRemoteHintsBanner) {
-                                hintsBannerVisible = true
-                                hintsBannerTick++
-                            } else {
+                            if (!controlsVisible) {
                                 hintsBannerVisible = false
                             }
                         }

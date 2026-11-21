@@ -1736,7 +1736,7 @@ class CasaHttpServer(
 
     companion object {
         /** TV app version this server is built for; shown by the update check. */
-        const val TV_LATEST_VERSION = "26.11.022"
+        const val TV_LATEST_VERSION = "26.11.023"
     }
 }
 

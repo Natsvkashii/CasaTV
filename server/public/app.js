@@ -1,9 +1,9 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
-import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.022';
+import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.023';
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.022';
+const WEB_APP_VERSION = '26.11.023';
 const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -2517,6 +2517,7 @@ function openPlayer(channel, queue, { isMix = false } = {}) {
   tunePlayerChannel(channel, { isMix, skipMarkPlayed: isMix });
   updatePlayerChromeVisibility();
   wakePlayerControls();
+  showTemporaryHintsBanner();
 }
 
 function closePlayer() {
@@ -2779,7 +2780,6 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
   $('#player-mix-regions-btn').hidden = !isMix;
   updatePlayerFavButton();
   updateClock();
-  showTemporaryHintsBanner();
 
   const video = $('#preview-video');
   const loading = $('#player-loading');
