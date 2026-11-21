@@ -1,6 +1,8 @@
 package it.casatv.tv.ui
 
+import android.content.Context
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +14,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,8 +24,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,13 +53,14 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -65,6 +75,8 @@ import java.util.Locale
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Sociological & geographic macro-regions for Mix mode.
@@ -260,287 +272,135 @@ fun computeMixRegionCounts(countries: List<it.casatv.tv.data.Facet>): Map<MixReg
     return result
 }
 
+private data class WorldPolyBbox(
+    val minX: Float,
+    val minY: Float,
+    val maxX: Float,
+    val maxY: Float,
+    val points: List<Pair<Float, Float>>,
+)
+
 private data class WorldRegionGeo(
     val region: MixRegion,
     val anchor: Pair<Float, Float>,
-    val polygons: List<List<Pair<Float, Float>>>,
+    val polygons: List<WorldPolyBbox>,
     val left: MixRegion? = null,
     val right: MixRegion? = null,
     val up: MixRegion? = null,
     val down: MixRegion? = null,
 )
 
-private val WORLD_REGION_GEOS: List<WorldRegionGeo> = listOf(
-    WorldRegionGeo(
-        region = MixRegion.NORTH_AMERICA,
-        anchor = 0.21f to 0.265f,
-        right = MixRegion.EUROPE,
-        down = MixRegion.CENTRAL_AMERICA,
-        polygons = listOf(
-            // Alaska, Canada, contiguous US, Florida
-            listOf(
-                0.030f to 0.142f, 0.068f to 0.105f, 0.118f to 0.098f, 0.155f to 0.118f,
-                0.195f to 0.102f, 0.225f to 0.132f, 0.250f to 0.120f, 0.265f to 0.165f,
-                0.242f to 0.195f, 0.275f to 0.175f, 0.305f to 0.155f, 0.335f to 0.195f,
-                0.350f to 0.228f, 0.320f to 0.258f, 0.302f to 0.285f, 0.286f to 0.322f,
-                0.276f to 0.365f, 0.280f to 0.405f, 0.264f to 0.398f, 0.252f to 0.362f,
-                0.224f to 0.358f, 0.202f to 0.382f, 0.186f to 0.376f, 0.160f to 0.366f,
-                0.142f to 0.336f, 0.125f to 0.285f, 0.118f to 0.232f, 0.095f to 0.195f,
-                0.062f to 0.202f, 0.034f to 0.182f,
-            ),
-            // Greenland
-            listOf(
-                0.315f to 0.068f, 0.355f to 0.042f, 0.405f to 0.036f, 0.436f to 0.058f,
-                0.425f to 0.102f, 0.396f to 0.148f, 0.372f to 0.198f, 0.350f to 0.190f,
-                0.338f to 0.142f, 0.312f to 0.105f,
-            ),
-            // Arctic Archipelago
-            listOf(
-                0.208f to 0.055f, 0.262f to 0.042f, 0.298f to 0.056f, 0.296f to 0.096f,
-                0.262f to 0.105f, 0.228f to 0.088f, 0.198f to 0.082f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.CENTRAL_AMERICA,
-        anchor = 0.22f to 0.46f,
-        left = MixRegion.NORTH_AMERICA,
-        right = MixRegion.NORTH_AFRICA,
-        up = MixRegion.NORTH_AMERICA,
-        down = MixRegion.SOUTH_AMERICA,
-        polygons = listOf(
-            // Mexico, Yucatan & Central Isthmus
-            listOf(
-                0.160f to 0.374f, 0.190f to 0.388f, 0.205f to 0.395f, 0.215f to 0.432f,
-                0.242f to 0.432f, 0.248f to 0.452f, 0.236f to 0.470f, 0.252f to 0.495f,
-                0.268f to 0.518f, 0.264f to 0.538f, 0.244f to 0.528f, 0.226f to 0.504f,
-                0.204f to 0.482f, 0.182f to 0.456f, 0.166f to 0.422f, 0.152f to 0.395f,
-            ),
-            // Cuba
-            listOf(
-                0.244f to 0.426f, 0.272f to 0.424f, 0.302f to 0.438f,
-                0.305f to 0.452f, 0.282f to 0.454f, 0.252f to 0.442f,
-            ),
-            // Hispaniola & Caribbean
-            listOf(
-                0.306f to 0.454f, 0.332f to 0.456f, 0.348f to 0.466f,
-                0.344f to 0.482f, 0.320f to 0.482f, 0.304f to 0.470f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.SOUTH_AMERICA,
-        anchor = 0.325f to 0.675f,
-        right = MixRegion.SOUTH_AFRICA,
-        up = MixRegion.CENTRAL_AMERICA,
-        polygons = listOf(
-            listOf(
-                0.266f to 0.538f, 0.286f to 0.516f, 0.314f to 0.514f, 0.342f to 0.534f,
-                0.376f to 0.562f, 0.408f to 0.606f, 0.414f to 0.648f, 0.396f to 0.692f,
-                0.378f to 0.738f, 0.354f to 0.782f, 0.336f to 0.828f, 0.328f to 0.876f,
-                0.314f to 0.916f, 0.292f to 0.912f, 0.284f to 0.862f, 0.282f to 0.802f,
-                0.276f to 0.735f, 0.266f to 0.675f, 0.250f to 0.625f, 0.252f to 0.576f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.EUROPE,
-        anchor = 0.515f to 0.275f,
-        left = MixRegion.NORTH_AMERICA,
-        right = MixRegion.EURASIA,
-        down = MixRegion.NORTH_AFRICA,
-        polygons = listOf(
-            // Continental Europe, Iberia, Italy, Balkans
-            listOf(
-                0.436f to 0.334f, 0.442f to 0.308f, 0.464f to 0.296f, 0.470f to 0.274f,
-                0.494f to 0.258f, 0.506f to 0.234f, 0.532f to 0.236f, 0.558f to 0.220f,
-                0.582f to 0.214f, 0.596f to 0.252f, 0.592f to 0.296f, 0.574f to 0.328f,
-                0.556f to 0.348f, 0.548f to 0.378f, 0.532f to 0.374f, 0.526f to 0.344f,
-                0.518f to 0.372f, 0.502f to 0.378f, 0.494f to 0.348f, 0.484f to 0.326f,
-                0.468f to 0.342f, 0.456f to 0.362f, 0.436f to 0.358f,
-            ),
-            // Scandinavia
-            listOf(
-                0.492f to 0.208f, 0.496f to 0.168f, 0.516f to 0.128f, 0.548f to 0.102f,
-                0.580f to 0.114f, 0.584f to 0.158f, 0.576f to 0.202f, 0.552f to 0.214f,
-                0.534f to 0.194f, 0.518f to 0.222f, 0.498f to 0.226f,
-            ),
-            // Great Britain
-            listOf(
-                0.450f to 0.242f, 0.458f to 0.205f, 0.468f to 0.178f, 0.478f to 0.196f,
-                0.476f to 0.234f, 0.484f to 0.258f, 0.466f to 0.270f, 0.448f to 0.266f,
-            ),
-            // Ireland
-            listOf(
-                0.428f to 0.228f, 0.438f to 0.214f, 0.446f to 0.226f,
-                0.444f to 0.254f, 0.432f to 0.260f, 0.426f to 0.246f,
-            ),
-            // Iceland
-            listOf(
-                0.414f to 0.136f, 0.432f to 0.122f, 0.452f to 0.126f,
-                0.454f to 0.146f, 0.434f to 0.152f, 0.416f to 0.146f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.NORTH_AFRICA,
-        anchor = 0.502f to 0.448f,
-        left = MixRegion.CENTRAL_AMERICA,
-        right = MixRegion.MIDDLE_EAST,
-        up = MixRegion.EUROPE,
-        down = MixRegion.SOUTH_AFRICA,
-        polygons = listOf(
-            listOf(
-                0.438f to 0.390f, 0.468f to 0.376f, 0.498f to 0.380f, 0.518f to 0.402f,
-                0.548f to 0.408f, 0.572f to 0.414f, 0.582f to 0.456f, 0.586f to 0.508f,
-                0.545f to 0.516f, 0.500f to 0.518f, 0.455f to 0.512f, 0.426f to 0.496f,
-                0.420f to 0.452f, 0.428f to 0.414f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.SOUTH_AFRICA,
-        anchor = 0.538f to 0.648f,
-        left = MixRegion.SOUTH_AMERICA,
-        right = MixRegion.AUSTRALIA,
-        up = MixRegion.NORTH_AFRICA,
-        polygons = listOf(
-            // Sub-Saharan, Horn & Southern Africa
-            listOf(
-                0.416f to 0.520f, 0.456f to 0.516f, 0.508f to 0.520f, 0.562f to 0.518f,
-                0.592f to 0.524f, 0.618f to 0.548f, 0.640f to 0.542f, 0.626f to 0.595f,
-                0.602f to 0.652f, 0.588f to 0.714f, 0.572f to 0.768f, 0.544f to 0.812f,
-                0.520f to 0.806f, 0.504f to 0.752f, 0.494f to 0.690f, 0.486f to 0.628f,
-                0.454f to 0.598f, 0.418f to 0.574f, 0.410f to 0.544f,
-            ),
-            // Madagascar
-            listOf(
-                0.604f to 0.742f, 0.616f to 0.696f, 0.630f to 0.674f,
-                0.636f to 0.696f, 0.628f to 0.742f, 0.618f to 0.774f, 0.604f to 0.768f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.MIDDLE_EAST,
-        anchor = 0.622f to 0.440f,
-        left = MixRegion.NORTH_AFRICA,
-        right = MixRegion.ASIA,
-        up = MixRegion.EURASIA,
-        down = MixRegion.SOUTH_AFRICA,
-        polygons = listOf(
-            listOf(
-                0.576f to 0.366f, 0.608f to 0.360f, 0.642f to 0.366f, 0.668f to 0.392f,
-                0.670f to 0.438f, 0.656f to 0.462f, 0.664f to 0.494f, 0.634f to 0.522f,
-                0.606f to 0.532f, 0.592f to 0.492f, 0.580f to 0.448f, 0.572f to 0.405f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.EURASIA,
-        anchor = 0.728f to 0.205f,
-        left = MixRegion.EUROPE,
-        down = MixRegion.ASIA,
-        polygons = listOf(
-            // Turkey & Caucasus
-            listOf(
-                0.556f to 0.330f, 0.574f to 0.310f, 0.602f to 0.312f, 0.618f to 0.334f,
-                0.608f to 0.356f, 0.582f to 0.358f, 0.558f to 0.352f,
-            ),
-            // Russia, Kazakhstan, Central Asia & Siberia
-            listOf(
-                0.584f to 0.192f, 0.596f to 0.140f, 0.640f to 0.116f, 0.700f to 0.104f,
-                0.775f to 0.088f, 0.848f to 0.105f, 0.916f to 0.130f, 0.952f to 0.162f,
-                0.920f to 0.198f, 0.896f to 0.246f, 0.872f to 0.228f, 0.842f to 0.256f,
-                0.790f to 0.275f, 0.735f to 0.296f, 0.688f to 0.344f, 0.648f to 0.356f,
-                0.616f to 0.332f, 0.600f to 0.278f, 0.590f to 0.236f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.ASIA,
-        anchor = 0.768f to 0.420f,
-        left = MixRegion.MIDDLE_EAST,
-        right = MixRegion.OCEANIA,
-        up = MixRegion.EURASIA,
-        down = MixRegion.AUSTRALIA,
-        polygons = listOf(
-            // India, China, Mongolia, Korea, Indochina
-            listOf(
-                0.666f to 0.365f, 0.702f to 0.330f, 0.752f to 0.295f, 0.808f to 0.268f,
-                0.848f to 0.278f, 0.862f to 0.318f, 0.848f to 0.362f, 0.852f to 0.402f,
-                0.836f to 0.448f, 0.802f to 0.486f, 0.804f to 0.542f, 0.782f to 0.562f,
-                0.764f to 0.520f, 0.748f to 0.482f, 0.722f to 0.506f, 0.712f to 0.548f,
-                0.694f to 0.512f, 0.680f to 0.456f, 0.666f to 0.418f,
-            ),
-            // Japan
-            listOf(
-                0.878f to 0.285f, 0.900f to 0.282f, 0.908f to 0.312f, 0.898f to 0.355f,
-                0.880f to 0.395f, 0.866f to 0.390f, 0.876f to 0.348f, 0.872f to 0.314f,
-            ),
-            // Sumatra & Java
-            listOf(
-                0.742f to 0.570f, 0.766f to 0.578f, 0.794f to 0.608f, 0.818f to 0.625f,
-                0.806f to 0.640f, 0.770f to 0.625f, 0.738f to 0.592f,
-            ),
-            // Borneo & Sulawesi
-            listOf(
-                0.816f to 0.566f, 0.842f to 0.556f, 0.862f to 0.576f,
-                0.858f to 0.614f, 0.834f to 0.618f, 0.814f to 0.596f,
-            ),
-            // Philippines
-            listOf(
-                0.864f to 0.474f, 0.882f to 0.470f, 0.892f to 0.502f,
-                0.888f to 0.538f, 0.870f to 0.538f, 0.862f to 0.504f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.AUSTRALIA,
-        anchor = 0.838f to 0.735f,
-        left = MixRegion.SOUTH_AFRICA,
-        right = MixRegion.OCEANIA,
-        up = MixRegion.ASIA,
-        polygons = listOf(
-            // Australia mainland
-            listOf(
-                0.766f to 0.715f, 0.792f to 0.678f, 0.822f to 0.654f, 0.846f to 0.668f,
-                0.866f to 0.642f, 0.890f to 0.676f, 0.904f to 0.728f, 0.890f to 0.786f,
-                0.862f to 0.822f, 0.832f to 0.796f, 0.798f to 0.794f, 0.768f to 0.802f,
-                0.760f to 0.758f,
-            ),
-            // New Zealand
-            listOf(
-                0.928f to 0.802f, 0.946f to 0.774f, 0.962f to 0.788f, 0.954f to 0.836f,
-                0.934f to 0.876f, 0.916f to 0.868f, 0.924f to 0.834f,
-            ),
-        ),
-    ),
-    WorldRegionGeo(
-        region = MixRegion.OCEANIA,
-        anchor = 0.925f to 0.612f,
-        left = MixRegion.AUSTRALIA,
-        up = MixRegion.ASIA,
-        polygons = listOf(
-            // Papua New Guinea
-            listOf(
-                0.864f to 0.592f, 0.892f to 0.596f, 0.918f to 0.616f,
-                0.916f to 0.642f, 0.892f to 0.640f, 0.864f to 0.620f,
-            ),
-            // Melanesia / Micronesia cluster
-            listOf(
-                0.926f to 0.562f, 0.948f to 0.556f, 0.964f to 0.576f,
-                0.958f to 0.606f, 0.934f to 0.608f, 0.922f to 0.584f,
-            ),
-            // Polynesia cluster
-            listOf(
-                0.950f to 0.632f, 0.972f to 0.628f, 0.988f to 0.650f,
-                0.982f to 0.680f, 0.958f to 0.684f, 0.946f to 0.658f,
-            ),
-        ),
-    ),
+private data class WorldMapData(
+    val globeOutline: List<Pair<Float, Float>>,
+    val equatorLine: List<Pair<Float, Float>>,
+    val parallels: List<List<Pair<Float, Float>>>,
+    val meridians: List<List<Pair<Float, Float>>>,
+    val regions: List<WorldRegionGeo>,
+    val byRegion: Map<MixRegion, WorldRegionGeo>,
 )
 
-private val GEO_BY_REGION: Map<MixRegion, WorldRegionGeo> = WORLD_REGION_GEOS.associateBy { it.region }
+private data class RegionNavSpec(
+    val left: MixRegion? = null,
+    val right: MixRegion? = null,
+    val up: MixRegion? = null,
+    val down: MixRegion? = null,
+)
+
+private val REGION_NAV_SPECS: Map<MixRegion, RegionNavSpec> = mapOf(
+    MixRegion.NORTH_AMERICA to RegionNavSpec(right = MixRegion.EUROPE, down = MixRegion.CENTRAL_AMERICA),
+    MixRegion.CENTRAL_AMERICA to RegionNavSpec(left = MixRegion.NORTH_AMERICA, right = MixRegion.NORTH_AFRICA, up = MixRegion.NORTH_AMERICA, down = MixRegion.SOUTH_AMERICA),
+    MixRegion.SOUTH_AMERICA to RegionNavSpec(right = MixRegion.SOUTH_AFRICA, up = MixRegion.CENTRAL_AMERICA),
+    MixRegion.EUROPE to RegionNavSpec(left = MixRegion.NORTH_AMERICA, right = MixRegion.EURASIA, down = MixRegion.NORTH_AFRICA),
+    MixRegion.NORTH_AFRICA to RegionNavSpec(left = MixRegion.CENTRAL_AMERICA, right = MixRegion.MIDDLE_EAST, up = MixRegion.EUROPE, down = MixRegion.SOUTH_AFRICA),
+    MixRegion.SOUTH_AFRICA to RegionNavSpec(left = MixRegion.SOUTH_AMERICA, right = MixRegion.AUSTRALIA, up = MixRegion.NORTH_AFRICA),
+    MixRegion.MIDDLE_EAST to RegionNavSpec(left = MixRegion.NORTH_AFRICA, right = MixRegion.ASIA, up = MixRegion.EURASIA, down = MixRegion.SOUTH_AFRICA),
+    MixRegion.EURASIA to RegionNavSpec(left = MixRegion.EUROPE, down = MixRegion.ASIA),
+    MixRegion.ASIA to RegionNavSpec(left = MixRegion.MIDDLE_EAST, right = MixRegion.OCEANIA, up = MixRegion.EURASIA, down = MixRegion.AUSTRALIA),
+    MixRegion.AUSTRALIA to RegionNavSpec(left = MixRegion.SOUTH_AFRICA, right = MixRegion.OCEANIA, up = MixRegion.ASIA),
+    MixRegion.OCEANIA to RegionNavSpec(left = MixRegion.AUSTRALIA, up = MixRegion.ASIA),
+)
+
+@Volatile
+private var cachedWorldMapData: WorldMapData? = null
+
+private fun parsePointsArray(arr: JSONArray?): List<Pair<Float, Float>> {
+    if (arr == null) return emptyList()
+    val list = ArrayList<Pair<Float, Float>>(arr.length())
+    for (i in 0 until arr.length()) {
+        val pair = arr.optJSONArray(i) ?: continue
+        list.add(pair.optDouble(0).toFloat() to pair.optDouble(1).toFloat())
+    }
+    return list
+}
+
+private fun parseLinesArray(arr: JSONArray?): List<List<Pair<Float, Float>>> {
+    if (arr == null) return emptyList()
+    val list = ArrayList<List<Pair<Float, Float>>>(arr.length())
+    for (i in 0 until arr.length()) {
+        val pts = parsePointsArray(arr.optJSONArray(i))
+        if (pts.isNotEmpty()) list.add(pts)
+    }
+    return list
+}
+
+private fun loadWorldMapData(context: Context): WorldMapData {
+    cachedWorldMapData?.let { return it }
+    val jsonText = context.assets.open("world_map_regions.json").bufferedReader().use { it.readText() }
+    val root = JSONObject(jsonText)
+    val globeOutline = parsePointsArray(root.optJSONArray("globe"))
+    val equatorLine = parsePointsArray(root.optJSONArray("equator"))
+    val parallels = parseLinesArray(root.optJSONArray("parallels"))
+    val meridians = parseLinesArray(root.optJSONArray("meridians"))
+    val regionsObj = root.optJSONObject("regions") ?: JSONObject()
+
+    val geos = ArrayList<WorldRegionGeo>(REGION_NAV_SPECS.size)
+    val byReg = EnumMap<MixRegion, WorldRegionGeo>(MixRegion::class.java)
+    REGION_NAV_SPECS.forEach { (region, nav) ->
+        val entry = regionsObj.optJSONObject(region.name) ?: return@forEach
+        val anchorArr = entry.optJSONArray("anchor")
+        val anchor = if (anchorArr != null && anchorArr.length() >= 2) {
+            anchorArr.optDouble(0).toFloat() to anchorArr.optDouble(1).toFloat()
+        } else 0.5f to 0.5f
+        val polysJson = entry.optJSONArray("polygons")
+        val polys = ArrayList<WorldPolyBbox>(polysJson?.length() ?: 0)
+        if (polysJson != null) {
+            for (i in 0 until polysJson.length()) {
+                val pts = parsePointsArray(polysJson.optJSONArray(i))
+                if (pts.size < 3) continue
+                var minX = 1f
+                var minY = 1f
+                var maxX = 0f
+                var maxY = 0f
+                pts.forEach { (x, y) ->
+                    if (x < minX) minX = x
+                    if (y < minY) minY = y
+                    if (x > maxX) maxX = x
+                    if (y > maxY) maxY = y
+                }
+                polys.add(WorldPolyBbox(minX, minY, maxX, maxY, pts))
+            }
+        }
+        val geo = WorldRegionGeo(
+            region = region,
+            anchor = anchor,
+            polygons = polys,
+            left = nav.left,
+            right = nav.right,
+            up = nav.up,
+            down = nav.down,
+        )
+        geos.add(geo)
+        byReg[region] = geo
+    }
+    return WorldMapData(
+        globeOutline = globeOutline,
+        equatorLine = equatorLine,
+        parallels = parallels,
+        meridians = meridians,
+        regions = geos,
+        byRegion = byReg,
+    ).also { cachedWorldMapData = it }
+}
 
 private data class MapViewport(
     val left: Float,
@@ -555,11 +415,11 @@ private data class MapViewport(
 
 private fun computeMapViewport(totalW: Float, totalH: Float): MapViewport {
     if (totalW <= 1f || totalH <= 1f) return MapViewport(0f, 0f, 1f, 1f)
-    val padX = totalW * 0.02f
-    val padY = totalH * 0.03f
+    val padX = totalW * 0.015f
+    val padY = totalH * 0.02f
     val availW = (totalW - padX * 2f).coerceAtLeast(1f)
     val availH = (totalH - padY * 2f).coerceAtLeast(1f)
-    val targetRatio = 1.94f
+    val targetRatio = 1.9417f
     return if (availW / availH > targetRatio) {
         val w = availH * targetRatio
         MapViewport(left = (totalW - w) / 2f, top = padY, width = w, height = availH)
@@ -569,12 +429,14 @@ private fun computeMapViewport(totalW: Float, totalH: Float): MapViewport {
     }
 }
 
-private fun isPointInPolygon(nx: Float, ny: Float, poly: List<Pair<Float, Float>>): Boolean {
+private fun isPointInPolygon(nx: Float, ny: Float, poly: WorldPolyBbox): Boolean {
+    if (nx < poly.minX || nx > poly.maxX || ny < poly.minY || ny > poly.maxY) return false
     var inside = false
-    var j = poly.lastIndex
-    for (i in poly.indices) {
-        val (xi, yi) = poly[i]
-        val (xj, yj) = poly[j]
+    val pts = poly.points
+    var j = pts.lastIndex
+    for (i in pts.indices) {
+        val (xi, yi) = pts[i]
+        val (xj, yj) = pts[j]
         val intersects = ((yi > ny) != (yj > ny)) &&
             (nx < (xj - xi) * (ny - yi) / ((yj - yi).takeIf { kotlin.math.abs(it) > 1e-6f } ?: 1e-6f) + xi)
         if (intersects) inside = !inside
@@ -583,20 +445,20 @@ private fun isPointInPolygon(nx: Float, ny: Float, poly: List<Pair<Float, Float>
     return inside
 }
 
-private fun hitTestWorldRegion(nx: Float, ny: Float): MixRegion? {
+private fun hitTestWorldRegion(nx: Float, ny: Float, mapData: WorldMapData): MixRegion? {
     if (nx !in -0.02f..1.02f || ny !in -0.02f..1.02f) return null
-    WORLD_REGION_GEOS.forEach { geo ->
+    mapData.regions.forEach { geo ->
         if (geo.polygons.any { isPointInPolygon(nx, ny, it) }) {
             return geo.region
         }
     }
     var bestRegion: MixRegion? = null
-    var bestDist = 0.075f
-    WORLD_REGION_GEOS.forEach { geo ->
+    var bestDist = 0.07f
+    mapData.regions.forEach { geo ->
         val dAnchor = hypot((nx - geo.anchor.first) * 1.94f, ny - geo.anchor.second)
-        val dMinPoly = geo.polygons.minOf { poly ->
-            poly.minOf { (px, py) -> hypot((nx - px) * 1.94f, ny - py) }
-        }
+        val dMinPoly = geo.polygons.minOfOrNull { poly ->
+            poly.points.minOf { (px, py) -> hypot((nx - px) * 1.94f, ny - py) }
+        } ?: 9f
         val d = minOf(dAnchor, dMinPoly)
         if (d < bestDist) {
             bestDist = d
@@ -606,32 +468,51 @@ private fun hitTestWorldRegion(nx: Float, ny: Float): MixRegion? {
     return bestRegion
 }
 
-private fun buildSmoothViewportPath(points: List<Pair<Float, Float>>, vp: MapViewport): Path {
-    return Path().apply {
-        if (points.size < 3) {
-            if (points.isEmpty()) return@apply
-            val first = vp.toScreen(points[0].first, points[0].second)
-            moveTo(first.x, first.y)
-            for (i in 1 until points.size) {
-                val p = vp.toScreen(points[i].first, points[i].second)
-                lineTo(p.x, p.y)
-            }
-            close()
-            return@apply
-        }
-        val screenPts = points.map { vp.toScreen(it.first, it.second) }
-        val last = screenPts.last()
-        val first = screenPts.first()
-        moveTo((last.x + first.x) * 0.5f, (last.y + first.y) * 0.5f)
-        for (i in screenPts.indices) {
-            val curr = screenPts[i]
-            val next = screenPts[(i + 1) % screenPts.size]
-            val midX = (curr.x + next.x) * 0.5f
-            val midY = (curr.y + next.y) * 0.5f
-            quadraticTo(curr.x, curr.y, midX, midY)
+private fun buildDirectPolygonPath(points: List<Pair<Float, Float>>, vp: MapViewport): Path =
+    Path().apply {
+        if (points.isEmpty()) return@apply
+        val first = vp.toScreen(points[0].first, points[0].second)
+        moveTo(first.x, first.y)
+        for (i in 1 until points.size) {
+            val p = vp.toScreen(points[i].first, points[i].second)
+            lineTo(p.x, p.y)
         }
         close()
     }
+
+private fun buildPolylinePath(points: List<Pair<Float, Float>>, vp: MapViewport): Path =
+    Path().apply {
+        if (points.isEmpty()) return@apply
+        val first = vp.toScreen(points[0].first, points[0].second)
+        moveTo(first.x, first.y)
+        for (i in 1 until points.size) {
+            val p = vp.toScreen(points[i].first, points[i].second)
+            lineTo(p.x, p.y)
+        }
+    }
+
+private data class BuiltTvWorldPaths(
+    val vp: MapViewport,
+    val globePath: Path,
+    val equatorPath: Path,
+    val parallelPaths: List<Path>,
+    val meridianPaths: List<Path>,
+    val regionPaths: Map<MixRegion, List<Path>>,
+)
+
+private fun buildWorldPaths(mapData: WorldMapData, vp: MapViewport): BuiltTvWorldPaths {
+    val regMap = EnumMap<MixRegion, List<Path>>(MixRegion::class.java)
+    mapData.regions.forEach { geo ->
+        regMap[geo.region] = geo.polygons.map { buildDirectPolygonPath(it.points, vp) }
+    }
+    return BuiltTvWorldPaths(
+        vp = vp,
+        globePath = buildDirectPolygonPath(mapData.globeOutline, vp),
+        equatorPath = buildPolylinePath(mapData.equatorLine, vp),
+        parallelPaths = mapData.parallels.map { buildPolylinePath(it, vp) },
+        meridianPaths = mapData.meridians.map { buildPolylinePath(it, vp) },
+        regionPaths = regMap,
+    )
 }
 
 private fun formatCount(n: Int): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
@@ -644,8 +525,16 @@ fun MixRegionPickerDialog(
     onToggleRegion: (MixRegion) -> Unit,
     onStartMix: () -> Unit,
     onDismiss: () -> Unit,
+    selectedLanguages: Set<String> = emptySet(),
+    selectedGenres: Set<String> = emptySet(),
+    matchingChannelCount: Int? = null,
+    onToggleLanguage: (String) -> Unit = {},
+    onToggleGenre: (String) -> Unit = {},
+    onClearFilters: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val mapData = remember(context) { loadWorldMapData(context) }
     val cfg = LocalConfiguration.current
     val scale = remember(cfg.screenWidthDp, cfg.screenHeightDp) {
         minOf(cfg.screenWidthDp / 1280f, cfg.screenHeightDp / 720f).coerceIn(0.78f, 1.30f)
@@ -658,19 +547,33 @@ fun MixRegionPickerDialog(
         )
     }
     var mapHasFocus by remember { mutableStateOf(true) }
+    var filtersOpen by remember { mutableStateOf(false) }
+    var wasFiltersOpen by remember { mutableStateOf(false) }
 
     val mapFocus = remember { FocusRequester() }
     val allWorldFocus = remember { FocusRequester() }
+    val filtersFocus = remember { FocusRequester() }
     val startMixFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
+    val activeFilterCount = selectedLanguages.size + selectedGenres.size
 
     LaunchedEffect(Unit) {
         delay(90)
         runCatching { mapFocus.requestFocus() }
     }
 
+    LaunchedEffect(filtersOpen) {
+        if (!filtersOpen && wasFiltersOpen) {
+            delay(60)
+            runCatching { filtersFocus.requestFocus() }
+        }
+        wasFiltersOpen = filtersOpen
+    }
+
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            if (filtersOpen) filtersOpen = false else onDismiss()
+        },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(
@@ -711,12 +614,17 @@ fun MixRegionPickerDialog(
                             letterSpacing = 0.7.sp,
                         )
                         Spacer(Modifier.height((2 * scale).dp))
-                        val activeSummary = if (allWorldSelected) {
-                            "${MixRegion.ALL_WORLD.label(strings.language)} · ${formatCount(totalChannels)} " +
-                                strings.t("canali", "channels", "canales")
+                        val regionPart = if (allWorldSelected) {
+                            MixRegion.ALL_WORLD.label(strings.language)
                         } else {
                             selectedRegions.joinToString(" · ") { it.label(strings.language) }
                         }
+                        val shownCount = matchingChannelCount ?: totalChannels
+                        val filterPart = if (activeFilterCount > 0) {
+                            " · $activeFilterCount ${strings.t("filtri", "filters", "filtros")}"
+                        } else ""
+                        val activeSummary = "$regionPart$filterPart · ${formatCount(shownCount)} " +
+                            strings.t("canali", "channels", "canales")
                         Text(
                             text = activeSummary,
                             color = Color(0xFF7DD3FC),
@@ -751,6 +659,20 @@ fun MixRegionPickerDialog(
                                 .then(downToMapModifier),
                         )
                         MixTopActionButton(
+                            text = if (activeFilterCount > 0) {
+                                strings.t("⚙ Filtri ($activeFilterCount)", "⚙ Filters ($activeFilterCount)", "⚙ Filtros ($activeFilterCount)")
+                            } else {
+                                strings.t("⚙ Filtri", "⚙ Filters", "⚙ Filtros")
+                            },
+                            selected = activeFilterCount > 0,
+                            accent = false,
+                            scale = scale,
+                            onClick = { filtersOpen = true },
+                            modifier = Modifier
+                                .focusRequester(filtersFocus)
+                                .then(downToMapModifier),
+                        )
+                        MixTopActionButton(
                             text = strings.t("▶ Avvia Mix", "▶ Start Mix", "▶ Iniciar Mix"),
                             selected = true,
                             accent = true,
@@ -775,10 +697,21 @@ fun MixRegionPickerDialog(
 
                 Spacer(Modifier.height((10 * scale).dp))
 
-                // Interactive World Map Canvas Container
+                // Interactive High-Def Natural Earth I World Map Canvas Container
                 var canvasSize by remember { mutableStateOf(IntSize.Zero) }
                 var calloutSize by remember { mutableStateOf(IntSize.Zero) }
                 val mapShape = RoundedCornerShape((16 * scale).dp)
+
+                val builtPaths = remember(canvasSize, mapData) {
+                    if (canvasSize.width <= 0 || canvasSize.height <= 0) {
+                        null
+                    } else {
+                        buildWorldPaths(
+                            mapData = mapData,
+                            vp = computeMapViewport(canvasSize.width.toFloat(), canvasSize.height.toFloat()),
+                        )
+                    }
+                }
 
                 Box(
                     modifier = Modifier
@@ -800,6 +733,7 @@ fun MixRegionPickerDialog(
                         .onFocusChanged { mapHasFocus = it.isFocused }
                         .focusable()
                         .onPreviewKeyEvent { event ->
+                            if (filtersOpen) return@onPreviewKeyEvent false
                             val code = event.nativeKeyEvent.keyCode
                             val isDirectional = code == AndroidKeyEvent.KEYCODE_DPAD_LEFT ||
                                 code == AndroidKeyEvent.KEYCODE_DPAD_RIGHT ||
@@ -816,7 +750,7 @@ fun MixRegionPickerDialog(
                             }
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
-                            val currentGeo = GEO_BY_REGION[focusedRegion]
+                            val currentGeo = mapData.byRegion[focusedRegion]
                             when (code) {
                                 AndroidKeyEvent.KEYCODE_DPAD_CENTER,
                                 AndroidKeyEvent.KEYCODE_ENTER,
@@ -846,10 +780,10 @@ fun MixRegionPickerDialog(
                                     if (nextUp != null) {
                                         focusedRegion = nextUp
                                     } else {
-                                        val topTarget = if (focusedRegion == MixRegion.NORTH_AMERICA) {
-                                            allWorldFocus
-                                        } else {
-                                            startMixFocus
+                                        val topTarget = when (focusedRegion) {
+                                            MixRegion.NORTH_AMERICA -> allWorldFocus
+                                            MixRegion.EUROPE -> filtersFocus
+                                            else -> startMixFocus
                                         }
                                         runCatching { topTarget.requestFocus() }
                                     }
@@ -858,11 +792,11 @@ fun MixRegionPickerDialog(
                                 else -> false
                             }
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(mapData) {
                             detectTapGestures { offset ->
                                 val vp = computeMapViewport(size.width.toFloat(), size.height.toFloat())
                                 val (nx, ny) = vp.toNormalized(offset.x, offset.y)
-                                val hit = hitTestWorldRegion(nx, ny)
+                                val hit = hitTestWorldRegion(nx, ny, mapData)
                                 if (hit != null) {
                                     focusedRegion = hit
                                     runCatching { mapFocus.requestFocus() }
@@ -872,35 +806,38 @@ fun MixRegionPickerDialog(
                         },
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val vp = computeMapViewport(size.width, size.height)
+                        val paths = builtPaths ?: return@Canvas
+                        val vp = paths.vp
 
-                        // Subtle cartographic graticule
-                        clipRect(left = vp.left, top = vp.top, right = vp.left + vp.width, bottom = vp.top + vp.height) {
-                            val gridDash = PathEffect.dashPathEffect(floatArrayOf(6f, 8f), 0f)
-                            listOf(0.25f, 0.50f, 0.75f).forEach { fy ->
-                                val y = vp.top + vp.height * fy
-                                drawLine(
-                                    color = if (fy == 0.50f) Color(0x3338BDF8) else Color(0x221E3A5F),
-                                    start = Offset(vp.left, y),
-                                    end = Offset(vp.left + vp.width, y),
-                                    strokeWidth = if (fy == 0.50f) 1.4f else 1f,
-                                    pathEffect = gridDash,
-                                )
+                        // Natural Earth I curved ocean background & rim
+                        drawPath(
+                            path = paths.globePath,
+                            brush = Brush.radialGradient(
+                                colors = listOf(Color(0xFF0A223E), Color(0xFF050E1B)),
+                            ),
+                        )
+                        clipPath(paths.globePath) {
+                            val gridDash = PathEffect.dashPathEffect(floatArrayOf(5f, 7f), 0f)
+                            paths.parallelPaths.forEach { p ->
+                                drawPath(path = p, color = Color(0x2B1E3A5F), style = Stroke(width = 1f, pathEffect = gridDash))
                             }
-                            listOf(0.20f, 0.40f, 0.50f, 0.60f, 0.80f).forEach { fx ->
-                                val x = vp.left + vp.width * fx
-                                drawLine(
-                                    color = Color(0x221E3A5F),
-                                    start = Offset(x, vp.top),
-                                    end = Offset(x, vp.top + vp.height),
-                                    strokeWidth = 1f,
-                                    pathEffect = gridDash,
-                                )
+                            paths.meridianPaths.forEach { m ->
+                                drawPath(path = m, color = Color(0x2B1E3A5F), style = Stroke(width = 1f, pathEffect = gridDash))
                             }
+                            drawPath(
+                                path = paths.equatorPath,
+                                color = Color(0x4038BDF8),
+                                style = Stroke(width = 1.4f, pathEffect = gridDash),
+                            )
                         }
+                        drawPath(
+                            path = paths.globePath,
+                            color = Color(0xFF1F426B),
+                            style = Stroke(width = 1.6f),
+                        )
 
-                        // Pass 1: Smooth curved continent silhouettes
-                        WORLD_REGION_GEOS.forEach { geo ->
+                        // Pass 1: Crisp Natural Earth country outlines grouped by MixRegion
+                        mapData.regions.forEach { geo ->
                             val isDirectlySelected = geo.region in selectedRegions
                             val isActive = allWorldSelected || isDirectlySelected
                             val isFocused = mapHasFocus && focusedRegion == geo.region
@@ -912,7 +849,7 @@ fun MixRegionPickerDialog(
                                     end = Offset(vp.left + vp.width, vp.top + vp.height),
                                 )
                                 allWorldSelected -> Brush.linearGradient(
-                                    listOf(Color(0xBF0EA5E9), Color(0xBF0369A1)),
+                                    listOf(Color(0xC20EA5E9), Color(0xC20369A1)),
                                     start = Offset(vp.left, vp.top),
                                     end = Offset(vp.left + vp.width, vp.top + vp.height),
                                 )
@@ -928,34 +865,39 @@ fun MixRegionPickerDialog(
                                 )
                             }
 
-                            geo.polygons.forEach { pts ->
-                                val path = buildSmoothViewportPath(pts, vp)
-                                if (isActive || isFocused) {
+                            val borderColor = when {
+                                isFocused -> Color(0xFFFFFFFF)
+                                isDirectlySelected -> Color(0xFFE0F7FF)
+                                allWorldSelected -> Color(0xAA082F49)
+                                else -> Color(0xFF284870)
+                            }
+                            val borderWidth = when {
+                                isFocused -> 1.5f
+                                isDirectlySelected -> 1.05f
+                                isActive -> 0.85f
+                                else -> 0.8f
+                            }
+
+                            val polyPaths = paths.regionPaths[geo.region].orEmpty()
+                            polyPaths.forEach { path ->
+                                if (isDirectlySelected || isFocused) {
                                     drawPath(
                                         path = path,
-                                        color = if (isFocused) Color(0x66FFFFFF) else Color(0x5000D4FF),
-                                        style = Stroke(width = if (isFocused) 9f else 6.5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                                        color = if (isFocused) Color(0x45FFFFFF) else Color(0x3800D4FF),
+                                        style = Stroke(width = if (isFocused) 4.5f else 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
                                     )
                                 }
                                 drawPath(path = path, brush = fillBrush)
                                 drawPath(
                                     path = path,
-                                    color = when {
-                                        isFocused -> Color.White
-                                        isActive -> Color(0xFFE0F7FF)
-                                        else -> Color(0xFF284870)
-                                    },
-                                    style = Stroke(
-                                        width = if (isFocused) 2.4f else if (isActive) 1.6f else 1.1f,
-                                        cap = StrokeCap.Round,
-                                        join = StrokeJoin.Round,
-                                    ),
+                                    color = borderColor,
+                                    style = Stroke(width = borderWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
                                 )
                             }
                         }
 
                         // Pass 2: Region Anchor Pins
-                        WORLD_REGION_GEOS.forEach { geo ->
+                        mapData.regions.forEach { geo ->
                             val isActive = allWorldSelected || geo.region in selectedRegions
                             val isFocused = mapHasFocus && focusedRegion == geo.region
                             val center = vp.toScreen(geo.anchor.first, geo.anchor.second)
@@ -971,7 +913,7 @@ fun MixRegionPickerDialog(
                     }
 
                     // Compact name-only floating pill near focused region on map
-                    val activeGeo = GEO_BY_REGION[focusedRegion]
+                    val activeGeo = mapData.byRegion[focusedRegion]
                     if (activeGeo != null && canvasSize.width > 0 && canvasSize.height > 0) {
                         val vp = computeMapViewport(canvasSize.width.toFloat(), canvasSize.height.toFloat())
                         val anchorPx = vp.toScreen(activeGeo.anchor.first, activeGeo.anchor.second)
@@ -1158,7 +1100,245 @@ fun MixRegionPickerDialog(
                     }
                 }
             }
+
+            if (filtersOpen) {
+                BackHandler { filtersOpen = false }
+                TvMixFiltersOverlay(
+                    scale = scale,
+                    language = strings.language,
+                    selectedLanguages = selectedLanguages,
+                    selectedGenres = selectedGenres,
+                    matchingChannelCount = matchingChannelCount,
+                    onToggleLanguage = onToggleLanguage,
+                    onToggleGenre = onToggleGenre,
+                    onClearFilters = onClearFilters,
+                    onClose = { filtersOpen = false },
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun TvMixFiltersOverlay(
+    scale: Float,
+    language: String,
+    selectedLanguages: Set<String>,
+    selectedGenres: Set<String>,
+    matchingChannelCount: Int?,
+    onToggleLanguage: (String) -> Unit,
+    onToggleGenre: (String) -> Unit,
+    onClearFilters: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    var activeTab by remember { mutableStateOf(0) } // 0 = Languages, 1 = Genres
+    val sortedLanguages = remember(language) { sortedMixLanguages(language) }
+    val sortedGenres = remember(language) { sortedMixGenres(language) }
+    val firstChipFocus = remember { FocusRequester() }
+    val panelShape = RoundedCornerShape((22 * scale).dp)
+
+    LaunchedEffect(activeTab) {
+        delay(60)
+        runCatching { firstChipFocus.requestFocus() }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xD902060D)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize(0.93f)
+                .clip(panelShape)
+                .background(Brush.verticalGradient(listOf(Color(0xFF0C1728), Color(0xFF060B14))))
+                .border(1.5.dp, Color(0xFF28507E), panelShape)
+                .padding((20 * scale).dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = strings.t("FILTRI MIX · LINGUE E GENERI", "MIX FILTERS · LANGUAGES & GENRES", "FILTROS MIX · IDIOMAS Y GÉNEROS"),
+                        color = Color.White,
+                        fontSize = (17 * scale).sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    val totalActive = selectedLanguages.size + selectedGenres.size
+                    val countLabel = if (matchingChannelCount != null) {
+                        " · ${formatCount(matchingChannelCount)} ${strings.t("canali", "channels", "canales")}"
+                    } else ""
+                    Text(
+                        text = if (totalActive == 0) {
+                            strings.t("Nessun filtro attivo (tutti i canali)", "No active filters (all channels)", "Sin filtros activos") + countLabel
+                        } else {
+                            strings.t("$totalActive filtri selezionati", "$totalActive filters selected", "$totalActive filtros activos") + countLabel
+                        },
+                        color = Color(0xFF7DD3FC),
+                        fontSize = (11.5f * scale).sp,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy((8 * scale).dp)) {
+                    MixTopActionButton(
+                        text = strings.t("Azzera", "Clear", "Borrar"),
+                        selected = false,
+                        accent = false,
+                        scale = scale,
+                        onClick = onClearFilters,
+                    )
+                    MixTopActionButton(
+                        text = strings.t("✓ Applica", "✓ Apply", "✓ Aplicar"),
+                        selected = true,
+                        accent = true,
+                        scale = scale,
+                        onClick = onClose,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height((12 * scale).dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy((10 * scale).dp)) {
+                val langLabel = strings.t("Lingue", "Languages", "Idiomas") +
+                    " (${sortedLanguages.size})" +
+                    if (selectedLanguages.isNotEmpty()) " · ${selectedLanguages.size}" else ""
+                val genreLabel = strings.t("Generi", "Genres", "Géneros") +
+                    " (${sortedGenres.size})" +
+                    if (selectedGenres.isNotEmpty()) " · ${selectedGenres.size}" else ""
+                MixTopActionButton(
+                    text = langLabel,
+                    selected = activeTab == 0,
+                    accent = activeTab == 0,
+                    scale = scale,
+                    onClick = { activeTab = 0 },
+                )
+                MixTopActionButton(
+                    text = genreLabel,
+                    selected = activeTab == 1,
+                    accent = activeTab == 1,
+                    scale = scale,
+                    onClick = { activeTab = 1 },
+                )
+            }
+
+            Spacer(Modifier.height((12 * scale).dp))
+
+            if (activeTab == 0) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(4),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues((4 * scale).dp),
+                    horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                    verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                ) {
+                    items(sortedLanguages.indices.toList(), key = { sortedLanguages[it].code }) { idx ->
+                        val item = sortedLanguages[idx]
+                        TvFilterChip(
+                            label = item.label(language),
+                            selected = item.code in selectedLanguages,
+                            scale = scale,
+                            onClick = { onToggleLanguage(item.code) },
+                            modifier = if (idx == 0) Modifier.focusRequester(firstChipFocus) else Modifier,
+                        )
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(4),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues((4 * scale).dp),
+                    horizontalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                    verticalArrangement = Arrangement.spacedBy((8 * scale).dp),
+                ) {
+                    items(sortedGenres.indices.toList(), key = { sortedGenres[it].id }) { idx ->
+                        val item = sortedGenres[idx]
+                        TvFilterChip(
+                            label = item.label(language),
+                            selected = item.id in selectedGenres,
+                            scale = scale,
+                            onClick = { onToggleGenre(item.id) },
+                            modifier = if (idx == 0) Modifier.focusRequester(firstChipFocus) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvFilterChip(
+    label: String,
+    selected: Boolean,
+    scale: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape((10 * scale).dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                when {
+                    focused && selected -> Color(0xFF00D4FF)
+                    focused -> Color(0xFF1D4470)
+                    selected -> Color(0xFF0B355C)
+                    else -> Color(0xFF0C1728)
+                },
+            )
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = when {
+                    focused -> Color.White
+                    selected -> Color(0xFF00D4FF)
+                    else -> Color(0xFF1E3A5F)
+                },
+                shape = shape,
+            )
+            .focusable(interactionSource = interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = (11 * scale).dp, vertical = (9 * scale).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size((15 * scale).dp)
+                .clip(CircleShape)
+                .background(if (selected) Color(0xFF00D4FF) else Color(0xFF162740))
+                .border(1.dp, if (selected) Color.White else Color(0xFF2D4C73), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = Color(0xFF04101A),
+                    modifier = Modifier.size((10 * scale).dp),
+                )
+            }
+        }
+        Spacer(Modifier.width((8 * scale).dp))
+        Text(
+            text = label,
+            color = when {
+                focused && selected -> Color(0xFF04101A)
+                focused -> Color.White
+                selected -> Color(0xFFBAE6FD)
+                else -> Color(0xFFE2E8F0)
+            },
+            fontSize = (11.5f * scale).sp,
+            fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1191,6 +1371,7 @@ private fun MixTopActionButton(
             .clip(shape)
             .background(bg)
             .border(if (focused) 2.dp else 1.dp, border, shape)
+            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = (14 * scale).dp, vertical = (9 * scale).dp),
         contentAlignment = Alignment.Center,

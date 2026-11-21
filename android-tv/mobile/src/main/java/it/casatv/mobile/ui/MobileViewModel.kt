@@ -55,6 +55,8 @@ data class MobileUiState(
     val mixChannels: List<MobileChannel> = emptyList(),
     val showMixRegionPicker: Boolean = false,
     val selectedMixRegions: Set<MixRegion> = setOf(MixRegion.ALL_WORLD),
+    val selectedMixLanguages: Set<String> = emptySet(),
+    val selectedMixGenres: Set<String> = emptySet(),
     val activeChannel: MobileChannel? = null,
     val isMixMode: Boolean = false,
     val mixIndex: Int = 0,
@@ -634,6 +636,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             _state.update {
                 it.copy(
                     selectedMixRegions = setOf(MixRegion.ALL_WORLD),
+                    selectedMixLanguages = emptySet(),
+                    selectedMixGenres = emptySet(),
                     mixIndex = 0,
                     mixTotal = 0,
                 )
@@ -665,7 +669,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             toggled.ifEmpty { setOf(MixRegion.ALL_WORLD) }
         }
         verifiedNextMixChannel?.let { cand ->
-            if (!matchesMixRegions(cand.country, next)) {
+            if (!matchesActiveMixFilters(cand)) {
                 mixPreloadJob?.cancel()
                 mixPreloadJob = null
                 verifiedNextMixChannel = null
@@ -674,12 +678,53 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(selectedMixRegions = next) }
     }
 
+    fun toggleMixLanguage(code: String) {
+        val current = _state.value.selectedMixLanguages
+        val next = if (code in current) current - code else current + code
+        _state.update { it.copy(selectedMixLanguages = next) }
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    fun toggleMixGenre(genreId: String) {
+        val current = _state.value.selectedMixGenres
+        val next = if (genreId in current) current - genreId else current + genreId
+        _state.update { it.copy(selectedMixGenres = next) }
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    fun clearMixFilters() {
+        if (_state.value.selectedMixLanguages.isEmpty() && _state.value.selectedMixGenres.isEmpty()) return
+        _state.update {
+            it.copy(
+                selectedMixLanguages = emptySet(),
+                selectedMixGenres = emptySet(),
+            )
+        }
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    private fun invalidateVerifiedMixAfterFilterChange() {
+        verifiedNextMixChannel?.let { cand ->
+            if (!matchesActiveMixFilters(cand)) {
+                mixPreloadJob?.cancel()
+                mixPreloadJob = null
+                verifiedNextMixChannel = null
+            }
+        }
+    }
+
+    private fun matchesActiveMixFilters(channel: MobileChannel, state: MobileUiState = _state.value): Boolean {
+        if (!matchesMixRegions(channel.country, state.selectedMixRegions)) return false
+        if (!matchesMobileMixLanguages(channel, state.selectedMixLanguages)) return false
+        if (!matchesMobileMixGenres(channel, state.selectedMixGenres)) return false
+        return true
+    }
+
     fun startMixFromSelectedRegions() {
-        val regions = _state.value.selectedMixRegions
         mixPreloadJob?.cancel()
         mixPreloadJob = null
         verifiedNextMixChannel?.let { cand ->
-            if (!matchesMixRegions(cand.country, regions)) {
+            if (!matchesActiveMixFilters(cand)) {
                 verifiedNextMixChannel = null
             }
         }
@@ -688,7 +733,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             mixCursor = -1
         }
         deadMixUrls.clear()
-        _state.update { it.copy(showMixRegionPicker = false) }
         playRandomMixChannel()
     }
 
@@ -729,21 +773,43 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun filteredMixPool(channels: List<MobileChannel>): List<MobileChannel> {
         ensureMixBucketsIndexed(channels)
-        val regions = _state.value.selectedMixRegions
-        if (regions.isEmpty() || MixRegion.ALL_WORLD in regions) return cachedMixHttpAll
-        val regional = if (regions.size == 1) {
-            cachedMixBuckets[regions.first()].orEmpty()
+        val currentState = _state.value
+        val regions = currentState.selectedMixRegions
+        val activeLangs = currentState.selectedMixLanguages
+        val activeGenres = currentState.selectedMixGenres
+        val hasFilters = activeLangs.isNotEmpty() || activeGenres.isNotEmpty()
+        val base = if (regions.isEmpty() || MixRegion.ALL_WORLD in regions) {
+            cachedMixHttpAll
         } else {
-            ArrayList<MobileChannel>().apply {
-                regions.forEach { region -> cachedMixBuckets[region]?.let(::addAll) }
+            val regional = if (regions.size == 1) {
+                cachedMixBuckets[regions.first()].orEmpty()
+            } else {
+                ArrayList<MobileChannel>().apply {
+                    regions.forEach { region -> cachedMixBuckets[region]?.let(::addAll) }
+                }
             }
+            if (hasFilters) regional else regional.ifEmpty { cachedMixHttpAll }
         }
-        return regional.ifEmpty { cachedMixHttpAll }
+        if (!hasFilters) return base
+        return base.filter { ch ->
+            matchesMobileMixLanguages(ch, activeLangs) && matchesMobileMixGenres(ch, activeGenres)
+        }
     }
 
     fun playRandomMixChannel() {
-        val pool = filteredMixPool(_state.value.allChannels)
-        if (pool.isEmpty()) return
+        val currentState = _state.value
+        val pool = filteredMixPool(currentState.allChannels)
+        if (pool.isEmpty()) {
+            if (currentState.selectedMixLanguages.isNotEmpty() || currentState.selectedMixGenres.isNotEmpty()) {
+                val msg = when {
+                    currentState.language.startsWith("en") -> "No channels match the selected filters"
+                    currentState.language.startsWith("es") -> "Ningún canal coincide con los filtros seleccionados"
+                    else -> "Nessun canale corrisponde ai filtri selezionati"
+                }
+                _state.update { it.copy(statusMessage = msg) }
+            }
+            return
+        }
         val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
             ?: return
         val pair = synchronized(mixHistory) {
@@ -862,7 +928,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val candidate = verifiedNextMixChannel
         verifiedNextMixChannel = null
         return candidate?.takeIf {
-            matchesMixRegions(it.country, _state.value.selectedMixRegions) && !isMixChannelExcludedAsAudioOnly(it)
+            matchesActiveMixFilters(it) && !isMixChannelExcludedAsAudioOnly(it)
         }
     }
 

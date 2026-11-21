@@ -1,7 +1,9 @@
 /* CasaTV Web App — Unified PC, Tablet & Smartphone Client matching Android TV & Mobile */
 
+import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.022';
+
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.021';
+const WEB_APP_VERSION = '26.11.022';
 const CHANNEL_PAGE_SIZE = 84;
 const PROFILE_AVATARS = [
   '🦊', '🐼', '🐯', '🐨', '🦁', '🐸', '🐵', '🐺', '🦄', '🐙',
@@ -232,7 +234,11 @@ const state = {
   // Mix Mappamondo & Zapping State (mirrors MainViewModel)
   allWorldPool: [],
   mixPoolLoaded: false,
+  mixPoolPromise: null,
   selectedMixRegions: new Set(['ALL_WORLD']),
+  selectedMixLanguages: new Set(),
+  selectedMixGenres: new Set(),
+  mixFilterTab: 'languages',
   mixHistory: [],
   mixIndex: -1,
   deadMixIds: new Set(),
@@ -674,6 +680,153 @@ function buildSmoothSvgPath(points, width = 1000, height = 515) {
   }
   segs.push('Z');
   return segs.join(' ');
+}
+
+/* ---------------- Mix Language (37) & Genre (29) Filters ---------------- */
+const MIX_LANGUAGES = [
+  { code: 'sqi', title: { it: 'Albanese', en: 'Albanian', es: 'Albanés' }, aliases: ['sqi', 'sq', 'alb', 'albanese', 'albanian', 'shqip'], defaultCountries: ['AL', 'XK'] },
+  { code: 'ara', title: { it: 'Arabo', en: 'Arabic', es: 'Árabe' }, aliases: ['ara', 'ar', 'arabo', 'arabic', 'árabe'], defaultCountries: ['AE', 'BH', 'DZ', 'EG', 'IQ', 'JO', 'KW', 'LB', 'LY', 'MA', 'OM', 'PS', 'QA', 'SA', 'SD', 'SY', 'TN', 'YE', 'MR'] },
+  { code: 'bul', title: { it: 'Bulgaro', en: 'Bulgarian', es: 'Búlgaro' }, aliases: ['bul', 'bg', 'bulgaro', 'bulgarian', 'búlgaro'], defaultCountries: ['BG'] },
+  { code: 'ces', title: { it: 'Ceco', en: 'Czech', es: 'Checo' }, aliases: ['ces', 'cze', 'cs', 'ceco', 'czech', 'checo'], defaultCountries: ['CZ'] },
+  { code: 'zho', title: { it: 'Cinese', en: 'Chinese', es: 'Chino' }, aliases: ['zho', 'chi', 'zh', 'cmn', 'yue', 'cinese', 'chinese', 'chino'], defaultCountries: ['CN', 'TW', 'HK', 'MO'] },
+  { code: 'kor', title: { it: 'Coreano', en: 'Korean', es: 'Coreano' }, aliases: ['kor', 'ko', 'coreano', 'korean'], defaultCountries: ['KR', 'KP'] },
+  { code: 'hrv', title: { it: 'Croato', en: 'Croatian', es: 'Croata' }, aliases: ['hrv', 'hr', 'scr', 'croato', 'croatian', 'croata'], defaultCountries: ['HR'] },
+  { code: 'dan', title: { it: 'Danese', en: 'Danish', es: 'Danés' }, aliases: ['dan', 'da', 'danese', 'danish', 'danés'], defaultCountries: ['DK', 'FO', 'GL'] },
+  { code: 'heb', title: { it: 'Ebraico', en: 'Hebrew', es: 'Hebreo' }, aliases: ['heb', 'he', 'iw', 'ebraico', 'hebrew', 'hebreo'], defaultCountries: ['IL'] },
+  { code: 'tgl', title: { it: 'Filippino / Tagalog', en: 'Filipino / Tagalog', es: 'Filipino / Tagalo' }, aliases: ['tgl', 'tl', 'fil', 'tagalog', 'filipino', 'filippino'], defaultCountries: ['PH'] },
+  { code: 'fin', title: { it: 'Finlandese', en: 'Finnish', es: 'Finés' }, aliases: ['fin', 'fi', 'finlandese', 'finnish', 'finés'], defaultCountries: ['FI'] },
+  { code: 'fra', title: { it: 'Francese', en: 'French', es: 'Francés' }, aliases: ['fra', 'fre', 'fr', 'francese', 'french', 'francés'], defaultCountries: ['FR', 'MC', 'BF', 'CI', 'CM', 'CD', 'CG', 'GA', 'GN', 'ML', 'NE', 'SN', 'TG', 'PF', 'NC', 'GF', 'GP', 'MQ', 'HT'] },
+  { code: 'kat', title: { it: 'Georgiano', en: 'Georgian', es: 'Georgiano' }, aliases: ['kat', 'geo', 'ka', 'georgiano', 'georgian'], defaultCountries: ['GE'] },
+  { code: 'jpn', title: { it: 'Giapponese', en: 'Japanese', es: 'Japonés' }, aliases: ['jpn', 'ja', 'giapponese', 'japanese', 'japonés'], defaultCountries: ['JP'] },
+  { code: 'ell', title: { it: 'Greco', en: 'Greek', es: 'Griego' }, aliases: ['ell', 'gre', 'el', 'modern greek', 'modern greek (1453-)', 'greco', 'greek', 'griego'], defaultCountries: ['GR', 'CY'] },
+  { code: 'hin', title: { it: 'Hindi', en: 'Hindi', es: 'Hindi' }, aliases: ['hin', 'hi', 'hindi'], defaultCountries: ['IN'] },
+  { code: 'ind', title: { it: 'Indonesiano', en: 'Indonesian', es: 'Indonesio' }, aliases: ['ind', 'id', 'in', 'indonesiano', 'indonesian', 'indonesio'], defaultCountries: ['ID'] },
+  { code: 'eng', title: { it: 'Inglese', en: 'English', es: 'Inglés' }, aliases: ['eng', 'en', 'inglese', 'english', 'inglés'], defaultCountries: ['US', 'GB', 'UK', 'CA', 'AU', 'NZ', 'IE', 'JM', 'BS', 'BB', 'TT', 'BZ', 'GY', 'NG', 'GH', 'KE', 'ZA', 'SG', 'PR'] },
+  { code: 'ita', title: { it: 'Italiano', en: 'Italian', es: 'Italiano' }, aliases: ['ita', 'it', 'italiano', 'italian'], defaultCountries: ['IT', 'SM', 'VA'] },
+  { code: 'nor', title: { it: 'Norvegese', en: 'Norwegian', es: 'Noruego' }, aliases: ['nor', 'no', 'nob', 'nno', 'norvegese', 'norwegian', 'noruego'], defaultCountries: ['NO'] },
+  { code: 'nld', title: { it: 'Olandese', en: 'Dutch', es: 'Neerlandés' }, aliases: ['nld', 'dut', 'nl', 'olandese', 'dutch', 'neerlandés', 'flemish'], defaultCountries: ['NL', 'AW', 'CW', 'SR'] },
+  { code: 'fas', title: { it: 'Persiano', en: 'Persian', es: 'Persa' }, aliases: ['fas', 'per', 'fa', 'persiano', 'persian', 'persa', 'farsi'], defaultCountries: ['IR', 'AF', 'TJ'] },
+  { code: 'pol', title: { it: 'Polacco', en: 'Polish', es: 'Polaco' }, aliases: ['pol', 'pl', 'polacco', 'polish', 'polaco'], defaultCountries: ['PL'] },
+  { code: 'por', title: { it: 'Portoghese', en: 'Portuguese', es: 'Portugués' }, aliases: ['por', 'pt', 'portoghese', 'portuguese', 'portugués'], defaultCountries: ['PT', 'BR', 'AO', 'MZ', 'CV', 'GW', 'TL'] },
+  { code: 'ron', title: { it: 'Rumeno', en: 'Romanian', es: 'Rumano' }, aliases: ['ron', 'rum', 'ro', 'rumeno', 'romanian', 'rumano'], defaultCountries: ['RO', 'MD'] },
+  { code: 'rus', title: { it: 'Russo', en: 'Russian', es: 'Ruso' }, aliases: ['rus', 'ru', 'russo', 'russian', 'ruso'], defaultCountries: ['RU', 'BY', 'KZ', 'KG'] },
+  { code: 'srp', title: { it: 'Serbo', en: 'Serbian', es: 'Serbio' }, aliases: ['srp', 'sr', 'scc', 'serbo', 'serbian', 'serbio'], defaultCountries: ['RS', 'ME', 'BA'] },
+  { code: 'slk', title: { it: 'Slovacco', en: 'Slovak', es: 'Eslovaco' }, aliases: ['slk', 'slo', 'sk', 'slovacco', 'slovak', 'eslovaco'], defaultCountries: ['SK'] },
+  { code: 'spa', title: { it: 'Spagnolo', en: 'Spanish', es: 'Español' }, aliases: ['spa', 'es', 'spagnolo', 'spanish', 'español', 'castellano'], defaultCountries: ['ES', 'MX', 'AR', 'CO', 'CL', 'PE', 'VE', 'EC', 'GT', 'CU', 'BO', 'DO', 'HN', 'PY', 'SV', 'NI', 'CR', 'PA', 'UY', 'PR'] },
+  { code: 'swe', title: { it: 'Svedese', en: 'Swedish', es: 'Sueco' }, aliases: ['swe', 'sv', 'svedese', 'swedish', 'sueco'], defaultCountries: ['SE'] },
+  { code: 'deu', title: { it: 'Tedesco', en: 'German', es: 'Alemán' }, aliases: ['deu', 'ger', 'de', 'tedesco', 'german', 'alemán'], defaultCountries: ['DE', 'AT', 'CH', 'LI', 'LU'] },
+  { code: 'tha', title: { it: 'Thailandese', en: 'Thai', es: 'Tailandés' }, aliases: ['tha', 'th', 'thai', 'thailandese', 'tailandés'], defaultCountries: ['TH'] },
+  { code: 'tur', title: { it: 'Turco', en: 'Turkish', es: 'Turco' }, aliases: ['tur', 'tr', 'turco', 'turkish'], defaultCountries: ['TR'] },
+  { code: 'ukr', title: { it: 'Ucraino', en: 'Ukrainian', es: 'Ucraniano' }, aliases: ['ukr', 'uk', 'ucraino', 'ukrainian', 'ucraniano'], defaultCountries: ['UA'] },
+  { code: 'hun', title: { it: 'Ungherese', en: 'Hungarian', es: 'Húngaro' }, aliases: ['hun', 'hu', 'ungherese', 'hungarian', 'húngaro'], defaultCountries: ['HU'] },
+  { code: 'urd', title: { it: 'Urdu', en: 'Urdu', es: 'Urdu' }, aliases: ['urd', 'ur', 'urdu'], defaultCountries: ['PK'] },
+  { code: 'vie', title: { it: 'Vietnamita', en: 'Vietnamese', es: 'Vietnamita' }, aliases: ['vie', 'vi', 'vietnamita', 'vietnamese'], defaultCountries: ['VN'] },
+];
+
+const MIX_GENRES = [
+  { id: 'animation', title: { it: 'Animazione', en: 'Animation', es: 'Animación' }, categoryKeywords: ['animation', 'animazione', 'animación', 'cartoon', 'cartoons'], nameKeywords: ['cartoon'] },
+  { id: 'anime', title: { it: 'Anime', en: 'Anime', es: 'Anime' }, categoryKeywords: ['anime'], nameKeywords: ['anime', 'crunchyroll'] },
+  { id: 'auto', title: { it: 'Auto & Motori', en: 'Auto & Motors', es: 'Motor' }, categoryKeywords: ['auto', 'automotive', 'motor', 'motori', 'motorsport', 'racing'], nameKeywords: ['motorsport', 'top gear'] },
+  { id: 'kids', title: { it: 'Bambini', en: 'Kids', es: 'Infantil' }, categoryKeywords: ['kids', 'child', 'children', 'bambini', 'infantiles', 'infantil', 'junior'], nameKeywords: ['nickelodeon', 'disney', 'boing', 'k2', 'frisbee', 'super!', 'rai yoyo', 'rai gulp', 'baby tv'] },
+  { id: 'movies', title: { it: 'Cinema & Film', en: 'Movies & Film', es: 'Cine y Películas' }, categoryKeywords: ['movie', 'movies', 'cinema', 'cine', 'películas', 'peliculas', 'film', 'vod'], nameKeywords: ['cinema', 'movie', 'movies', 'hollywood', 'paramount', 'tcm'] },
+  { id: 'classic', title: { it: 'Classici & Retrò', en: 'Classic & Retro', es: 'Clásicos' }, categoryKeywords: ['classic', 'classics', 'classici', 'retro', 'clásicos'], nameKeywords: ['classic'] },
+  { id: 'comedy', title: { it: 'Commedia', en: 'Comedy', es: 'Comedia' }, categoryKeywords: ['comedy', 'commedia', 'comedia', 'humor', 'humour'], nameKeywords: ['comedy'] },
+  { id: 'cooking', title: { it: 'Cucina & Food', en: 'Cooking & Food', es: 'Cocina y Gastronomía' }, categoryKeywords: ['cooking', 'cucina', 'cocina', 'food', 'culinary', 'gastronomia'], nameKeywords: ['food network', 'gambero rosso', 'alma tv'] },
+  { id: 'culture', title: { it: 'Cultura & Arte', en: 'Culture & Arts', es: 'Cultura y Arte' }, categoryKeywords: ['culture', 'cultura', 'arts', 'art', 'arte', 'history'], nameKeywords: ['arte', 'rai 5', 'rai storia'] },
+  { id: 'documentary', title: { it: 'Documentari', en: 'Documentary', es: 'Documentales' }, categoryKeywords: ['documentary', 'documentaries', 'documentari', 'documentales', 'doc'], nameKeywords: ['discovery', 'national geographic', 'nat geo', 'history', 'focus'] },
+  { id: 'business', title: { it: 'Economia & Finanza', en: 'Business & Finance', es: 'Economía y Finanzas' }, categoryKeywords: ['business', 'economia', 'finance', 'finanza', 'financial', 'economy'], nameKeywords: ['bloomberg', 'cnbc', 'class cnbc'] },
+  { id: 'education', title: { it: 'Educazione', en: 'Education', es: 'Educación' }, categoryKeywords: ['education', 'educazione', 'educación', 'educational', 'learning', 'scuola'], nameKeywords: ['rai scuola', 'edu'] },
+  { id: 'family', title: { it: 'Famiglia', en: 'Family', es: 'Familia' }, categoryKeywords: ['family', 'famiglia', 'familia'], nameKeywords: [] },
+  { id: 'general', title: { it: 'Generali', en: 'General', es: 'General' }, categoryKeywords: ['general', 'generali', 'generale', 'undefined', 'eventuales', 'variedades', 'variety'], nameKeywords: [] },
+  { id: 'entertainment', title: { it: 'Intrattenimento', en: 'Entertainment', es: 'Entretenimiento' }, categoryKeywords: ['entertainment', 'intrattenimento', 'entretenimiento', 'show', 'doramas'], nameKeywords: ['tv8', 'nove', 'real time', 'dmax'] },
+  { id: 'legislative', title: { it: 'Istituzionale', en: 'Legislative & Civic', es: 'Institucional' }, categoryKeywords: ['legislative', 'parliament', 'government', 'istituzionale', 'civic', 'public'], nameKeywords: ['senato', 'camera dei deputati', 'parliament', 'c-span'] },
+  { id: 'lifestyle', title: { it: 'Lifestyle', en: 'Lifestyle', es: 'Estilo de vida' }, categoryKeywords: ['lifestyle', 'home', 'living'], nameKeywords: ['real time', 'hgtv'] },
+  { id: 'local', title: { it: 'Locali & Regionali', en: 'Local & Regional', es: 'Locales y Regionales' }, categoryKeywords: ['local', 'locali', 'regional', 'regionali', 'autonómicas', 'pluto', 'stirr', 'fast'], nameKeywords: [] },
+  { id: 'weather', title: { it: 'Meteo', en: 'Weather', es: 'Clima y Tiempo' }, categoryKeywords: ['weather', 'meteo', 'tiempo', 'clima'], nameKeywords: ['weather', 'meteo'] },
+  { id: 'fashion', title: { it: 'Moda', en: 'Fashion', es: 'Moda' }, categoryKeywords: ['fashion', 'moda', 'style'], nameKeywords: ['fashion tv', 'fashiontv'] },
+  { id: 'music', title: { it: 'Musica', en: 'Music', es: 'Música' }, categoryKeywords: ['music', 'musica', 'música', 'musicales', 'mtv', 'vh1'], nameKeywords: ['mtv', 'vh1', 'kiss', 'vevo', 'trace'] },
+  { id: 'outdoor', title: { it: 'Natura & Outdoor', en: 'Nature & Outdoor', es: 'Naturaleza' }, categoryKeywords: ['outdoor', 'nature', 'natura', 'wildlife', 'fishing', 'hunting'], nameKeywords: [] },
+  { id: 'news', title: { it: 'News & Informazione', en: 'News & Information', es: 'Noticias e Informativos' }, categoryKeywords: ['news', 'informativos', 'informazione', 'noticias', 'notizie', 'aktuell'], nameKeywords: ['news', 'cnn', 'bbc', 'euronews', 'rainews', 'tgcom', 'sky tg24', 'al jazeera', 'france 24', 'dw', 'nhk world'] },
+  { id: 'religious', title: { it: 'Religione', en: 'Religious', es: 'Religión' }, categoryKeywords: ['religious', 'religione', 'religión', 'religiosos', 'christian', 'islamic', 'catholic', 'gospel'], nameKeywords: ['tv2000', 'ewtn', 'padre pio', 'telepace'] },
+  { id: 'science', title: { it: 'Scienza & Tech', en: 'Science & Tech', es: 'Ciencia y Tecnología' }, categoryKeywords: ['science', 'scienza', 'ciencia', 'tech', 'technology', 'space'], nameKeywords: ['nasa', 'science'] },
+  { id: 'series', title: { it: 'Serie TV & Drama', en: 'Series & Drama', es: 'Series y Drama' }, categoryKeywords: ['series', 'serie', 'drama', 'novelas', 'telenovelas', 'doramas'], nameKeywords: ['series'] },
+  { id: 'shop', title: { it: 'Shopping', en: 'Shopping', es: 'Compras' }, categoryKeywords: ['shop', 'shopping', 'teleshop', 'commerce'], nameKeywords: ['qvc', 'hsn', 'jtv'] },
+  { id: 'sports', title: { it: 'Sport', en: 'Sports', es: 'Deportes' }, categoryKeywords: ['sport', 'sports', 'deporte', 'deportes', 'deportivos', 'football', 'soccer', 'espn', 'dazn'], nameKeywords: ['espn', 'fox sports', 'sky sport', 'eurosport', 'dazn', 'sportitalia', 'rai sport', 'beinsports', 'tudn'] },
+  { id: 'travel', title: { it: 'Viaggi', en: 'Travel', es: 'Viajes' }, categoryKeywords: ['travel', 'viaggi', 'viajes', 'tourism', 'turismo'], nameKeywords: ['travel'] },
+];
+
+const MIX_LANG_BY_CODE = new Map(MIX_LANGUAGES.map((l) => [l.code, l]));
+const MIX_GENRE_BY_ID = new Map(MIX_GENRES.map((g) => [g.id, g]));
+
+function mixFilterLabel(opt) {
+  const l = getLang();
+  return opt.title[l] || opt.title.it;
+}
+
+function sortedMixLanguages() {
+  const l = getLang();
+  const collator = new Intl.Collator(l === 'en' ? 'en' : l === 'es' ? 'es' : 'it', { sensitivity: 'base' });
+  return [...MIX_LANGUAGES].sort((a, b) => collator.compare(mixFilterLabel(a), mixFilterLabel(b)));
+}
+
+function sortedMixGenres() {
+  const l = getLang();
+  const collator = new Intl.Collator(l === 'en' ? 'en' : l === 'es' ? 'es' : 'it', { sensitivity: 'base' });
+  return [...MIX_GENRES].sort((a, b) => collator.compare(mixFilterLabel(a), mixFilterLabel(b)));
+}
+
+function hasActiveMixFilters() {
+  return state.selectedMixLanguages.size > 0 || state.selectedMixGenres.size > 0;
+}
+
+function matchesMixLanguages(ch) {
+  if (!state.selectedMixLanguages.size) return true;
+  const selected = [...state.selectedMixLanguages].map((c) => MIX_LANG_BY_CODE.get(c)).filter(Boolean);
+  if (!selected.length) return true;
+
+  const rawLangs = [
+    ...(ch.languages || []),
+    ...(ch.languageNames || []),
+    ...(ch.language ? [ch.language] : []),
+  ];
+  const tokens = rawLangs
+    .flatMap((v) => String(v || '').toLowerCase().split(/[;,/|]+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (tokens.length) {
+    return selected.some((opt) =>
+      tokens.some((tok) => opt.aliases.includes(tok) || opt.aliases.some((al) => al.length > 2 && tok.includes(al))),
+    );
+  }
+
+  const rawCountry = String(ch.country || '').trim().toUpperCase();
+  const normCountry = rawCountry === 'UK' ? 'GB' : rawCountry;
+  if (normCountry.length !== 2) return false;
+  return selected.some((opt) => opt.defaultCountries.includes(normCountry));
+}
+
+function matchesMixGenres(ch) {
+  if (!state.selectedMixGenres.size) return true;
+  const selected = [...state.selectedMixGenres].map((id) => MIX_GENRE_BY_ID.get(id)).filter(Boolean);
+  if (!selected.length) return true;
+
+  const rawCats = [
+    ...(ch.categories || []),
+    ...(ch.categoryNames || []),
+    ...(ch.category ? [ch.category] : []),
+  ];
+  const catTokens = rawCats
+    .flatMap((v) => String(v || '').toLowerCase().split(/[;,/|]+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const nameLower = ` ${String(ch.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+
+  return selected.some(
+    (g) =>
+      catTokens.some((tok) => g.categoryKeywords.includes(tok) || g.categoryKeywords.some((kw) => kw.length >= 4 && tok.includes(kw))) ||
+      g.nameKeywords.some((kw) => nameLower.includes(` ${kw} `)),
+  );
 }
 
 /* ---------------- Local Browser M3U Parser (5-Stage Country Inference) ---------------- */
@@ -1804,14 +1957,32 @@ async function ensureMixPoolLoaded() {
     return state.allWorldPool;
   }
   if (state.mixPoolLoaded && state.allWorldPool.length) return state.allWorldPool;
-  try {
-    const data = await api('/api/channels?limit=15000&sort=number');
-    state.allWorldPool = data.items || [];
-    state.mixPoolLoaded = true;
-  } catch (_) {
-    state.allWorldPool = state.channels.slice();
-  }
-  return state.allWorldPool;
+  if (state.mixPoolPromise) return state.mixPoolPromise;
+  state.mixPoolPromise = (async () => {
+    try {
+      const collected = [];
+      let offset = 0;
+      const limit = 10000;
+      while (offset < 40000) {
+        const data = await api(`/api/channels?limit=${limit}&offset=${offset}&sort=number`);
+        const batch = data.items || [];
+        if (!batch.length) break;
+        collected.push(...batch);
+        offset += batch.length;
+        if (!data.hasMore) break;
+      }
+      state.allWorldPool = collected.length ? collected : state.channels.slice();
+      state.mixPoolLoaded = collected.length > 0;
+    } catch (_) {
+      state.allWorldPool = state.channels.slice();
+    } finally {
+      state.mixPoolPromise = null;
+    }
+    if (!$('#mix-modal')?.hidden) updateMappamondoUI();
+    if (!$('#mix-filters-overlay')?.hidden) renderMixFiltersUI();
+    return state.allWorldPool;
+  })();
+  return state.mixPoolPromise;
 }
 
 function resetMixState(resetRegions = true) {
@@ -1826,6 +1997,8 @@ function resetMixState(resetRegions = true) {
   state.mixErrorRetryCount = 0;
   if (resetRegions) {
     state.selectedMixRegions = new Set(['ALL_WORLD']);
+    state.selectedMixLanguages.clear();
+    state.selectedMixGenres.clear();
   }
 }
 
@@ -1844,6 +2017,13 @@ function toggleMixRegionSelection(regionId) {
 
 function computeMixRegionCounts() {
   const counts = {};
+  if (hasActiveMixFilters() && (state.allWorldPool.length || state.channels.length)) {
+    getFilteredMixPool(false).forEach((c) => {
+      const reg = resolveMixRegion(c.country);
+      if (reg) counts[reg] = (counts[reg] || 0) + 1;
+    });
+    return counts;
+  }
   (state.config?.facets?.countries || []).forEach((c) => {
     const reg = resolveMixRegion(c.code);
     if (reg) counts[reg] = (counts[reg] || 0) + Number(c.count || 0);
@@ -1853,6 +2033,8 @@ function computeMixRegionCounts() {
 
 function openMixRegionPicker({ resetSession = true } = {}) {
   if (resetSession) resetMixState(true);
+  const filtersOverlay = $('#mix-filters-overlay');
+  if (filtersOverlay) filtersOverlay.hidden = true;
   ensureMixPoolLoaded();
   renderMappamondoSvgOnce();
   updateMappamondoUI();
@@ -1861,6 +2043,7 @@ function openMixRegionPicker({ resetSession = true } = {}) {
 }
 
 function renderMappamondoSvgOnce() {
+  const globeG = $('#mix-map-globe');
   const graticule = $('#mix-map-graticule');
   const regionsG = $('#mix-map-regions');
   if (!graticule || !regionsG || regionsG.dataset.built) return;
@@ -1869,34 +2052,50 @@ function renderMappamondoSvgOnce() {
   const ns = 'http://www.w3.org/2000/svg';
   const defs = document.createElementNS(ns, 'defs');
   defs.innerHTML = `
+    <radialGradient id="ocean-sphere-grad" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#0A223E"/>
+      <stop offset="100%" stop-color="#050E1B"/>
+    </radialGradient>
     <linearGradient id="cyan-selected-grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#00D4FF"/>
       <stop offset="100%" stop-color="#0284C7"/>
     </linearGradient>
+    <clipPath id="nat-earth-clip">
+      <path d="${WORLD_MAP_GRATICULE.globeD}"/>
+    </clipPath>
   `;
   $('#mix-world-svg').prepend(defs);
 
-  // Graticule lines matching Android Canvas
-  const hLines = [0.25, 0.50, 0.75].map((fy) => {
-    const line = document.createElementNS(ns, 'line');
-    line.setAttribute('x1', '0');
-    line.setAttribute('x2', '1000');
-    line.setAttribute('y1', String(515 * fy));
-    line.setAttribute('y2', String(515 * fy));
-    if (fy === 0.50) line.setAttribute('class', 'equator');
-    return line;
-  });
-  const vLines = [0.20, 0.40, 0.50, 0.60, 0.80].map((fx) => {
-    const line = document.createElementNS(ns, 'line');
-    line.setAttribute('y1', '0');
-    line.setAttribute('y2', '515');
-    line.setAttribute('x1', String(1000 * fx));
-    line.setAttribute('x2', String(1000 * fx));
-    return line;
-  });
-  graticule.append(...hLines, ...vLines);
+  // Natural Earth I curved ocean sphere & clipped graticule
+  if (globeG) {
+    const oceanFill = document.createElementNS(ns, 'path');
+    oceanFill.setAttribute('class', 'map-globe-fill');
+    oceanFill.setAttribute('d', WORLD_MAP_GRATICULE.globeD);
+    const oceanRim = document.createElementNS(ns, 'path');
+    oceanRim.setAttribute('class', 'map-globe-rim');
+    oceanRim.setAttribute('d', WORLD_MAP_GRATICULE.globeD);
+    globeG.append(oceanFill, oceanRim);
+  }
 
-  // Smooth B-spline SVG Continent Polygons
+  graticule.setAttribute('clip-path', 'url(#nat-earth-clip)');
+  WORLD_MAP_GRATICULE.parallelsD.forEach((d) => {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', d);
+    graticule.appendChild(p);
+  });
+  WORLD_MAP_GRATICULE.meridiansD.forEach((d) => {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', d);
+    graticule.appendChild(p);
+  });
+  if (WORLD_MAP_GRATICULE.equatorD) {
+    const eq = document.createElementNS(ns, 'path');
+    eq.setAttribute('class', 'equator');
+    eq.setAttribute('d', WORLD_MAP_GRATICULE.equatorD);
+    graticule.appendChild(eq);
+  }
+
+  // High-definition Natural Earth 110m vector country outlines grouped by MixRegion
   MIX_REGIONS.filter((r) => r.id !== 'ALL_WORLD').forEach((reg) => {
     const g = document.createElementNS(ns, 'g');
     g.setAttribute('class', 'region-group');
@@ -1905,10 +2104,11 @@ function renderMappamondoSvgOnce() {
     g.setAttribute('role', 'button');
     g.setAttribute('aria-label', regionTitle(reg));
 
-    reg.polygons.forEach((poly) => {
+    const polysD = WORLD_MAP_REGIONS[reg.id]?.polygonsD || [];
+    polysD.forEach((d) => {
       const path = document.createElementNS(ns, 'path');
       path.setAttribute('class', 'region-shape');
-      path.setAttribute('d', buildSmoothSvgPath(poly, 1000, 515));
+      path.setAttribute('d', d);
       g.appendChild(path);
     });
 
@@ -1949,29 +2149,44 @@ function renderMappamondoSvgOnce() {
 
 function updateMappamondoCallout(reg) {
   const callout = $('#mix-map-callout');
-  if (!callout || !reg?.anchor) return;
+  const anchor = WORLD_MAP_REGIONS[reg?.id]?.anchor || reg?.anchor;
+  if (!callout || !anchor) return;
   // Show ONLY compact region name on map floating callout (counts & details stay in bottom strip)
   $('#mix-callout-name').textContent = regionTitle(reg);
-  callout.style.left = `${reg.anchor[0] * 100}%`;
-  callout.style.top = `${Math.max(11, reg.anchor[1] * 100 - 4)}%`;
+  callout.style.left = `${anchor[0] * 100}%`;
+  callout.style.top = `${Math.max(11, anchor[1] * 100 - 4)}%`;
   callout.hidden = false;
 }
 
 function updateMappamondoUI() {
   const allWorld = state.selectedMixRegions.has('ALL_WORLD');
+  const activeFiltersCount = state.selectedMixLanguages.size + state.selectedMixGenres.size;
   const counts = computeMixRegionCounts();
-  const total = state.config?.stats?.channels || state.allWorldPool.length || state.channelsTotal;
+  const poolReady = state.mixPoolLoaded || Boolean(state.localOverrideChannels);
+  const matchingCount = poolReady
+    ? getFilteredMixPool(true).length
+    : state.config?.stats?.channels || state.allWorldPool.length || state.channelsTotal;
 
   $('#mix-modal-title').textContent = t('MIX · MAPPAMONDO', 'MIX · WORLD MAP', 'MIX · MAPAMUNDI');
+  const filterNote = activeFiltersCount > 0 ? ` · ${activeFiltersCount} ${t('filtri', 'filters', 'filtros')}` : '';
+  const chWord = t('canali', 'channels', 'canales');
   $('#mix-active-summary').textContent = allWorld
-    ? `${regionTitle(MIX_REGIONS[0])} · ${fmtNum(total)} ${t('canali', 'channels', 'canales')}`
-    : [...state.selectedMixRegions]
+    ? `${regionTitle(MIX_REGIONS[0])} · ${fmtNum(matchingCount)} ${chWord}${filterNote}`
+    : `${[...state.selectedMixRegions]
         .map((id) => regionTitle(MIX_REGIONS.find((r) => r.id === id)))
-        .join(' · ');
+        .join(' · ')} · ${fmtNum(matchingCount)} ${chWord}${filterNote}`;
 
   const allWorldBtn = $('#mix-btn-all-world');
   allWorldBtn.textContent = `🌍 ${t('Tutto il mondo', 'All World', 'Todo el mundo')}`;
   allWorldBtn.classList.toggle('is-selected', allWorld);
+
+  const filtersBtn = $('#mix-btn-filters');
+  if (filtersBtn) {
+    const fLabel = t('Filtri', 'Filters', 'Filtros');
+    filtersBtn.textContent = activeFiltersCount > 0 ? `⚙ ${fLabel} (${activeFiltersCount})` : `⚙ ${fLabel}`;
+    filtersBtn.classList.toggle('is-selected', activeFiltersCount > 0);
+  }
+
   $('#mix-btn-start').textContent = `▶ ${t('Avvia Mix', 'Start Mix', 'Iniciar Mix')}`;
 
   $$('#mix-world-svg .region-group').forEach((g) => {
@@ -1981,18 +2196,20 @@ function updateMappamondoUI() {
     g.classList.toggle('is-hovered', state.hoveredMixRegion === id);
   });
 
-  // Render bottom strip with mini-map SVG, counts & sociological subtitles
+  // Render bottom strip with crisp zoomed Natural Earth mini-map SVG, counts & sociological subtitles
   const strip = $('#mix-regions-strip');
   strip.innerHTML = MIX_REGIONS.filter((r) => r.id !== 'ALL_WORLD')
     .map((r) => {
       const selected = state.selectedMixRegions.has(r.id);
       const count = counts[r.id] || 0;
-      const miniPaths = r.polygons
-        .map((p) => `<path d="${buildSmoothSvgPath(p, 100, 52)}" fill="${selected ? '#00D4FF' : '#38BDF8'}" fill-opacity="${selected ? '0.95' : '0.45'}"/>`)
+      const geo = WORLD_MAP_REGIONS[r.id];
+      const viewBox = geo?.bboxSvg ? geo.bboxSvg.join(' ') : '0 0 100 52';
+      const miniPaths = (geo?.polygonsD || [])
+        .map((d) => `<path d="${d}" fill="${selected ? '#00D4FF' : '#38BDF8'}" fill-opacity="${selected ? '0.95' : '0.50'}"/>`)
         .join('');
       return `
         <button type="button" class="mix-region-card ${selected ? 'is-selected' : ''}" data-card-reg="${r.id}">
-          <svg class="mix-mini-map" viewBox="0 0 100 52">${miniPaths}</svg>
+          <svg class="mix-mini-map" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${miniPaths}</svg>
           <div class="mix-region-card-meta">
             <div class="mix-region-card-top">
               <span class="mix-region-card-title">${esc(regionTitle(r))}</span>
@@ -2020,20 +2237,149 @@ function updateMappamondoUI() {
   });
 }
 
-function getRegionalMixPool() {
+function openMixFiltersOverlay() {
+  const overlay = $('#mix-filters-overlay');
+  if (!overlay) return;
+  overlay.hidden = false;
+  renderMixFiltersUI();
+  ensureMixPoolLoaded();
+}
+
+function closeMixFiltersOverlay() {
+  const overlay = $('#mix-filters-overlay');
+  if (overlay) overlay.hidden = true;
+  updateMappamondoUI();
+}
+
+function toggleMixLanguage(code) {
+  if (state.selectedMixLanguages.has(code)) state.selectedMixLanguages.delete(code);
+  else state.selectedMixLanguages.add(code);
+  renderMixFiltersUI();
+  updateMappamondoUI();
+}
+
+function toggleMixGenre(id) {
+  if (state.selectedMixGenres.has(id)) state.selectedMixGenres.delete(id);
+  else state.selectedMixGenres.add(id);
+  renderMixFiltersUI();
+  updateMappamondoUI();
+}
+
+function clearMixFilters() {
+  if (!state.selectedMixLanguages.size && !state.selectedMixGenres.size) return;
+  state.selectedMixLanguages.clear();
+  state.selectedMixGenres.clear();
+  renderMixFiltersUI();
+  updateMappamondoUI();
+}
+
+function renderMixFiltersUI() {
+  const overlay = $('#mix-filters-overlay');
+  if (!overlay) return;
+  const totalActive = state.selectedMixLanguages.size + state.selectedMixGenres.size;
+  const poolReady = state.mixPoolLoaded || Boolean(state.localOverrideChannels);
+  const matchingCount = poolReady
+    ? getFilteredMixPool(true).length
+    : state.config?.stats?.channels || state.allWorldPool.length || state.channelsTotal;
+
+  $('#mix-filters-title').textContent = t(
+    'FILTRI MIX · LINGUE E GENERI',
+    'MIX FILTERS · LANGUAGES & GENRES',
+    'FILTROS MIX · IDIOMAS Y GÉNEROS',
+  );
+  const countTxt = `${fmtNum(matchingCount)} ${t('canali', 'channels', 'canales')}`;
+  $('#mix-filters-summary').textContent =
+    totalActive === 0
+      ? `${t('Nessun filtro attivo', 'No active filters', 'Sin filtros activos')} · ${countTxt}`
+      : `${totalActive} ${t('filtri attivi', 'active filters', 'filtros activos')} · ${countTxt}`;
+
+  const clearBtn = $('#mix-filters-clear');
+  if (clearBtn) {
+    clearBtn.textContent = t('Azzera', 'Clear', 'Borrar');
+    clearBtn.disabled = totalActive === 0;
+  }
+  const applyBtn = $('#mix-filters-apply');
+  if (applyBtn) {
+    applyBtn.textContent = `✓ ${t('Applica', 'Apply', 'Aplicar')}`;
+  }
+
+  const langs = sortedMixLanguages();
+  const genres = sortedMixGenres();
+
+  const langTab = $('#mix-tab-langs');
+  const genreTab = $('#mix-tab-genres');
+  if (langTab) {
+    langTab.textContent =
+      `${t('Lingue', 'Languages', 'Idiomas')} (${langs.length})` +
+      (state.selectedMixLanguages.size ? ` · ${state.selectedMixLanguages.size}` : '');
+    const isActive = state.mixFilterTab !== 'genres';
+    langTab.classList.toggle('is-active', isActive);
+    langTab.setAttribute('aria-selected', String(isActive));
+  }
+  if (genreTab) {
+    genreTab.textContent =
+      `${t('Generi', 'Genres', 'Géneros')} (${genres.length})` +
+      (state.selectedMixGenres.size ? ` · ${state.selectedMixGenres.size}` : '');
+    const isActive = state.mixFilterTab === 'genres';
+    genreTab.classList.toggle('is-active', isActive);
+    genreTab.setAttribute('aria-selected', String(isActive));
+  }
+
+  const grid = $('#mix-filters-grid');
+  if (!grid) return;
+  if (state.mixFilterTab === 'genres') {
+    grid.innerHTML = genres
+      .map((g) => {
+        const selected = state.selectedMixGenres.has(g.id);
+        return `
+          <button type="button" class="mix-filter-chip ${selected ? 'is-selected' : ''}" data-filter-genre="${esc(g.id)}">
+            <span class="mix-filter-check">${selected ? '✓' : ''}</span>
+            <span class="mix-filter-label">${esc(mixFilterLabel(g))}</span>
+          </button>
+        `;
+      })
+      .join('');
+    $$('[data-filter-genre]', grid).forEach((btn) =>
+      btn.addEventListener('click', () => toggleMixGenre(btn.dataset.filterGenre)),
+    );
+  } else {
+    grid.innerHTML = langs
+      .map((l) => {
+        const selected = state.selectedMixLanguages.has(l.code);
+        return `
+          <button type="button" class="mix-filter-chip ${selected ? 'is-selected' : ''}" data-filter-lang="${esc(l.code)}">
+            <span class="mix-filter-check">${selected ? '✓' : ''}</span>
+            <span class="mix-filter-label">${esc(mixFilterLabel(l))}</span>
+          </button>
+        `;
+      })
+      .join('');
+    $$('[data-filter-lang]', grid).forEach((btn) =>
+      btn.addEventListener('click', () => toggleMixLanguage(btn.dataset.filterLang)),
+    );
+  }
+}
+
+function getFilteredMixPool(applyRegions = true) {
   const base = state.allWorldPool.length ? state.allWorldPool : state.channels;
-  const httpPool = base.filter((c) => {
+  const filtered = base.filter((c) => {
     if (!/^https?:\/\//i.test(c.streamUrl || '') || state.deadMixIds.has(c.id)) return false;
     if (!state.mixIncludeAudioOnly && (state.runtimeAudioOnlyIds.has(c.id) || isLikelyAudioOnlyChannel(c))) {
       return false;
     }
+    if (!matchesMixLanguages(c)) return false;
+    if (!matchesMixGenres(c)) return false;
     return true;
   });
-  if (state.selectedMixRegions.has('ALL_WORLD')) return httpPool;
-  return httpPool.filter((c) => {
+  if (!applyRegions || state.selectedMixRegions.has('ALL_WORLD')) return filtered;
+  return filtered.filter((c) => {
     const reg = resolveMixRegion(c.country);
     return reg && state.selectedMixRegions.has(reg);
   });
+}
+
+function getRegionalMixPool() {
+  return getFilteredMixPool(true);
 }
 
 function pickRandomMixCandidate(excludeIds = new Set()) {
@@ -2096,15 +2442,28 @@ function preverifyNextMixCandidate() {
 }
 
 async function startMixPlayback() {
-  $('#mix-modal').hidden = true;
   resetMixState(false);
   state.mixAudioSkipCount = 0;
   await ensureMixPoolLoaded();
   const pool = getRegionalMixPool();
   if (!pool.length) {
-    toast(t('Nessun canale disponibile nelle regioni selezionate', 'No channels in selected regions'), 'err');
+    toast(
+      hasActiveMixFilters()
+        ? t(
+            'Nessun canale corrisponde ai filtri selezionati',
+            'No channels match the selected filters',
+            'Ningún canal coincide con los filtros seleccionados',
+          )
+        : t(
+            'Nessun canale disponibile nelle regioni selezionate',
+            'No channels in selected regions',
+            'Sin canales en las regiones seleccionadas',
+          ),
+      'err',
+    );
     return;
   }
+  $('#mix-modal').hidden = true;
   const first = pickRandomMixCandidate();
   if (!first) return;
   state.mixHistory = [first];
@@ -3935,8 +4294,22 @@ function bindGlobalEvents() {
     performGlobalSearch('');
   });
 
-  // Mix Mappamondo buttons & close handlers
+  // Mix Mappamondo buttons, filter overlay & close handlers
   $('#mix-btn-all-world')?.addEventListener('click', () => toggleMixRegionSelection('ALL_WORLD'));
+  $('#mix-btn-filters')?.addEventListener('click', openMixFiltersOverlay);
+  $('#mix-filters-clear')?.addEventListener('click', clearMixFilters);
+  $('#mix-filters-apply')?.addEventListener('click', closeMixFiltersOverlay);
+  $('#mix-tab-langs')?.addEventListener('click', () => {
+    state.mixFilterTab = 'languages';
+    renderMixFiltersUI();
+  });
+  $('#mix-tab-genres')?.addEventListener('click', () => {
+    state.mixFilterTab = 'genres';
+    renderMixFiltersUI();
+  });
+  $('#mix-filters-overlay')?.addEventListener('click', (e) => {
+    if (e.target === $('#mix-filters-overlay')) closeMixFiltersOverlay();
+  });
   $('#mix-btn-start')?.addEventListener('click', startMixPlayback);
   $$('[data-close-mix-modal]').forEach((el) =>
     el.addEventListener('click', () => {
@@ -3970,8 +4343,12 @@ function bindGlobalEvents() {
   $('#drawer-close-btn')?.addEventListener('click', () => togglePlayerDrawer(false));
   $('#player-mix-regions-btn')?.addEventListener('click', () => {
     const keepRegions = new Set(state.selectedMixRegions);
+    const keepLanguages = new Set(state.selectedMixLanguages);
+    const keepGenres = new Set(state.selectedMixGenres);
     closePlayer();
     state.selectedMixRegions = keepRegions;
+    state.selectedMixLanguages = keepLanguages;
+    state.selectedMixGenres = keepGenres;
     openMixRegionPicker({ resetSession: false });
   });
   $('#player-prev-ch')?.addEventListener('click', () => stepNormalChannel(-1));
@@ -4055,7 +4432,8 @@ function bindGlobalEvents() {
     }
 
     if (e.key === 'Escape') {
-      if (!$('#mix-modal').hidden) $('#mix-modal').hidden = true;
+      if (!$('#mix-filters-overlay')?.hidden) closeMixFiltersOverlay();
+      else if (!$('#mix-modal').hidden) $('#mix-modal').hidden = true;
       else if (!$('#country-modal').hidden) $('#country-modal').hidden = true;
       else if (!$('#server-modal').hidden) $('#server-modal').hidden = true;
       else if (!$('#profile-modal').hidden && state.activeProfile) closeProfileGate();

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#060B14" id="meta-theme-color" />
     <title>CasaTV</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=26.11.021" />
+    <link rel="stylesheet" href="/styles.css?v=26.11.022" />
   </head>
   <body>
     <div class="bg-glow" aria-hidden="true"></div>
@@ -233,6 +233,7 @@
           </div>
           <div class="mix-header-actions">
             <button type="button" class="casa-btn ghost" id="mix-btn-all-world">🌍 Tutto il mondo</button>
+            <button type="button" class="casa-btn ghost" id="mix-btn-filters">⚙ Filtri</button>
             <button type="button" class="casa-btn primary" id="mix-btn-start">▶ Avvia Mix</button>
             <button type="button" class="casa-btn ghost" data-close-mix-modal>Chiudi</button>
           </div>
@@ -241,6 +242,7 @@
         <!-- Interactive SVG World Map Canvas -->
         <div class="mix-map-container" id="mix-map-container">
           <svg class="mix-world-svg" id="mix-world-svg" viewBox="0 0 1000 515" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mappamondo interattivo delle regioni">
+            <g class="map-globe" id="mix-map-globe"></g>
             <g class="map-graticule" id="mix-map-graticule"></g>
             <g class="map-regions" id="mix-map-regions"></g>
             <g class="map-anchors" id="mix-map-anchors"></g>
@@ -256,6 +258,27 @@
 
         <div class="mix-footer-hint" id="mix-footer-hint">
           Seleziona una o più aree del mappamondo · Tutto il mondo include tutti i continenti
+        </div>
+
+        <!-- Filters Overlay (Languages & Genres) -->
+        <div class="mix-filters-overlay" id="mix-filters-overlay" hidden>
+          <div class="mix-filters-panel" role="dialog" aria-modal="true" aria-labelledby="mix-filters-title">
+            <div class="mix-filters-header">
+              <div class="mix-filters-titles">
+                <h3 id="mix-filters-title">FILTRI MIX · LINGUE E GENERI</h3>
+                <p class="mix-filters-summary" id="mix-filters-summary">Nessun filtro attivo · 0 canali</p>
+              </div>
+              <div class="mix-filters-actions">
+                <button type="button" class="casa-btn ghost" id="mix-filters-clear">Azzera</button>
+                <button type="button" class="casa-btn primary" id="mix-filters-apply">✓ Applica</button>
+              </div>
+            </div>
+            <div class="mix-filters-tabs" role="tablist">
+              <button type="button" class="mix-filter-tab is-active" id="mix-tab-langs" data-filter-tab="languages" role="tab" aria-selected="true">Lingue (37)</button>
+              <button type="button" class="mix-filter-tab" id="mix-tab-genres" data-filter-tab="genres" role="tab" aria-selected="false">Generi (29)</button>
+            </div>
+            <div class="mix-filters-grid" id="mix-filters-grid"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -363,6 +386,6 @@
     <script src="/vendor/hls.min.js"></script>
     <script src="/vendor/mpegts.min.js"></script>
     <script src="/vendor/dash.mediaplayer.min.js"></script>
-    <script type="module" src="/app.js?v=26.11.021"></script>
+    <script type="module" src="/app.js?v=26.11.022"></script>
   </body>
 </html>

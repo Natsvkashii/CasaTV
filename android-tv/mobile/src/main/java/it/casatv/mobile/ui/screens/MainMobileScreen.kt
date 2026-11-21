@@ -75,8 +75,9 @@ import it.casatv.mobile.ui.LocalMobileStrings
 import it.casatv.mobile.ui.MixRegion
 import it.casatv.mobile.ui.MixRegionPickerDialog
 import it.casatv.mobile.ui.MobileUiState
-import it.casatv.mobile.ui.computeMixRegionCounts
-import it.casatv.mobile.ui.isLikelyAudioOnlyChannel
+import it.casatv.mobile.ui.computeMobileFilteredMixRegionCounts
+import it.casatv.mobile.ui.filterMobileMixPool
+import it.casatv.mobile.ui.matchesMixRegions
 import it.casatv.mobile.update.UpdateFrequency
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,6 +90,9 @@ fun MainMobileScreen(
     onToggleFavorite: (MobileChannel) -> Unit,
     onOpenMixPicker: () -> Unit,
     onToggleMixRegion: (MixRegion) -> Unit,
+    onToggleMixLanguage: (String) -> Unit,
+    onToggleMixGenre: (String) -> Unit,
+    onClearMixFilters: () -> Unit,
     onStartMixFromRegions: () -> Unit,
     onDismissMixPicker: () -> Unit,
     onImportUrl: (name: String, url: String) -> Unit,
@@ -290,24 +294,53 @@ fun MainMobileScreen(
     }
 
     if (state.showMixRegionPicker) {
-        val mixPoolChannels = remember(state.allChannels, state.mixIncludeAudioOnly) {
-            if (state.mixIncludeAudioOnly) {
-                state.allChannels
-            } else {
-                state.allChannels.filter { !isLikelyAudioOnlyChannel(it) }
-            }
+        val filteredPool = remember(
+            state.allChannels,
+            state.mixIncludeAudioOnly,
+            state.selectedMixLanguages,
+            state.selectedMixGenres,
+        ) {
+            filterMobileMixPool(
+                channels = state.allChannels,
+                includeAudioOnly = state.mixIncludeAudioOnly,
+                selectedLanguages = state.selectedMixLanguages,
+                selectedGenres = state.selectedMixGenres,
+            )
         }
-        val regionCounts = remember(mixPoolChannels) {
-            computeMixRegionCounts(mixPoolChannels)
+        val regionCounts = remember(
+            state.allChannels,
+            state.mixIncludeAudioOnly,
+            state.selectedMixLanguages,
+            state.selectedMixGenres,
+        ) {
+            computeMobileFilteredMixRegionCounts(
+                channels = state.allChannels,
+                includeAudioOnly = state.mixIncludeAudioOnly,
+                selectedLanguages = state.selectedMixLanguages,
+                selectedGenres = state.selectedMixGenres,
+            )
+        }
+        val matchingChannelCount = remember(filteredPool, state.selectedMixRegions) {
+            if (MixRegion.ALL_WORLD in state.selectedMixRegions || state.selectedMixRegions.isEmpty()) {
+                filteredPool.size
+            } else {
+                filteredPool.count { matchesMixRegions(it.country, state.selectedMixRegions) }
+            }
         }
         MixRegionPickerDialog(
             language = state.language,
             selectedRegions = state.selectedMixRegions,
             regionCounts = regionCounts,
-            totalChannels = mixPoolChannels.size,
+            totalChannels = filteredPool.size,
             onToggleRegion = onToggleMixRegion,
             onStartMix = onStartMixFromRegions,
             onDismiss = onDismissMixPicker,
+            selectedLanguages = state.selectedMixLanguages,
+            selectedGenres = state.selectedMixGenres,
+            matchingChannelCount = matchingChannelCount,
+            onToggleLanguage = onToggleMixLanguage,
+            onToggleGenre = onToggleMixGenre,
+            onClearFilters = onClearMixFilters,
         )
     }
 }

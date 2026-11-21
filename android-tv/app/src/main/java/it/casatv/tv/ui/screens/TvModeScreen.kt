@@ -69,7 +69,9 @@ import it.casatv.tv.ui.MainViewModel
 import it.casatv.tv.ui.MixRegionPickerDialog
 import it.casatv.tv.ui.TvSubTab
 import it.casatv.tv.ui.buildCountryCatalog
+import it.casatv.tv.ui.computeFilteredMixRegionCounts
 import it.casatv.tv.ui.computeMixRegionCounts
+import it.casatv.tv.ui.countMatchingMixChannels
 import it.casatv.tv.ui.components.EmptyBox
 import it.casatv.tv.ui.components.ErrorBox
 import it.casatv.tv.ui.components.GridChannelCard
@@ -112,6 +114,10 @@ fun TvModeScreen(
     val lastPlayedId by vm.lastPlayedChannelId.collectAsStateWithLifecycle()
     val showMixRegionPicker by vm.showMixRegionPicker.collectAsStateWithLifecycle()
     val selectedMixRegions by vm.selectedMixRegions.collectAsStateWithLifecycle()
+    val selectedMixLanguages by vm.selectedMixLanguages.collectAsStateWithLifecycle()
+    val selectedMixGenres by vm.selectedMixGenres.collectAsStateWithLifecycle()
+    val mixChannels by vm.mixChannels.collectAsStateWithLifecycle()
+    val mixIncludeAudioOnly by vm.mixIncludeAudioOnly.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val scale = rememberTvUiScale()
     val targetIndex = remember(queue, lastPlayedId) {
@@ -480,8 +486,32 @@ fun TvModeScreen(
     }
 
     if (showMixRegionPicker) {
-        val regionCounts = remember(config?.facets?.countries) {
-            computeMixRegionCounts(config?.facets?.countries.orEmpty())
+        val mixPool = mixChannels.ifEmpty { queue }
+        val hasExtraFilters = selectedMixLanguages.isNotEmpty() || selectedMixGenres.isNotEmpty()
+        val regionCounts = remember(config?.facets?.countries, mixPool, hasExtraFilters, selectedMixLanguages, selectedMixGenres, mixIncludeAudioOnly) {
+            if (hasExtraFilters && mixPool.isNotEmpty()) {
+                computeFilteredMixRegionCounts(
+                    channels = mixPool,
+                    includeAudioOnly = mixIncludeAudioOnly,
+                    selectedLanguages = selectedMixLanguages,
+                    selectedGenres = selectedMixGenres,
+                )
+            } else {
+                computeMixRegionCounts(config?.facets?.countries.orEmpty())
+            }
+        }
+        val matchingCount = remember(mixPool, hasExtraFilters, selectedMixRegions, selectedMixLanguages, selectedMixGenres, mixIncludeAudioOnly) {
+            if (!hasExtraFilters || mixPool.isEmpty()) {
+                null
+            } else {
+                countMatchingMixChannels(
+                    channels = mixPool,
+                    includeAudioOnly = mixIncludeAudioOnly,
+                    selectedRegions = selectedMixRegions,
+                    selectedLanguages = selectedMixLanguages,
+                    selectedGenres = selectedMixGenres,
+                )
+            }
         }
         val totalAllChannels = remember(config?.stats?.channels, queue.size) {
             config?.stats?.channels ?: queue.size
@@ -493,6 +523,12 @@ fun TvModeScreen(
             onToggleRegion = { vm.toggleMixRegion(it) },
             onStartMix = { vm.startMixFromSelectedRegions() },
             onDismiss = { vm.dismissMixRegionPicker() },
+            selectedLanguages = selectedMixLanguages,
+            selectedGenres = selectedMixGenres,
+            matchingChannelCount = matchingCount,
+            onToggleLanguage = { vm.toggleMixLanguage(it) },
+            onToggleGenre = { vm.toggleMixGenre(it) },
+            onClearFilters = { vm.clearMixFilters() },
         )
     }
 }

@@ -13,8 +13,8 @@ android {
         applicationId = "it.casatv.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2611021
-        versionName = "26.11.021"
+        versionCode = 2611022
+        versionName = "26.11.022"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
     }
 

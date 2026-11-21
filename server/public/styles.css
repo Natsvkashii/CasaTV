@@ -766,6 +766,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round
 
 /* ---------------- Interactive Mappamondo Modal ---------------- */
 .mappamondo-dialog {
+  position: relative;
   max-width: 1140px;
   width: 96vw;
   height: min(90vh, 760px);
@@ -838,39 +839,48 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round
   height: 100%;
   display: block;
 }
-.map-graticule line {
-  stroke: rgba(30, 58, 95, 0.5);
+#mix-map-globe .map-globe-fill {
+  fill: url(#ocean-sphere-grad);
+}
+#mix-map-globe .map-globe-rim {
+  fill: none;
+  stroke: #1F426B;
+  stroke-width: 1.5;
+}
+.map-graticule path {
+  fill: none;
+  stroke: rgba(30, 58, 95, 0.45);
   stroke-width: 1;
   stroke-dasharray: 5 7;
 }
-.map-graticule line.equator { stroke: rgba(56, 189, 248, 0.35); stroke-width: 1.4; }
+.map-graticule path.equator { stroke: rgba(56, 189, 248, 0.42); stroke-width: 1.3; }
 .region-group { cursor: pointer; outline: none; }
 .region-shape {
   fill: #132740;
   stroke: #284870;
-  stroke-width: 1.4;
+  stroke-width: 0.75;
+  vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
   stroke-linecap: round;
-  transition: fill .16s ease, stroke .16s ease, filter .16s ease;
+  transition: fill .14s ease, stroke .14s ease, stroke-width .14s ease;
 }
 .region-group.is-world .region-shape {
-  fill: rgba(14, 165, 233, 0.72);
-  stroke: rgba(224, 247, 255, 0.8);
+  fill: rgba(14, 165, 233, 0.76);
+  stroke: rgba(8, 47, 73, 0.65);
 }
 .region-group.is-hovered .region-shape {
   fill: #1F4B7A;
   stroke: #FFFFFF;
-  stroke-width: 2.3;
+  stroke-width: 1.45;
 }
 .region-group.is-selected .region-shape {
   fill: url(#cyan-selected-grad);
   stroke: #E0F7FF;
-  stroke-width: 2;
-  filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.48));
+  stroke-width: 1.05;
 }
 .region-group.is-selected.is-hovered .region-shape {
   stroke: #FFFFFF;
-  stroke-width: 2.8;
+  stroke-width: 1.65;
 }
 
 /* Compact Name-Only Floating Map Callout Pill */
@@ -952,6 +962,142 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round
   font-size: 10.5px;
   color: #7A95B5;
   text-align: center;
+}
+
+/* Mix Filters Overlay (Languages & Genres) */
+.mix-filters-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: 22px;
+  background: rgba(2, 6, 13, 0.86);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+.mix-filters-overlay[hidden] { display: none; }
+.mix-filters-panel {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #0C1728, #060B14);
+  border: 1.5px solid #28507E;
+  border-radius: 18px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+.mix-filters-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mix-filters-titles h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #FFFFFF;
+}
+.mix-filters-summary {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7DD3FC;
+}
+.mix-filters-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mix-filters-tabs {
+  display: flex;
+  gap: 8px;
+}
+.mix-filter-tab {
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: #0F1B2E;
+  border: 1px solid #284266;
+  color: #CBD5E1;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .14s, border-color .14s, color .14s;
+}
+.mix-filter-tab:hover {
+  background: #172B47;
+  border-color: #7DD3FC;
+  color: #FFFFFF;
+}
+.mix-filter-tab.is-active {
+  background: #0284C7;
+  border-color: #38BDF8;
+  color: #FFFFFF;
+}
+.mix-filters-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 8px;
+  align-content: start;
+  padding-right: 4px;
+}
+.mix-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #0C1728;
+  border: 1px solid #1E3A5F;
+  color: #E2E8F0;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background .13s, border-color .13s, color .13s;
+}
+.mix-filter-chip:hover {
+  background: #163357;
+  border-color: #7DD3FC;
+  color: #FFFFFF;
+}
+.mix-filter-chip.is-selected {
+  background: #0B355C;
+  border: 1.5px solid #00D4FF;
+  color: #BAE6FD;
+  font-weight: 700;
+}
+.mix-filter-check {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  flex: none;
+  background: #162740;
+  border: 1px solid #2D4C73;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 900;
+  color: #04101A;
+}
+.mix-filter-chip.is-selected .mix-filter-check {
+  background: #00D4FF;
+  border-color: #FFFFFF;
+}
+.mix-filter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------------- Player Modal + Quick Drawer + Fixed Bottom OSD ---------------- */
@@ -2061,6 +2207,9 @@ html[data-device="smartphone"] .mix-regions-strip {
   max-height: 44vh;
 }
 html[data-device="smartphone"] .mix-region-card { max-width: none; }
+html[data-device="smartphone"] .mix-filters-overlay { border-radius: 0; padding: 10px; }
+html[data-device="smartphone"] .mix-filters-panel { padding: 12px 14px; }
+html[data-device="smartphone"] .mix-filters-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 html[data-device="smartphone"] .player-bottom-strip {
   left: 10px;
   right: 10px;

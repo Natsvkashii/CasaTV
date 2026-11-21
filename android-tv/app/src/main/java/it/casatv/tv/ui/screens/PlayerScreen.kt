@@ -104,7 +104,9 @@ import it.casatv.tv.ui.MixRegionPickerDialog
 import it.casatv.tv.ui.buildCountryCatalog
 import it.casatv.tv.ui.components.ChannelLivePreviewBox
 import it.casatv.tv.ui.components.ChannelLogo
+import it.casatv.tv.ui.computeFilteredMixRegionCounts
 import it.casatv.tv.ui.computeMixRegionCounts
+import it.casatv.tv.ui.countMatchingMixChannels
 import it.casatv.tv.ui.components.OsdAudioTrack
 import it.casatv.tv.ui.components.OsdSubtitleTrack
 import it.casatv.tv.ui.components.PlayerOsdMenu
@@ -238,6 +240,10 @@ fun PlayerScreen(vm: MainViewModel) {
     val showRemoteHintsBanner by vm.showRemoteHintsBanner.collectAsStateWithLifecycle()
     val showMixRegionPicker by vm.showMixRegionPicker.collectAsStateWithLifecycle()
     val selectedMixRegions by vm.selectedMixRegions.collectAsStateWithLifecycle()
+    val selectedMixLanguages by vm.selectedMixLanguages.collectAsStateWithLifecycle()
+    val selectedMixGenres by vm.selectedMixGenres.collectAsStateWithLifecycle()
+    val mixChannels by vm.mixChannels.collectAsStateWithLifecycle()
+    val zapQueue by vm.zapQueue.collectAsStateWithLifecycle()
     var firstVideoFrameRendered by remember { mutableStateOf(false) }
     var audioSkipCount by remember { mutableIntStateOf(0) }
     var hintsBannerVisible by remember { mutableStateOf(false) }
@@ -1431,8 +1437,32 @@ fun PlayerScreen(vm: MainViewModel) {
         }
 
         if (showMixRegionPicker) {
-            val regionCounts = remember(config?.facets?.countries) {
-                computeMixRegionCounts(config?.facets?.countries.orEmpty())
+            val mixPool = mixChannels.ifEmpty { zapQueue }.ifEmpty { session.queue }
+            val hasExtraFilters = selectedMixLanguages.isNotEmpty() || selectedMixGenres.isNotEmpty()
+            val regionCounts = remember(config?.facets?.countries, mixPool, hasExtraFilters, selectedMixLanguages, selectedMixGenres, mixIncludeAudioOnly) {
+                if (hasExtraFilters && mixPool.isNotEmpty()) {
+                    computeFilteredMixRegionCounts(
+                        channels = mixPool,
+                        includeAudioOnly = mixIncludeAudioOnly,
+                        selectedLanguages = selectedMixLanguages,
+                        selectedGenres = selectedMixGenres,
+                    )
+                } else {
+                    computeMixRegionCounts(config?.facets?.countries.orEmpty())
+                }
+            }
+            val matchingCount = remember(mixPool, hasExtraFilters, selectedMixRegions, selectedMixLanguages, selectedMixGenres, mixIncludeAudioOnly) {
+                if (!hasExtraFilters || mixPool.isEmpty()) {
+                    null
+                } else {
+                    countMatchingMixChannels(
+                        channels = mixPool,
+                        includeAudioOnly = mixIncludeAudioOnly,
+                        selectedRegions = selectedMixRegions,
+                        selectedLanguages = selectedMixLanguages,
+                        selectedGenres = selectedMixGenres,
+                    )
+                }
             }
             val totalAllChannels = remember(config?.stats?.channels, session.queue.size) {
                 config?.stats?.channels ?: session.queue.size
@@ -1444,6 +1474,12 @@ fun PlayerScreen(vm: MainViewModel) {
                 onToggleRegion = { vm.toggleMixRegion(it) },
                 onStartMix = { vm.startMixFromSelectedRegions() },
                 onDismiss = { vm.dismissMixRegionPicker() },
+                selectedLanguages = selectedMixLanguages,
+                selectedGenres = selectedMixGenres,
+                matchingChannelCount = matchingCount,
+                onToggleLanguage = { vm.toggleMixLanguage(it) },
+                onToggleGenre = { vm.toggleMixGenre(it) },
+                onClearFilters = { vm.clearMixFilters() },
             )
         }
     }

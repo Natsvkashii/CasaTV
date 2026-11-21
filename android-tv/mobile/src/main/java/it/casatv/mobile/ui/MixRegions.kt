@@ -1,5 +1,6 @@
 package it.casatv.mobile.ui
 
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,10 +53,11 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -70,6 +72,8 @@ import java.util.EnumMap
 import java.util.Locale
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class MixRegion(
     val titleIt: String,
@@ -264,225 +268,116 @@ fun computeMixRegionCounts(channels: List<MobileChannel>): Map<MixRegion, Int> {
     return map
 }
 
+private data class MobileWorldPolyBbox(
+    val minX: Float,
+    val minY: Float,
+    val maxX: Float,
+    val maxY: Float,
+    val points: List<Pair<Float, Float>>,
+)
+
 private data class MobileWorldRegionGeo(
     val region: MixRegion,
     val anchor: Pair<Float, Float>,
-    val polygons: List<List<Pair<Float, Float>>>,
+    val polygons: List<MobileWorldPolyBbox>,
 )
 
-private val MOBILE_WORLD_REGION_GEOS: List<MobileWorldRegionGeo> = listOf(
-    MobileWorldRegionGeo(
-        region = MixRegion.NORTH_AMERICA,
-        anchor = 0.21f to 0.265f,
-        polygons = listOf(
-            listOf(
-                0.030f to 0.142f, 0.068f to 0.105f, 0.118f to 0.098f, 0.155f to 0.118f,
-                0.195f to 0.102f, 0.225f to 0.132f, 0.250f to 0.120f, 0.265f to 0.165f,
-                0.242f to 0.195f, 0.275f to 0.175f, 0.305f to 0.155f, 0.335f to 0.195f,
-                0.350f to 0.228f, 0.320f to 0.258f, 0.302f to 0.285f, 0.286f to 0.322f,
-                0.276f to 0.365f, 0.280f to 0.405f, 0.264f to 0.398f, 0.252f to 0.362f,
-                0.224f to 0.358f, 0.202f to 0.382f, 0.186f to 0.376f, 0.160f to 0.366f,
-                0.142f to 0.336f, 0.125f to 0.285f, 0.118f to 0.232f, 0.095f to 0.195f,
-                0.062f to 0.202f, 0.034f to 0.182f,
-            ),
-            listOf(
-                0.315f to 0.068f, 0.355f to 0.042f, 0.405f to 0.036f, 0.436f to 0.058f,
-                0.425f to 0.102f, 0.396f to 0.148f, 0.372f to 0.198f, 0.350f to 0.190f,
-                0.338f to 0.142f, 0.312f to 0.105f,
-            ),
-            listOf(
-                0.208f to 0.055f, 0.262f to 0.042f, 0.298f to 0.056f, 0.296f to 0.096f,
-                0.262f to 0.105f, 0.228f to 0.088f, 0.198f to 0.082f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.CENTRAL_AMERICA,
-        anchor = 0.22f to 0.46f,
-        polygons = listOf(
-            listOf(
-                0.160f to 0.374f, 0.190f to 0.388f, 0.205f to 0.395f, 0.215f to 0.432f,
-                0.242f to 0.432f, 0.248f to 0.452f, 0.236f to 0.470f, 0.252f to 0.495f,
-                0.268f to 0.518f, 0.264f to 0.538f, 0.244f to 0.528f, 0.226f to 0.504f,
-                0.204f to 0.482f, 0.182f to 0.456f, 0.166f to 0.422f, 0.152f to 0.395f,
-            ),
-            listOf(
-                0.244f to 0.426f, 0.272f to 0.424f, 0.302f to 0.438f,
-                0.305f to 0.452f, 0.282f to 0.454f, 0.252f to 0.442f,
-            ),
-            listOf(
-                0.306f to 0.454f, 0.332f to 0.456f, 0.348f to 0.466f,
-                0.344f to 0.482f, 0.320f to 0.482f, 0.304f to 0.470f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.SOUTH_AMERICA,
-        anchor = 0.325f to 0.675f,
-        polygons = listOf(
-            listOf(
-                0.266f to 0.538f, 0.286f to 0.516f, 0.314f to 0.514f, 0.342f to 0.534f,
-                0.376f to 0.562f, 0.408f to 0.606f, 0.414f to 0.648f, 0.396f to 0.692f,
-                0.378f to 0.738f, 0.354f to 0.782f, 0.336f to 0.828f, 0.328f to 0.876f,
-                0.314f to 0.916f, 0.292f to 0.912f, 0.284f to 0.862f, 0.282f to 0.802f,
-                0.276f to 0.735f, 0.266f to 0.675f, 0.250f to 0.625f, 0.252f to 0.576f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.EUROPE,
-        anchor = 0.515f to 0.275f,
-        polygons = listOf(
-            listOf(
-                0.436f to 0.334f, 0.442f to 0.308f, 0.464f to 0.296f, 0.470f to 0.274f,
-                0.494f to 0.258f, 0.506f to 0.234f, 0.532f to 0.236f, 0.558f to 0.220f,
-                0.582f to 0.214f, 0.596f to 0.252f, 0.592f to 0.296f, 0.574f to 0.328f,
-                0.556f to 0.348f, 0.548f to 0.378f, 0.532f to 0.374f, 0.526f to 0.344f,
-                0.518f to 0.372f, 0.502f to 0.378f, 0.494f to 0.348f, 0.484f to 0.326f,
-                0.468f to 0.342f, 0.456f to 0.362f, 0.436f to 0.358f,
-            ),
-            listOf(
-                0.492f to 0.208f, 0.496f to 0.168f, 0.516f to 0.128f, 0.548f to 0.102f,
-                0.580f to 0.114f, 0.584f to 0.158f, 0.576f to 0.202f, 0.552f to 0.214f,
-                0.534f to 0.194f, 0.518f to 0.222f, 0.498f to 0.226f,
-            ),
-            listOf(
-                0.450f to 0.242f, 0.458f to 0.205f, 0.468f to 0.178f, 0.478f to 0.196f,
-                0.476f to 0.234f, 0.484f to 0.258f, 0.466f to 0.270f, 0.448f to 0.266f,
-            ),
-            listOf(
-                0.428f to 0.228f, 0.438f to 0.214f, 0.446f to 0.226f,
-                0.444f to 0.254f, 0.432f to 0.260f, 0.426f to 0.246f,
-            ),
-            listOf(
-                0.414f to 0.136f, 0.432f to 0.122f, 0.452f to 0.126f,
-                0.454f to 0.146f, 0.434f to 0.152f, 0.416f to 0.146f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.NORTH_AFRICA,
-        anchor = 0.502f to 0.448f,
-        polygons = listOf(
-            listOf(
-                0.438f to 0.390f, 0.468f to 0.376f, 0.498f to 0.380f, 0.518f to 0.402f,
-                0.548f to 0.408f, 0.572f to 0.414f, 0.582f to 0.456f, 0.586f to 0.508f,
-                0.545f to 0.516f, 0.500f to 0.518f, 0.455f to 0.512f, 0.426f to 0.496f,
-                0.420f to 0.452f, 0.428f to 0.414f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.SOUTH_AFRICA,
-        anchor = 0.538f to 0.648f,
-        polygons = listOf(
-            listOf(
-                0.416f to 0.520f, 0.456f to 0.516f, 0.508f to 0.520f, 0.562f to 0.518f,
-                0.592f to 0.524f, 0.618f to 0.548f, 0.640f to 0.542f, 0.626f to 0.595f,
-                0.602f to 0.652f, 0.588f to 0.714f, 0.572f to 0.768f, 0.544f to 0.812f,
-                0.520f to 0.806f, 0.504f to 0.752f, 0.494f to 0.690f, 0.486f to 0.628f,
-                0.454f to 0.598f, 0.418f to 0.574f, 0.410f to 0.544f,
-            ),
-            listOf(
-                0.604f to 0.742f, 0.616f to 0.696f, 0.630f to 0.674f,
-                0.636f to 0.696f, 0.628f to 0.742f, 0.618f to 0.774f, 0.604f to 0.768f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.MIDDLE_EAST,
-        anchor = 0.622f to 0.440f,
-        polygons = listOf(
-            listOf(
-                0.576f to 0.366f, 0.608f to 0.360f, 0.642f to 0.366f, 0.668f to 0.392f,
-                0.670f to 0.438f, 0.656f to 0.462f, 0.664f to 0.494f, 0.634f to 0.522f,
-                0.606f to 0.532f, 0.592f to 0.492f, 0.580f to 0.448f, 0.572f to 0.405f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.EURASIA,
-        anchor = 0.728f to 0.205f,
-        polygons = listOf(
-            listOf(
-                0.556f to 0.330f, 0.574f to 0.310f, 0.602f to 0.312f, 0.618f to 0.334f,
-                0.608f to 0.356f, 0.582f to 0.358f, 0.558f to 0.352f,
-            ),
-            listOf(
-                0.584f to 0.192f, 0.596f to 0.140f, 0.640f to 0.116f, 0.700f to 0.104f,
-                0.775f to 0.088f, 0.848f to 0.105f, 0.916f to 0.130f, 0.952f to 0.162f,
-                0.920f to 0.198f, 0.896f to 0.246f, 0.872f to 0.228f, 0.842f to 0.256f,
-                0.790f to 0.275f, 0.735f to 0.296f, 0.688f to 0.344f, 0.648f to 0.356f,
-                0.616f to 0.332f, 0.600f to 0.278f, 0.590f to 0.236f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.ASIA,
-        anchor = 0.768f to 0.420f,
-        polygons = listOf(
-            listOf(
-                0.666f to 0.365f, 0.702f to 0.330f, 0.752f to 0.295f, 0.808f to 0.268f,
-                0.848f to 0.278f, 0.862f to 0.318f, 0.848f to 0.362f, 0.852f to 0.402f,
-                0.836f to 0.448f, 0.802f to 0.486f, 0.804f to 0.542f, 0.782f to 0.562f,
-                0.764f to 0.520f, 0.748f to 0.482f, 0.722f to 0.506f, 0.712f to 0.548f,
-                0.694f to 0.512f, 0.680f to 0.456f, 0.666f to 0.418f,
-            ),
-            listOf(
-                0.878f to 0.285f, 0.900f to 0.282f, 0.908f to 0.312f, 0.898f to 0.355f,
-                0.880f to 0.395f, 0.866f to 0.390f, 0.876f to 0.348f, 0.872f to 0.314f,
-            ),
-            listOf(
-                0.742f to 0.570f, 0.766f to 0.578f, 0.794f to 0.608f, 0.818f to 0.625f,
-                0.806f to 0.640f, 0.770f to 0.625f, 0.738f to 0.592f,
-            ),
-            listOf(
-                0.816f to 0.566f, 0.842f to 0.556f, 0.862f to 0.576f,
-                0.858f to 0.614f, 0.834f to 0.618f, 0.814f to 0.596f,
-            ),
-            listOf(
-                0.864f to 0.474f, 0.882f to 0.470f, 0.892f to 0.502f,
-                0.888f to 0.538f, 0.870f to 0.538f, 0.862f to 0.504f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.AUSTRALIA,
-        anchor = 0.838f to 0.735f,
-        polygons = listOf(
-            listOf(
-                0.766f to 0.715f, 0.792f to 0.678f, 0.822f to 0.654f, 0.846f to 0.668f,
-                0.866f to 0.642f, 0.890f to 0.676f, 0.904f to 0.728f, 0.890f to 0.786f,
-                0.862f to 0.822f, 0.832f to 0.796f, 0.798f to 0.794f, 0.768f to 0.802f,
-                0.760f to 0.758f,
-            ),
-            listOf(
-                0.928f to 0.802f, 0.946f to 0.774f, 0.962f to 0.788f, 0.954f to 0.836f,
-                0.934f to 0.876f, 0.916f to 0.868f, 0.924f to 0.834f,
-            ),
-        ),
-    ),
-    MobileWorldRegionGeo(
-        region = MixRegion.OCEANIA,
-        anchor = 0.925f to 0.612f,
-        polygons = listOf(
-            listOf(
-                0.864f to 0.592f, 0.892f to 0.596f, 0.918f to 0.616f,
-                0.916f to 0.642f, 0.892f to 0.640f, 0.864f to 0.620f,
-            ),
-            listOf(
-                0.926f to 0.562f, 0.948f to 0.556f, 0.964f to 0.576f,
-                0.958f to 0.606f, 0.934f to 0.608f, 0.922f to 0.584f,
-            ),
-            listOf(
-                0.950f to 0.632f, 0.972f to 0.628f, 0.988f to 0.650f,
-                0.982f to 0.680f, 0.958f to 0.684f, 0.946f to 0.658f,
-            ),
-        ),
-    ),
+private data class MobileWorldMapData(
+    val globeOutline: List<Pair<Float, Float>>,
+    val equatorLine: List<Pair<Float, Float>>,
+    val parallels: List<List<Pair<Float, Float>>>,
+    val meridians: List<List<Pair<Float, Float>>>,
+    val regions: List<MobileWorldRegionGeo>,
+    val byRegion: Map<MixRegion, MobileWorldRegionGeo>,
 )
 
-private val MOBILE_GEO_BY_REGION = MOBILE_WORLD_REGION_GEOS.associateBy { it.region }
+@Volatile
+private var cachedMobileWorldMapData: MobileWorldMapData? = null
+
+private fun parseMobilePointsArray(arr: JSONArray?): List<Pair<Float, Float>> {
+    if (arr == null) return emptyList()
+    val list = ArrayList<Pair<Float, Float>>(arr.length())
+    for (i in 0 until arr.length()) {
+        val pair = arr.optJSONArray(i) ?: continue
+        list.add(pair.optDouble(0).toFloat() to pair.optDouble(1).toFloat())
+    }
+    return list
+}
+
+private fun parseMobileLinesArray(arr: JSONArray?): List<List<Pair<Float, Float>>> {
+    if (arr == null) return emptyList()
+    val list = ArrayList<List<Pair<Float, Float>>>(arr.length())
+    for (i in 0 until arr.length()) {
+        val pts = parseMobilePointsArray(arr.optJSONArray(i))
+        if (pts.isNotEmpty()) list.add(pts)
+    }
+    return list
+}
+
+private fun loadMobileWorldMapData(context: Context): MobileWorldMapData {
+    cachedMobileWorldMapData?.let { return it }
+    val jsonText = context.assets.open("world_map_regions.json").bufferedReader().use { it.readText() }
+    val root = JSONObject(jsonText)
+    val globeOutline = parseMobilePointsArray(root.optJSONArray("globe"))
+    val equatorLine = parseMobilePointsArray(root.optJSONArray("equator"))
+    val parallels = parseMobileLinesArray(root.optJSONArray("parallels"))
+    val meridians = parseMobileLinesArray(root.optJSONArray("meridians"))
+    val regionsObj = root.optJSONObject("regions") ?: JSONObject()
+
+    val orderedRegions = listOf(
+        MixRegion.NORTH_AMERICA,
+        MixRegion.CENTRAL_AMERICA,
+        MixRegion.SOUTH_AMERICA,
+        MixRegion.EUROPE,
+        MixRegion.NORTH_AFRICA,
+        MixRegion.SOUTH_AFRICA,
+        MixRegion.MIDDLE_EAST,
+        MixRegion.EURASIA,
+        MixRegion.ASIA,
+        MixRegion.AUSTRALIA,
+        MixRegion.OCEANIA,
+    )
+
+    val geos = ArrayList<MobileWorldRegionGeo>(orderedRegions.size)
+    val byReg = EnumMap<MixRegion, MobileWorldRegionGeo>(MixRegion::class.java)
+    orderedRegions.forEach { region ->
+        val entry = regionsObj.optJSONObject(region.name) ?: return@forEach
+        val anchorArr = entry.optJSONArray("anchor")
+        val anchor = if (anchorArr != null && anchorArr.length() >= 2) {
+            anchorArr.optDouble(0).toFloat() to anchorArr.optDouble(1).toFloat()
+        } else 0.5f to 0.5f
+        val polysJson = entry.optJSONArray("polygons")
+        val polys = ArrayList<MobileWorldPolyBbox>(polysJson?.length() ?: 0)
+        if (polysJson != null) {
+            for (i in 0 until polysJson.length()) {
+                val pts = parseMobilePointsArray(polysJson.optJSONArray(i))
+                if (pts.size < 3) continue
+                var minX = 1f
+                var minY = 1f
+                var maxX = 0f
+                var maxY = 0f
+                pts.forEach { (x, y) ->
+                    if (x < minX) minX = x
+                    if (y < minY) minY = y
+                    if (x > maxX) maxX = x
+                    if (y > maxY) maxY = y
+                }
+                polys.add(MobileWorldPolyBbox(minX, minY, maxX, maxY, pts))
+            }
+        }
+        val geo = MobileWorldRegionGeo(region = region, anchor = anchor, polygons = polys)
+        geos.add(geo)
+        byReg[region] = geo
+    }
+    return MobileWorldMapData(
+        globeOutline = globeOutline,
+        equatorLine = equatorLine,
+        parallels = parallels,
+        meridians = meridians,
+        regions = geos,
+        byRegion = byReg,
+    ).also { cachedMobileWorldMapData = it }
+}
 
 private data class MobileMapViewport(
     val left: Float,
@@ -497,11 +392,11 @@ private data class MobileMapViewport(
 
 private fun computeMobileMapViewport(totalW: Float, totalH: Float): MobileMapViewport {
     if (totalW <= 1f || totalH <= 1f) return MobileMapViewport(0f, 0f, 1f, 1f)
-    val padX = totalW * 0.02f
-    val padY = totalH * 0.03f
+    val padX = totalW * 0.015f
+    val padY = totalH * 0.02f
     val availW = (totalW - padX * 2f).coerceAtLeast(1f)
     val availH = (totalH - padY * 2f).coerceAtLeast(1f)
-    val targetRatio = 1.94f
+    val targetRatio = 1.9417f
     return if (availW / availH > targetRatio) {
         val w = availH * targetRatio
         MobileMapViewport(left = (totalW - w) / 2f, top = padY, width = w, height = availH)
@@ -511,12 +406,14 @@ private fun computeMobileMapViewport(totalW: Float, totalH: Float): MobileMapVie
     }
 }
 
-private fun isMobilePointInPolygon(nx: Float, ny: Float, poly: List<Pair<Float, Float>>): Boolean {
+private fun isMobilePointInPolygon(nx: Float, ny: Float, poly: MobileWorldPolyBbox): Boolean {
+    if (nx < poly.minX || nx > poly.maxX || ny < poly.minY || ny > poly.maxY) return false
     var inside = false
-    var j = poly.lastIndex
-    for (i in poly.indices) {
-        val (xi, yi) = poly[i]
-        val (xj, yj) = poly[j]
+    val pts = poly.points
+    var j = pts.lastIndex
+    for (i in pts.indices) {
+        val (xi, yi) = pts[i]
+        val (xj, yj) = pts[j]
         val intersects = ((yi > ny) != (yj > ny)) &&
             (nx < (xj - xi) * (ny - yi) / ((yj - yi).takeIf { kotlin.math.abs(it) > 1e-6f } ?: 1e-6f) + xi)
         if (intersects) inside = !inside
@@ -525,20 +422,20 @@ private fun isMobilePointInPolygon(nx: Float, ny: Float, poly: List<Pair<Float, 
     return inside
 }
 
-private fun hitTestMobileWorldRegion(nx: Float, ny: Float): MixRegion? {
+private fun hitTestMobileWorldRegion(nx: Float, ny: Float, mapData: MobileWorldMapData): MixRegion? {
     if (nx !in -0.02f..1.02f || ny !in -0.02f..1.02f) return null
-    MOBILE_WORLD_REGION_GEOS.forEach { geo ->
+    mapData.regions.forEach { geo ->
         if (geo.polygons.any { isMobilePointInPolygon(nx, ny, it) }) {
             return geo.region
         }
     }
     var bestRegion: MixRegion? = null
-    var bestDist = 0.09f
-    MOBILE_WORLD_REGION_GEOS.forEach { geo ->
+    var bestDist = 0.085f
+    mapData.regions.forEach { geo ->
         val dAnchor = hypot((nx - geo.anchor.first) * 1.94f, ny - geo.anchor.second)
-        val dMinPoly = geo.polygons.minOf { poly ->
-            poly.minOf { (px, py) -> hypot((nx - px) * 1.94f, ny - py) }
-        }
+        val dMinPoly = geo.polygons.minOfOrNull { poly ->
+            poly.points.minOf { (px, py) -> hypot((nx - px) * 1.94f, ny - py) }
+        } ?: 9f
         val d = minOf(dAnchor, dMinPoly)
         if (d < bestDist) {
             bestDist = d
@@ -548,32 +445,51 @@ private fun hitTestMobileWorldRegion(nx: Float, ny: Float): MixRegion? {
     return bestRegion
 }
 
-private fun buildMobileSmoothViewportPath(points: List<Pair<Float, Float>>, vp: MobileMapViewport): Path {
-    return Path().apply {
-        if (points.size < 3) {
-            if (points.isEmpty()) return@apply
-            val first = vp.toScreen(points[0].first, points[0].second)
-            moveTo(first.x, first.y)
-            for (i in 1 until points.size) {
-                val p = vp.toScreen(points[i].first, points[i].second)
-                lineTo(p.x, p.y)
-            }
-            close()
-            return@apply
-        }
-        val screenPts = points.map { vp.toScreen(it.first, it.second) }
-        val last = screenPts.last()
-        val first = screenPts.first()
-        moveTo((last.x + first.x) * 0.5f, (last.y + first.y) * 0.5f)
-        for (i in screenPts.indices) {
-            val curr = screenPts[i]
-            val next = screenPts[(i + 1) % screenPts.size]
-            val midX = (curr.x + next.x) * 0.5f
-            val midY = (curr.y + next.y) * 0.5f
-            quadraticTo(curr.x, curr.y, midX, midY)
+private fun buildMobileDirectPolygonPath(points: List<Pair<Float, Float>>, vp: MobileMapViewport): Path =
+    Path().apply {
+        if (points.isEmpty()) return@apply
+        val first = vp.toScreen(points[0].first, points[0].second)
+        moveTo(first.x, first.y)
+        for (i in 1 until points.size) {
+            val p = vp.toScreen(points[i].first, points[i].second)
+            lineTo(p.x, p.y)
         }
         close()
     }
+
+private fun buildMobilePolylinePath(points: List<Pair<Float, Float>>, vp: MobileMapViewport): Path =
+    Path().apply {
+        if (points.isEmpty()) return@apply
+        val first = vp.toScreen(points[0].first, points[0].second)
+        moveTo(first.x, first.y)
+        for (i in 1 until points.size) {
+            val p = vp.toScreen(points[i].first, points[i].second)
+            lineTo(p.x, p.y)
+        }
+    }
+
+private data class BuiltMobileWorldPaths(
+    val vp: MobileMapViewport,
+    val globePath: Path,
+    val equatorPath: Path,
+    val parallelPaths: List<Path>,
+    val meridianPaths: List<Path>,
+    val regionPaths: Map<MixRegion, List<Path>>,
+)
+
+private fun buildMobileWorldPaths(mapData: MobileWorldMapData, vp: MobileMapViewport): BuiltMobileWorldPaths {
+    val regMap = EnumMap<MixRegion, List<Path>>(MixRegion::class.java)
+    mapData.regions.forEach { geo ->
+        regMap[geo.region] = geo.polygons.map { buildMobileDirectPolygonPath(it.points, vp) }
+    }
+    return BuiltMobileWorldPaths(
+        vp = vp,
+        globePath = buildMobileDirectPolygonPath(mapData.globeOutline, vp),
+        equatorPath = buildMobilePolylinePath(mapData.equatorLine, vp),
+        parallelPaths = mapData.parallels.map { buildMobilePolylinePath(it, vp) },
+        meridianPaths = mapData.meridians.map { buildMobilePolylinePath(it, vp) },
+        regionPaths = regMap,
+    )
 }
 
 private fun formatMobileCount(n: Int): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
@@ -587,6 +503,12 @@ fun MixRegionPickerDialog(
     onToggleRegion: (MixRegion) -> Unit,
     onStartMix: () -> Unit,
     onDismiss: () -> Unit,
+    selectedLanguages: Set<String> = emptySet(),
+    selectedGenres: Set<String> = emptySet(),
+    matchingChannelCount: Int? = null,
+    onToggleLanguage: (String) -> Unit = {},
+    onToggleGenre: (String) -> Unit = {},
+    onClearFilters: () -> Unit = {},
 ) {
     fun tr(itStr: String, enStr: String, esStr: String): String = when (language.lowercase().take(2)) {
         "en" -> enStr
@@ -595,6 +517,8 @@ fun MixRegionPickerDialog(
     }
 
     val allWorldSelected = MixRegion.ALL_WORLD in selectedRegions
+    val activeFilterCount = selectedLanguages.size + selectedGenres.size
+    var filtersOpen by remember { mutableStateOf(false) }
     var inspectedRegion by remember {
         mutableStateOf(
             selectedRegions.firstOrNull { it != MixRegion.ALL_WORLD } ?: MixRegion.EUROPE,
@@ -629,16 +553,24 @@ fun MixRegionPickerDialog(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                     )
+                    val shownCount = matchingChannelCount ?: totalChannels
+                    val filterLabel = if (activeFilterCount > 0) {
+                        " · $activeFilterCount ${tr("filtri", "filters", "filtros")}"
+                    } else ""
                     val activeNames = if (allWorldSelected) {
-                        "${MixRegion.ALL_WORLD.label(language)} · ${formatMobileCount(totalChannels)} " +
-                            tr("canali", "channels", "canales")
+                        "${MixRegion.ALL_WORLD.label(language)} · ${formatMobileCount(shownCount)} " +
+                            tr("canali", "channels", "canales") + filterLabel
                     } else {
-                        selectedRegions.joinToString(" · ") { it.label(language) }
+                        val regionList = selectedRegions.joinToString(" · ") { it.label(language) }
+                        val countPart = if (matchingChannelCount != null) {
+                            " · ${formatMobileCount(shownCount)} ${tr("canali", "channels", "canales")}"
+                        } else ""
+                        regionList + countPart + filterLabel
                     }
                     Text(
                         text = tr(
-                            "Tocca le regioni sul mappamondo · $activeNames",
-                            "Tap regions on the map · $activeNames",
+                            "Tocca le regioni · $activeNames",
+                            "Tap regions · $activeNames",
                             "Toca las regiones · $activeNames",
                         ),
                         color = Color(0xFF7DD3FC),
@@ -698,7 +630,9 @@ fun MixRegionPickerDialog(
                         MobileMixBottomButtons(
                             language = language,
                             allWorldSelected = allWorldSelected,
+                            activeFilterCount = activeFilterCount,
                             onAllWorld = { onToggleRegion(MixRegion.ALL_WORLD) },
+                            onOpenFilters = { filtersOpen = true },
                             onStartMix = onStartMix,
                         )
                     }
@@ -736,7 +670,9 @@ fun MixRegionPickerDialog(
                 MobileMixBottomButtons(
                     language = language,
                     allWorldSelected = allWorldSelected,
+                    activeFilterCount = activeFilterCount,
                     onAllWorld = { onToggleRegion(MixRegion.ALL_WORLD) },
+                    onOpenFilters = { filtersOpen = true },
                     onStartMix = onStartMix,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -745,6 +681,19 @@ fun MixRegionPickerDialog(
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                 )
             }
+        }
+
+        if (filtersOpen) {
+            MobileMixFiltersDialog(
+                language = language,
+                selectedLanguages = selectedLanguages,
+                selectedGenres = selectedGenres,
+                matchingChannelCount = matchingChannelCount ?: totalChannels,
+                onToggleLanguage = onToggleLanguage,
+                onToggleGenre = onToggleGenre,
+                onClearFilters = onClearFilters,
+                onDismiss = { filtersOpen = false },
+            )
         }
     }
 }
@@ -758,9 +707,22 @@ private fun MobileWorldMapSurface(
     onSelectRegion: (MixRegion) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val mapData = remember(context) { loadMobileWorldMapData(context) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var calloutSize by remember { mutableStateOf(IntSize.Zero) }
     val shape = RoundedCornerShape(16.dp)
+
+    val builtPaths = remember(canvasSize, mapData) {
+        if (canvasSize.width <= 0 || canvasSize.height <= 0) {
+            null
+        } else {
+            buildMobileWorldPaths(
+                mapData = mapData,
+                vp = computeMobileMapViewport(canvasSize.width.toFloat(), canvasSize.height.toFloat()),
+            )
+        }
+    }
 
     Box(
         modifier = modifier
@@ -768,42 +730,45 @@ private fun MobileWorldMapSurface(
             .background(Brush.radialGradient(listOf(Color(0xFF0A203A), Color(0xFF050A13))))
             .border(1.dp, Color(0xFF1D3B5E), shape)
             .onSizeChanged { canvasSize = it }
-            .pointerInput(Unit) {
+            .pointerInput(mapData) {
                 detectTapGestures { offset ->
                     val vp = computeMobileMapViewport(size.width.toFloat(), size.height.toFloat())
                     val (nx, ny) = vp.toNormalized(offset.x, offset.y)
-                    val hit = hitTestMobileWorldRegion(nx, ny)
+                    val hit = hitTestMobileWorldRegion(nx, ny, mapData)
                     if (hit != null) onSelectRegion(hit)
                 }
             },
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val vp = computeMobileMapViewport(size.width, size.height)
-            clipRect(left = vp.left, top = vp.top, right = vp.left + vp.width, bottom = vp.top + vp.height) {
-                val gridDash = PathEffect.dashPathEffect(floatArrayOf(5f, 7f), 0f)
-                listOf(0.25f, 0.50f, 0.75f).forEach { fy ->
-                    val y = vp.top + vp.height * fy
-                    drawLine(
-                        color = if (fy == 0.50f) Color(0x3338BDF8) else Color(0x221E3A5F),
-                        start = Offset(vp.left, y),
-                        end = Offset(vp.left + vp.width, y),
-                        strokeWidth = 1f,
-                        pathEffect = gridDash,
-                    )
-                }
-                listOf(0.25f, 0.50f, 0.75f).forEach { fx ->
-                    val x = vp.left + vp.width * fx
-                    drawLine(
-                        color = Color(0x221E3A5F),
-                        start = Offset(x, vp.top),
-                        end = Offset(x, vp.top + vp.height),
-                        strokeWidth = 1f,
-                        pathEffect = gridDash,
-                    )
-                }
-            }
+            val paths = builtPaths ?: return@Canvas
+            val vp = paths.vp
 
-            MOBILE_WORLD_REGION_GEOS.forEach { geo ->
+            // Natural Earth I curved ocean sphere & graticule
+            drawPath(
+                path = paths.globePath,
+                brush = Brush.radialGradient(listOf(Color(0xFF0A223E), Color(0xFF050E1B))),
+            )
+            clipPath(paths.globePath) {
+                val gridDash = PathEffect.dashPathEffect(floatArrayOf(5f, 7f), 0f)
+                paths.parallelPaths.forEach { p ->
+                    drawPath(path = p, color = Color(0x2B1E3A5F), style = Stroke(width = 1f, pathEffect = gridDash))
+                }
+                paths.meridianPaths.forEach { m ->
+                    drawPath(path = m, color = Color(0x2B1E3A5F), style = Stroke(width = 1f, pathEffect = gridDash))
+                }
+                drawPath(
+                    path = paths.equatorPath,
+                    color = Color(0x4038BDF8),
+                    style = Stroke(width = 1.3f, pathEffect = gridDash),
+                )
+            }
+            drawPath(
+                path = paths.globePath,
+                color = Color(0xFF1F426B),
+                style = Stroke(width = 1.5f),
+            )
+
+            mapData.regions.forEach { geo ->
                 val isDirect = geo.region in selectedRegions
                 val isActive = allWorldSelected || isDirect
                 val isInspected = geo.region == inspectedRegion
@@ -815,7 +780,7 @@ private fun MobileWorldMapSurface(
                         end = Offset(vp.left + vp.width, vp.top + vp.height),
                     )
                     allWorldSelected -> Brush.linearGradient(
-                        listOf(Color(0xBF0EA5E9), Color(0xBF0369A1)),
+                        listOf(Color(0xC20EA5E9), Color(0xC20369A1)),
                         start = Offset(vp.left, vp.top),
                         end = Offset(vp.left + vp.width, vp.top + vp.height),
                     )
@@ -826,33 +791,37 @@ private fun MobileWorldMapSurface(
                     )
                 }
 
-                geo.polygons.forEach { pts ->
-                    val path = buildMobileSmoothViewportPath(pts, vp)
-                    if (isActive || isInspected) {
+                val polyPaths = paths.regionPaths[geo.region].orEmpty()
+                val borderColor = when {
+                    isInspected -> Color.White
+                    isDirect -> Color(0xFFE0F7FF)
+                    allWorldSelected -> Color(0xAA082F49)
+                    else -> Color(0xFF284870)
+                }
+                val borderWidth = when {
+                    isInspected -> 1.4f
+                    isActive -> 0.85f
+                    else -> 0.65f
+                }
+
+                polyPaths.forEach { path ->
+                    if (isInspected) {
                         drawPath(
                             path = path,
-                            color = if (isInspected) Color(0x66FFFFFF) else Color(0x4500D4FF),
-                            style = Stroke(width = if (isInspected) 8f else 6f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                            color = Color(0x44FFFFFF),
+                            style = Stroke(width = 3.5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
                         )
                     }
                     drawPath(path = path, brush = brush)
                     drawPath(
                         path = path,
-                        color = when {
-                            isInspected -> Color.White
-                            isActive -> Color(0xFFE0F7FF)
-                            else -> Color(0xFF284870)
-                        },
-                        style = Stroke(
-                            width = if (isInspected) 2.2f else if (isActive) 1.5f else 1f,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                        ),
+                        color = borderColor,
+                        style = Stroke(width = borderWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
                     )
                 }
             }
 
-            MOBILE_WORLD_REGION_GEOS.forEach { geo ->
+            mapData.regions.forEach { geo ->
                 val isActive = allWorldSelected || geo.region in selectedRegions
                 val isInspected = geo.region == inspectedRegion
                 val c = vp.toScreen(geo.anchor.first, geo.anchor.second)
@@ -870,7 +839,7 @@ private fun MobileWorldMapSurface(
         }
 
         // Compact name-only floating callout pill
-        val activeGeo = MOBILE_GEO_BY_REGION[inspectedRegion]
+        val activeGeo = mapData.byRegion[inspectedRegion]
         if (activeGeo != null && canvasSize.width > 0 && canvasSize.height > 0) {
             val vp = computeMobileMapViewport(canvasSize.width.toFloat(), canvasSize.height.toFloat())
             val anchorPx = vp.toScreen(activeGeo.anchor.first, activeGeo.anchor.second)
@@ -1004,7 +973,9 @@ private fun MobileRegionGridChips(
 private fun MobileMixBottomButtons(
     language: String,
     allWorldSelected: Boolean,
+    activeFilterCount: Int,
     onAllWorld: () -> Unit,
+    onOpenFilters: () -> Unit,
     onStartMix: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1015,29 +986,310 @@ private fun MobileMixBottomButtons(
     }
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         OutlinedButton(
             onClick = onAllWorld,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1.08f),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
             colors = ButtonDefaults.outlinedButtonColors(
                 containerColor = if (allWorldSelected) Color(0xFF0E2B49) else Color.Transparent,
                 contentColor = if (allWorldSelected) Color(0xFF7DD3FC) else Color(0xFFF8FAFC),
             ),
         ) {
-            Text(tr("Tutto il mondo", "All World", "Todo"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = tr("Tutto il mondo", "All World", "Todo"),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        OutlinedButton(
+            onClick = onOpenFilters,
+            modifier = Modifier.weight(0.88f),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = if (activeFilterCount > 0) Color(0xFF0B355C) else Color.Transparent,
+                contentColor = if (activeFilterCount > 0) Color(0xFF7DD3FC) else Color(0xFFF8FAFC),
+            ),
+        ) {
+            Text(
+                text = if (activeFilterCount > 0) {
+                    tr("Filtri ($activeFilterCount)", "Filters ($activeFilterCount)", "Filtros ($activeFilterCount)")
+                } else {
+                    tr("Filtri", "Filters", "Filtros")
+                },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Button(
             onClick = onStartMix,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1.04f),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF0284C7),
                 contentColor = Color.White,
             ),
         ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text(tr("Avvia Mix", "Start Mix", "Iniciar Mix"), fontWeight = FontWeight.Bold)
+            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = tr("Avvia Mix", "Start Mix", "Iniciar Mix"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
+    }
+}
+
+@Composable
+private fun MobileMixFiltersDialog(
+    language: String,
+    selectedLanguages: Set<String>,
+    selectedGenres: Set<String>,
+    matchingChannelCount: Int,
+    onToggleLanguage: (String) -> Unit,
+    onToggleGenre: (String) -> Unit,
+    onClearFilters: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    fun tr(itStr: String, enStr: String, esStr: String): String = when (language.lowercase().take(2)) {
+        "en" -> enStr
+        "es" -> esStr
+        else -> itStr
+    }
+
+    var activeTab by remember { mutableStateOf(0) } // 0 = Languages, 1 = Genres
+    val sortedLanguages = remember(language) { sortedMobileMixLanguages(language) }
+    val sortedGenres = remember(language) { sortedMobileMixGenres(language) }
+    val totalActive = selectedLanguages.size + selectedGenres.size
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color(0xFF0A1220), Color(0xFF050A13))))
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = tr("FILTRI MIX · LINGUE E GENERI", "MIX FILTERS · LANGUAGES & GENRES", "FILTROS MIX · IDIOMAS Y GÉNEROS"),
+                        color = Color(0xFFF8FAFC),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (totalActive == 0) {
+                            tr("Nessun filtro attivo", "No active filters", "Sin filtros activos") +
+                                " · ${formatMobileCount(matchingChannelCount)} ${tr("canali", "channels", "canales")}"
+                        } else {
+                            tr("$totalActive filtri attivi", "$totalActive active filters", "$totalActive filtros activos") +
+                                " · ${formatMobileCount(matchingChannelCount)} ${tr("canali", "channels", "canales")}"
+                        },
+                        color = Color(0xFF7DD3FC),
+                        fontSize = 12.sp,
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = tr("Chiudi", "Close", "Cerrar"),
+                        tint = Color(0xFFF8FAFC),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                val langLabel = tr("Lingue", "Languages", "Idiomas") +
+                    " (${sortedLanguages.size})" +
+                    if (selectedLanguages.isNotEmpty()) " · ${selectedLanguages.size}" else ""
+                val genreLabel = tr("Generi", "Genres", "Géneros") +
+                    " (${sortedGenres.size})" +
+                    if (selectedGenres.isNotEmpty()) " · ${selectedGenres.size}" else ""
+                MobileFilterTabButton(
+                    text = langLabel,
+                    active = activeTab == 0,
+                    onClick = { activeTab = 0 },
+                    modifier = Modifier.weight(1f),
+                )
+                MobileFilterTabButton(
+                    text = genreLabel,
+                    active = activeTab == 1,
+                    onClick = { activeTab = 1 },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            if (activeTab == 0) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(sortedLanguages, key = { it.code }) { item ->
+                        MobileFilterChip(
+                            label = item.label(language),
+                            selected = item.code in selectedLanguages,
+                            onClick = { onToggleLanguage(item.code) },
+                        )
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(sortedGenres, key = { it.id }) { item ->
+                        MobileFilterChip(
+                            label = item.label(language),
+                            selected = item.id in selectedGenres,
+                            onClick = { onToggleGenre(item.id) },
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF08101C))
+                    .border(1.dp, Color(0xFF1C2C42), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onClearFilters,
+                    enabled = totalActive > 0,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF8FAFC)),
+                ) {
+                    Text(tr("Azzera", "Clear", "Borrar"))
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0284C7),
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(tr("Applica", "Apply", "Aplicar"), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileFilterTabButton(
+    text: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(if (active) Color(0xFF0284C7) else Color(0xFF0F1B2E))
+            .border(1.dp, if (active) Color(0xFF38BDF8) else Color(0xFF284266), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = if (active) Color.White else Color(0xFFCBD5E1),
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun MobileFilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val chipShape = RoundedCornerShape(11.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(chipShape)
+            .background(if (selected) Color(0xFF0B355C) else Color(0xFF08101C))
+            .border(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) Color(0xFF00D4FF) else Color(0xFF1C2C42),
+                shape = chipShape,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(if (selected) Color(0xFF00D4FF) else Color(0xFF132238))
+                .border(1.dp, if (selected) Color.White else Color(0xFF284266), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = Color(0xFF04101A),
+                    modifier = Modifier.size(10.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = if (selected) Color(0xFFBAE6FD) else Color(0xFFF8FAFC),
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

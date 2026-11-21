@@ -206,6 +206,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedMixRegions = MutableStateFlow(setOf(MixRegion.ALL_WORLD))
     val selectedMixRegions: StateFlow<Set<MixRegion>> = _selectedMixRegions.asStateFlow()
 
+    private val _selectedMixLanguages = MutableStateFlow<Set<String>>(emptySet())
+    val selectedMixLanguages: StateFlow<Set<String>> = _selectedMixLanguages.asStateFlow()
+
+    private val _selectedMixGenres = MutableStateFlow<Set<String>>(emptySet())
+    val selectedMixGenres: StateFlow<Set<String>> = _selectedMixGenres.asStateFlow()
+
     private val mixHistory = mutableListOf<Channel>()
     private var mixIndex: Int = -1
     private val deadMixChannelIds = java.util.Collections.synchronizedSet(linkedSetOf<String>())
@@ -944,6 +950,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         deadMixChannelIds.clear()
         if (resetRegions) {
             _selectedMixRegions.value = setOf(MixRegion.ALL_WORLD)
+            _selectedMixLanguages.value = emptySet()
+            _selectedMixGenres.value = emptySet()
         }
         if (clearPool) {
             mixPoolJob?.cancel()
@@ -970,6 +978,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun isMixChannelExcludedAsAudioOnly(ch: Channel): Boolean =
         !_mixIncludeAudioOnly.value && (ch.id in runtimeAudioOnlyMixIds || isLikelyAudioOnlyChannel(ch))
+
+    private fun hasActiveMixFilters(): Boolean =
+        _selectedMixLanguages.value.isNotEmpty() || _selectedMixGenres.value.isNotEmpty()
+
+    private fun matchesActiveMixFilters(ch: Channel): Boolean =
+        matchesMixLanguages(ch, _selectedMixLanguages.value) &&
+            matchesMixGenres(ch, _selectedMixGenres.value)
 
     private fun ensureMixBucketsIndexed() {
         val rawSource = _mixChannels.value
@@ -1006,7 +1021,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun currentMixPool(): List<Channel> {
         val regional = regionalPoolFor(_selectedMixRegions.value)
-        return regional.ifEmpty { cachedMixHttpAll }
+        if (!hasActiveMixFilters()) return regional.ifEmpty { cachedMixHttpAll }
+        return regional.filter { matchesActiveMixFilters(it) }
     }
 
     private fun consumeVerifiedNextMixChannel(): Channel? {
@@ -1016,7 +1032,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         verifiedNextMixChannel = null
         val regions = _selectedMixRegions.value
         return verified?.takeIf {
-            matchesMixRegions(it.country, regions) && !isMixChannelExcludedAsAudioOnly(it)
+            matchesMixRegions(it.country, regions) &&
+                !isMixChannelExcludedAsAudioOnly(it) &&
+                matchesActiveMixFilters(it)
         }
     }
 
@@ -1221,6 +1239,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleMixLanguage(code: String) {
+        val current = _selectedMixLanguages.value
+        _selectedMixLanguages.value = if (code in current) current - code else current + code
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    fun toggleMixGenre(genreId: String) {
+        val current = _selectedMixGenres.value
+        _selectedMixGenres.value = if (genreId in current) current - genreId else current + genreId
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    fun clearMixFilters() {
+        if (!hasActiveMixFilters()) return
+        _selectedMixLanguages.value = emptySet()
+        _selectedMixGenres.value = emptySet()
+        invalidateVerifiedMixAfterFilterChange()
+    }
+
+    private fun invalidateVerifiedMixAfterFilterChange() {
+        mixPreloadJob?.cancel()
+        mixPreloadJob = null
+        verifiedNextMixChannel = null
+        if (_playback.value?.isMixMode == true && currentMixPool().isNotEmpty()) {
+            preverifyNextMixChannel()
+        }
+    }
+
     fun startMixFromSelectedRegions() {
         _showMixRegionPicker.value = false
         val regions = _selectedMixRegions.value
@@ -1264,11 +1310,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (regionalMatches.isNotEmpty() || (mixPoolFullLoaded && existingHttp.isNotEmpty())) {
             ensureMixPoolLoaded()
-            val pool = regionalMatches.ifEmpty { existingHttp }
-            val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(pool)
-                ?: return
-            startMixWithPoolChannel(nextChannel)
-            return
+            val basePool = regionalMatches.ifEmpty { existingHttp }
+            val filteredPool = if (hasActiveMixFilters()) {
+                basePool.filter { matchesActiveMixFilters(it) }
+            } else {
+                basePool
+            }
+            if (filteredPool.isEmpty()) {
+                if (mixPoolFullLoaded) {
+                    showMessage(
+                        localize(
+                            language,
+                            "Nessun canale corrisponde ai filtri selezionati",
+                            "No channels match the selected filters",
+                            "Ningún canal coincide con los filtros seleccionados",
+                        ),
+                    )
+                    return
+                }
+            } else {
+                val nextChannel = consumeVerifiedNextMixChannel() ?: pickRandomUnvisitedMixChannel(filteredPool)
+                    ?: return
+                startMixWithPoolChannel(nextChannel)
+                return
+            }
         }
 
         viewModelScope.launch {
@@ -1292,9 +1357,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _mixChannels.value = combined
                 mixPoolFullLoaded = remote.isNotEmpty()
-                val pool = regionalPoolFor(regions)
+                val basePool = regionalPoolFor(regions)
                     .ifEmpty { cachedMixHttpAll }
                     .ifEmpty { combined }
+                val pool = if (hasActiveMixFilters()) {
+                    basePool.filter { matchesActiveMixFilters(it) }
+                } else {
+                    basePool
+                }
+                if (pool.isEmpty()) {
+                    showMessage(
+                        localize(
+                            language,
+                            "Nessun canale corrisponde ai filtri selezionati",
+                            "No channels match the selected filters",
+                            "Ningún canal coincide con los filtros seleccionados",
+                        ),
+                    )
+                    return@launch
+                }
                 val nextChannel = consumeVerifiedNextMixChannel()
                     ?: pickRandomUnvisitedMixChannel(pool)
                     ?: pool.first()
