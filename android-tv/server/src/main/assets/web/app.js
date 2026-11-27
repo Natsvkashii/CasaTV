@@ -3,8 +3,12 @@
 import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.025';
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.057';
-const CHANNEL_PAGE_SIZE = 84;
+const WEB_APP_VERSION = '26.11.058';
+const LOW_RAM_WEB =
+  typeof navigator !== 'undefined' &&
+  Number(navigator.deviceMemory || 0) > 0 &&
+  Number(navigator.deviceMemory) <= 4;
+const CHANNEL_PAGE_SIZE = LOW_RAM_WEB ? 36 : 48;
 const PROFILE_AVATARS = [
   'blue', 'emerald', 'violet', 'amber', 'rose', 'cyan',
   'indigo', 'teal', 'orange', 'pink', 'slate', 'lime',
@@ -291,6 +295,11 @@ const state = {
   channelsRequestSeq: 0,
   localVisibleLimit: CHANNEL_PAGE_SIZE,
   channelsObserver: null,
+  channelsScrollHandler: null,
+  channelsLoadError: false,
+  vodObserver: null,
+  vodScrollHandler: null,
+  vodLoadError: false,
   favorites: [],
   favoritesLoading: false,
   localOverrideChannels: null,
@@ -1280,6 +1289,25 @@ function disconnectChannelsObserver() {
     state.channelsObserver.disconnect();
     state.channelsObserver = null;
   }
+  if (state.channelsScrollHandler) {
+    window.removeEventListener('scroll', state.channelsScrollHandler);
+    state.channelsScrollHandler = null;
+  }
+}
+
+function disconnectVodObserver() {
+  if (state.vodObserver) {
+    state.vodObserver.disconnect();
+    state.vodObserver = null;
+  }
+  if (state.vodScrollHandler) {
+    window.removeEventListener('scroll', state.vodScrollHandler);
+    state.vodScrollHandler = null;
+  }
+}
+
+function vodGridListKey() {
+  return `vod:${state.vodType}:${state.vodLanguage}:${state.vodGenre}:${state.vodPlatform}:${state.vodCategory}:${state.deviceType}`;
 }
 
 function setupChannelsInfiniteScroll() {
@@ -1287,21 +1315,58 @@ function setupChannelsInfiniteScroll() {
   if (state.page !== 'channels' || state.searchQuery) return;
   if (state.channels.length >= state.channelsTotal) return;
   const sentinel = $('#channels-load-sentinel');
-  if (!sentinel || typeof IntersectionObserver === 'undefined') return;
-  const obs = new IntersectionObserver(
-    (entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        obs.disconnect();
-        if (state.channelsObserver === obs) state.channelsObserver = null;
-        if (!state.channelsLoading && state.channels.length < state.channelsTotal) {
-          loadChannels({ reset: false });
+  if (!sentinel) return;
+
+  const triggerMore = () => {
+    if (
+      state.page === 'channels' &&
+      !state.searchQuery &&
+      !state.channelsLoading &&
+      !state.channelsLoadError &&
+      state.channels.length < state.channelsTotal
+    ) {
+      loadChannels({ reset: false });
+    }
+  };
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          obs.disconnect();
+          if (state.channelsObserver === obs) state.channelsObserver = null;
+          triggerMore();
         }
+      },
+      { rootMargin: '650px 0px' },
+    );
+    obs.observe(sentinel);
+    state.channelsObserver = obs;
+  }
+
+  let rafPending = false;
+  const onScroll = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const el = $('#channels-load-sentinel');
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.top <= window.innerHeight + 550) {
+        triggerMore();
       }
-    },
-    { rootMargin: '500px 0px' },
-  );
-  obs.observe(sentinel);
-  state.channelsObserver = obs;
+    });
+  };
+  state.channelsScrollHandler = onScroll;
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  requestAnimationFrame(() => {
+    const el = $('#channels-load-sentinel');
+    if (el && el.getBoundingClientRect().top <= window.innerHeight + 450) {
+      triggerMore();
+    }
+  });
 }
 
 function updateChannelsFooterDom() {
@@ -1311,13 +1376,25 @@ function updateChannelsFooterDom() {
   const hasMore = state.channels.length < state.channelsTotal;
   const countryTitle = currentCountryTitle();
   const countSummary = hasMore
-    ? `${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)} ${t('canali', 'channels')}`
-    : `${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded')}`;
+    ? `${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)} ${t('canali', 'channels', 'canales')}`
+    : `${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded', 'canales cargados')}`;
+  const statusHtml = hasMore
+    ? `<div class="channels-load-sentinel" id="channels-load-sentinel" aria-hidden="true"></div>${
+        state.channelsLoadError
+          ? `<button type="button" class="casa-btn ghost sm" id="btn-retry-more-ch">${t('Riprova caricamento', 'Retry loading', 'Reintentar carga')}</button>`
+          : state.channelsLoading
+            ? `<div class="infinite-loading-pill"><span class="mini-spinner"></span><span>${t('Caricamento altri canali…', 'Loading more channels…', 'Cargando más canales…')}</span></div>`
+            : ''
+      }`
+    : '';
   footer.innerHTML = `
-    ${hasMore ? `<div class="channels-load-sentinel" id="channels-load-sentinel" aria-hidden="true"></div><button type="button" class="casa-btn ghost" id="btn-load-more-ch">${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})</button>` : ''}
+    ${statusHtml}
     <p id="channels-footer-summary">${t('Diretta TV', 'Live TV')} · ${esc(countryTitle)} · ${countSummary}</p>
   `;
-  $('#btn-load-more-ch')?.addEventListener('click', () => loadChannels({ reset: false }));
+  $('#btn-retry-more-ch')?.addEventListener('click', () => {
+    state.channelsLoadError = false;
+    loadChannels({ reset: false });
+  });
   return true;
 }
 
@@ -1332,10 +1409,114 @@ function appendChannelCardsToDom(newItems, startIdx, { showFlag = false } = {}) 
       .map((ch, i) => renderChannelItemHtml(ch, startIdx + i, { showFlag, eager: false }))
       .join('');
     gridEl.insertAdjacentHTML('beforeend', html);
+    scanGridImages(gridEl);
   }
   gridEl._channelList = state.channels;
   updateChannelsFooterDom();
   setupChannelsInfiniteScroll();
+  return true;
+}
+
+function setupVodInfiniteScroll() {
+  disconnectVodObserver();
+  if (state.page !== 'vod' || state.searchQuery) return;
+  if (state.vodItems.length >= state.vodTotal) return;
+  const sentinel = $('#vod-load-sentinel');
+  if (!sentinel) return;
+
+  const triggerMore = () => {
+    if (
+      state.page === 'vod' &&
+      !state.searchQuery &&
+      !state.vodLoading &&
+      !state.vodLoadError &&
+      state.vodItems.length < state.vodTotal
+    ) {
+      loadVodCatalog({ reset: false });
+    }
+  };
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          obs.disconnect();
+          if (state.vodObserver === obs) state.vodObserver = null;
+          triggerMore();
+        }
+      },
+      { rootMargin: '650px 0px' },
+    );
+    obs.observe(sentinel);
+    state.vodObserver = obs;
+  }
+
+  let rafPending = false;
+  const onScroll = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const el = $('#vod-load-sentinel');
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.top <= window.innerHeight + 550) {
+        triggerMore();
+      }
+    });
+  };
+  state.vodScrollHandler = onScroll;
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  requestAnimationFrame(() => {
+    const el = $('#vod-load-sentinel');
+    if (el && el.getBoundingClientRect().top <= window.innerHeight + 450) {
+      triggerMore();
+    }
+  });
+}
+
+function updateVodFooterDom() {
+  const root = $('#app');
+  const footer = root ? $('.grid-footer', root) : null;
+  if (!footer) return false;
+  const hasMore = state.vodItems.length < state.vodTotal;
+  const statusHtml = hasMore
+    ? `<div class="channels-load-sentinel" id="vod-load-sentinel" aria-hidden="true"></div>${
+        state.vodLoadError
+          ? `<button type="button" class="casa-btn ghost sm" id="btn-retry-more-vod">${t('Riprova caricamento', 'Retry loading', 'Reintentar carga')}</button>`
+          : state.vodLoading
+            ? `<div class="infinite-loading-pill"><span class="mini-spinner"></span><span>${t('Caricamento altri titoli…', 'Loading more titles…', 'Cargando más títulos…')}</span></div>`
+            : ''
+      }`
+    : '';
+  footer.innerHTML = `
+    ${statusHtml}
+    <p id="vod-footer-summary">${t('Catalogo Cinema & Serie TV', 'Movies & Series Catalog')} · ${fmtNum(state.vodItems.length)} / ${fmtNum(state.vodTotal)}</p>
+  `;
+  $('#btn-retry-more-vod')?.addEventListener('click', () => {
+    state.vodLoadError = false;
+    loadVodCatalog({ reset: false });
+  });
+  return true;
+}
+
+function appendVodCardsToDom(newItems, startIdx) {
+  if (state.page !== 'vod' || state.searchQuery) return false;
+  const wrap = $('#vod-main-grid-wrap');
+  if (!wrap) return false;
+  const gridEl = $('.channels-grid', wrap);
+  if (!gridEl || gridEl.dataset.listKey !== vodGridListKey()) return false;
+  if (newItems.length > 0) {
+    const html = newItems
+      .map((ch, i) => renderChannelItemHtml(ch, startIdx + i, { showFlag: true, eager: false, groupSeriesTitle: true }))
+      .join('');
+    gridEl.insertAdjacentHTML('beforeend', html);
+    scanGridImages(gridEl);
+  }
+  gridEl._channelList = state.vodItems;
+  updateVodFooterDom();
+  setupVodInfiniteScroll();
   return true;
 }
 
@@ -1385,15 +1566,12 @@ async function loadChannels({ reset = true } = {}) {
   const seq = reset ? ++state.channelsRequestSeq : state.channelsRequestSeq;
   const prevLen = reset ? 0 : state.channels.length;
   state.channelsLoading = true;
+  state.channelsLoadError = false;
   if (reset) {
     state.channels = [];
     state.channelsFallback = false;
   } else {
-    const btn = $('#btn-load-more-ch');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = t('Caricamento…', 'Loading…');
-    }
+    updateChannelsFooterDom();
   }
   updateShellChrome();
   if (state.page === 'channels' && reset && !state.searchQuery) renderCurrentScreen();
@@ -1426,6 +1604,7 @@ async function loadChannels({ reset = true } = {}) {
   } catch (err) {
     if (seq !== state.channelsRequestSeq) return;
     loadFailed = true;
+    state.channelsLoadError = true;
     state.serverDisconnected = true;
     toast(`${t('Errore caricamento canali', 'Channel load error')}: ${err.message}`, 'err');
   } finally {
@@ -1436,11 +1615,7 @@ async function loadChannels({ reset = true } = {}) {
         if (reset) {
           renderCurrentScreen();
         } else if (loadFailed) {
-          const btn = $('#btn-load-more-ch');
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = `${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})`;
-          }
+          updateChannelsFooterDom();
         } else if (!appendChannelCardsToDom(items, prevLen, { showFlag: state.channelsFallback })) {
           renderCurrentScreen();
         }
@@ -1502,12 +1677,19 @@ async function loadVodCategories() {
 async function loadVodCatalog({ reset = true } = {}) {
   if (!reset && state.vodLoading) return;
   const seq = reset ? ++state.vodRequestSeq : state.vodRequestSeq;
+  const prevLen = reset ? 0 : state.vodItems.length;
   state.vodLoading = true;
+  state.vodLoadError = false;
   if (reset) {
     state.vodItems = [];
+  } else if (state.page === 'vod' && !state.searchQuery) {
+    updateVodFooterDom();
   }
   updateShellChrome();
   if (state.page === 'vod' && reset && !state.searchQuery) renderCurrentScreen();
+
+  let addedItems = [];
+  let loadFailed = false;
   try {
     const offset = reset ? 0 : state.vodItems.length;
     const qs = new URLSearchParams({
@@ -1526,20 +1708,32 @@ async function loadVodCatalog({ reset = true } = {}) {
     const items = data.items || [];
     if (reset) {
       state.vodItems = items;
+      addedItems = items;
     } else {
       const seen = new Set(state.vodItems.map((x) => x.id));
-      state.vodItems = state.vodItems.concat(items.filter((x) => !seen.has(x.id)));
+      addedItems = items.filter((x) => !seen.has(x.id));
+      state.vodItems = state.vodItems.concat(addedItems);
     }
     state.vodTotal = Number(data.total ?? state.vodItems.length);
   } catch (err) {
     if (seq === state.vodRequestSeq) {
+      loadFailed = true;
+      state.vodLoadError = true;
       toast(`${t('Errore caricamento Film & Serie', 'VOD load error')}: ${err.message}`, 'err');
     }
   } finally {
     if (seq === state.vodRequestSeq) {
       state.vodLoading = false;
       updateShellChrome();
-      if (state.page === 'vod' && !state.searchQuery) renderCurrentScreen();
+      if (state.page === 'vod' && !state.searchQuery) {
+        if (reset) {
+          renderCurrentScreen();
+        } else if (loadFailed) {
+          updateVodFooterDom();
+        } else if (!appendVodCardsToDom(addedItems, prevLen)) {
+          renderCurrentScreen();
+        }
+      }
     }
   }
 }
@@ -1727,8 +1921,8 @@ function analyzeWebLogoContrast(img) {
   if (!src) return;
   const cached = webLogoContrastCache.get(src);
   if (cached) {
-    if (state.theme === 'dark' && cached.isDark) artwork.classList.add('is-light-stage');
-    if (state.theme === 'light' && cached.isVeryLight) artwork.classList.add('is-dark-stage');
+    artwork.classList.toggle('is-light-stage', state.theme === 'dark' && cached.isDark);
+    artwork.classList.toggle('is-dark-stage', state.theme === 'light' && cached.isVeryLight);
     return;
   }
   try {
@@ -1762,10 +1956,70 @@ function analyzeWebLogoContrast(img) {
           isDark: lumSum / n < 102 || (dark / n >= 0.62 && lumSum / n < 125),
           isVeryLight: lumSum / n > 205 || (bright / n >= 0.72 && lumSum / n > 185),
         };
+    if (webLogoContrastCache.size > 1500) webLogoContrastCache.clear();
     webLogoContrastCache.set(src, res);
-    if (state.theme === 'dark' && res.isDark) artwork.classList.add('is-light-stage');
-    if (state.theme === 'light' && res.isVeryLight) artwork.classList.add('is-dark-stage');
+    artwork.classList.toggle('is-light-stage', state.theme === 'dark' && res.isDark);
+    artwork.classList.toggle('is-dark-stage', state.theme === 'light' && res.isVeryLight);
   } catch (_) {}
+}
+
+function handleGridImageLoaded(img) {
+  if (!img || img.tagName !== 'IMG' || !img.classList.contains('card-logo-img')) return;
+  img.classList.remove('is-loading');
+  img.classList.add('is-loaded');
+  const artwork = img.closest('.card-artwork');
+  if (artwork) artwork.classList.add('is-loaded');
+  if (img.dataset.vod === '1') {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth > img.naturalHeight * 1.08) {
+      if (artwork && !artwork.querySelector('.card-still-scrim')) {
+        artwork.classList.add('is-still-frame');
+        if (artwork.querySelector('.card-tv-tag')) artwork.classList.add('is-still-series');
+        const scrim = document.createElement('div');
+        scrim.className = 'card-still-scrim';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'card-still-title';
+        titleEl.textContent = img.dataset.fallback || img.alt || '';
+        scrim.appendChild(titleEl);
+        artwork.appendChild(scrim);
+      }
+    }
+  } else {
+    analyzeWebLogoContrast(img);
+  }
+}
+
+function handleGridImageError(img) {
+  if (!img || img.tagName !== 'IMG' || img.dataset.fallback == null) return;
+  if (img.dataset.fallbackMobile === '1') {
+    const span = document.createElement('span');
+    span.className = 'row-num-fallback';
+    span.textContent = img.dataset.fallback;
+    img.replaceWith(span);
+    return;
+  }
+  const artwork = img.closest('.card-artwork');
+  if (artwork && artwork.querySelector('.card-loading-title')) {
+    artwork.classList.remove('is-loaded');
+    img.remove();
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'fallback-title-wrap';
+  const txt = document.createElement('span');
+  txt.className = 'fallback-title-text';
+  txt.textContent = img.dataset.fallback;
+  wrap.appendChild(txt);
+  img.replaceWith(wrap);
+}
+
+function scanGridImages(gridEl) {
+  if (!gridEl) return;
+  for (const img of gridEl.querySelectorAll('img.card-logo-img')) {
+    if (img.complete) {
+      if (img.naturalWidth > 0) handleGridImageLoaded(img);
+      else handleGridImageError(img);
+    }
+  }
 }
 
 function cleanTileTitle(name) {
@@ -1784,7 +2038,7 @@ function renderLogoOrFallback(ch, mobile = false, eager = false, displayTitle = 
     return `<span class="row-num-fallback">${esc(ch.number || initials(cleanTitle))}</span>`;
   }
   if (ch.logo) {
-    return `<img class="card-logo-img" crossorigin="anonymous" data-vod="${isVod ? '1' : '0'}" src="${esc(ch.logo)}" alt="${esc(cleanTitle)}" loading="${loading}" decoding="async" fetchpriority="${priority}" data-fallback="${esc(cleanTitle)}" data-fallback-mobile="0" />`;
+    return `<div class="card-loading-title"><span class="fallback-title-text">${esc(cleanTitle)}</span></div><img class="card-logo-img is-loading" crossorigin="anonymous" data-vod="${isVod ? '1' : '0'}" src="${esc(ch.logo)}" alt="${esc(cleanTitle)}" loading="${loading}" decoding="async" fetchpriority="${priority}" data-fallback="${esc(cleanTitle)}" data-fallback-mobile="0" />`;
   }
   return `<div class="fallback-title-wrap"><span class="fallback-title-text">${esc(cleanTitle)}</span></div>`;
 }
@@ -1952,7 +2206,10 @@ function bindChannelListEvents(container, list, { openSeriesOnTap = true } = {})
   const gridEl = $('.channels-grid', container);
   if (!gridEl) return;
   gridEl._channelList = list;
-  if (gridEl.dataset.bound === '1') return;
+  if (gridEl.dataset.bound === '1') {
+    scanGridImages(gridEl);
+    return;
+  }
   gridEl.dataset.bound = '1';
 
   const cardSel = '.grid-channel-card';
@@ -2060,7 +2317,7 @@ function bindChannelListEvents(container, list, { openSeriesOnTap = true } = {})
     }
   });
 
-  if (!isMobile) {
+  if (state.deviceType === 'pc') {
     gridEl.addEventListener('mouseover', (e) => {
       const card = e.target.closest(cardSel);
       if (!card || !gridEl.contains(card) || card === state.hoveredPreviewCard) return;
@@ -2091,26 +2348,7 @@ function bindChannelListEvents(container, list, { openSeriesOnTap = true } = {})
   gridEl.addEventListener(
     'load',
     (e) => {
-      const img = e.target;
-      if (!img || img.tagName !== 'IMG' || !img.classList.contains('card-logo-img')) return;
-      if (img.dataset.vod === '1') {
-        if (img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth > img.naturalHeight * 1.08) {
-          const artwork = img.closest('.card-artwork');
-          if (artwork && !artwork.querySelector('.card-still-scrim')) {
-            artwork.classList.add('is-still-frame');
-            if (artwork.querySelector('.card-tv-tag')) artwork.classList.add('is-still-series');
-            const scrim = document.createElement('div');
-            scrim.className = 'card-still-scrim';
-            const titleEl = document.createElement('span');
-            titleEl.className = 'card-still-title';
-            titleEl.textContent = img.dataset.fallback || img.alt || '';
-            scrim.appendChild(titleEl);
-            artwork.appendChild(scrim);
-          }
-        }
-      } else {
-        analyzeWebLogoContrast(img);
-      }
+      handleGridImageLoaded(e.target);
     },
     true,
   );
@@ -2118,30 +2356,18 @@ function bindChannelListEvents(container, list, { openSeriesOnTap = true } = {})
   gridEl.addEventListener(
     'error',
     (e) => {
-      const img = e.target;
-      if (!img || img.tagName !== 'IMG' || img.dataset.fallback == null) return;
-      if (img.dataset.fallbackMobile === '1') {
-        const span = document.createElement('span');
-        span.className = 'row-num-fallback';
-        span.textContent = img.dataset.fallback;
-        img.replaceWith(span);
-      } else {
-        const wrap = document.createElement('div');
-        wrap.className = 'fallback-title-wrap';
-        const txt = document.createElement('span');
-        txt.className = 'fallback-title-text';
-        txt.textContent = img.dataset.fallback;
-        wrap.appendChild(txt);
-        img.replaceWith(wrap);
-      }
+      handleGridImageError(e.target);
     },
     true,
   );
+
+  scanGridImages(gridEl);
 }
 
 function renderCurrentScreen() {
   stopCardPreview();
   disconnectChannelsObserver();
+  disconnectVodObserver();
   const root = $('#app');
   if (!root) return;
 
@@ -2165,14 +2391,59 @@ function renderCurrentScreen() {
       });
       return;
     }
+    const liveResults = state.searchResults.filter(
+      (ch) => !ch.isVod && ch.contentType !== 'movie' && ch.contentType !== 'series',
+    );
+    const movieResults = state.searchResults.filter(
+      (ch) => ch.contentType === 'movie' || (ch.isVod && ch.contentType !== 'series'),
+    );
+    const seriesResults = state.searchResults.filter((ch) => ch.contentType === 'series');
+
+    const sections = [];
+    if (liveResults.length) {
+      sections.push({
+        id: 'search-sec-live',
+        title: `${t('Canali TV', 'TV Channels', 'Canales TV')} (${fmtNum(liveResults.length)})`,
+        items: liveResults,
+        groupSeriesTitle: false,
+      });
+    }
+    if (movieResults.length) {
+      sections.push({
+        id: 'search-sec-movies',
+        title: `${t('Film', 'Movies', 'Películas')} (${fmtNum(movieResults.length)})`,
+        items: movieResults,
+        groupSeriesTitle: false,
+      });
+    }
+    if (seriesResults.length) {
+      sections.push({
+        id: 'search-sec-series',
+        title: `${t('Serie TV', 'TV Series', 'Series TV')} (${fmtNum(seriesResults.length)})`,
+        items: seriesResults,
+        groupSeriesTitle: true,
+      });
+    }
+
     root.innerHTML = `
       <div class="search-banner">
         <strong>${t(`Ricerca globale per "${esc(state.searchQuery)}"`, `Worldwide search for "${esc(state.searchQuery)}"`)}</strong>
         <span>${t('Catalogo globale', 'Worldwide catalog', 'Catálogo mundial')}</span>
       </div>
-      ${renderChannelGridCards(state.searchResults, { showFlag: true, groupSeriesTitle: true })}
+      ${sections
+        .map(
+          (sec) => `
+        <section class="search-section" id="${sec.id}">
+          <h3 class="search-section-title">${esc(sec.title)}</h3>
+          ${renderChannelGridCards(sec.items, { showFlag: true, groupSeriesTitle: sec.groupSeriesTitle })}
+        </section>`,
+        )
+        .join('')}
     `;
-    bindChannelListEvents(root, state.searchResults);
+    for (const sec of sections) {
+      const secEl = $(`#${sec.id}`, root);
+      if (secEl) bindChannelListEvents(secEl, sec.items);
+    }
     return;
   }
 
@@ -2249,10 +2520,7 @@ function renderCurrentScreen() {
   root.innerHTML = `
     ${state.localOverrideChannels ? `<div class="fallback-notice">${SVG_ICONS.folder} ${esc(state.localSourceLabel)} · ${fmtNum(state.channelsTotal)} canali · <button type="button" class="casa-btn ghost sm" id="btn-exit-local-m3u">${t('Torna al server', 'Back to server')}</button></div>` : fallbackBanner}
     ${renderChannelGridCards(state.channels, { showFlag: state.channelsFallback || Boolean(state.localOverrideChannels), listKey: channelsGridListKey() })}
-    <div class="grid-footer">
-      ${hasMore ? `<div class="channels-load-sentinel" id="channels-load-sentinel" aria-hidden="true"></div><button type="button" class="casa-btn ghost" id="btn-load-more-ch">${t('Carica altri canali', 'Load more channels')} (${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)})</button>` : ''}
-      <p id="channels-footer-summary">${t('Diretta TV', 'Live TV')} · ${esc(countryTitle)} · ${hasMore ? `${fmtNum(state.channels.length)} / ${fmtNum(state.channelsTotal)} ${t('canali', 'channels')}` : `${fmtNum(state.channels.length)} ${t('canali visualizzati', 'channels loaded')}`}</p>
-    </div>
+    <div class="grid-footer"></div>
   `;
   $('#btn-exit-local-m3u')?.addEventListener('click', () => {
     state.localOverrideChannels = null;
@@ -2260,7 +2528,7 @@ function renderCurrentScreen() {
     loadChannels({ reset: true });
     loadFavorites();
   });
-  $('#btn-load-more-ch')?.addEventListener('click', () => loadChannels({ reset: false }));
+  updateChannelsFooterDom();
   bindChannelListEvents(root, state.channels);
   setupChannelsInfiniteScroll();
 }
@@ -2345,19 +2613,16 @@ function renderVodScreen(root) {
     root.innerHTML = `${toolbarHtml}${continueHtml}
       <div class="empty-box">
         <h3>${t('Nessun film o serie trovato', 'No movies or series found')}</h3>
-        <p>${t('Prova a cambiare lingua, piattaforma o genere.', 'Try changing language, platform or genre.')}</p>
+        <p>${t('Prova a cambiare lingua o genere.', 'Try changing language or genre.')}</p>
       </div>`;
   } else {
     root.innerHTML = `
       ${toolbarHtml}
       ${continueHtml}
       <div id="vod-main-grid-wrap">
-        ${renderChannelGridCards(state.vodItems, { showFlag: true, groupSeriesTitle: true })}
+        ${renderChannelGridCards(state.vodItems, { showFlag: true, groupSeriesTitle: true, listKey: vodGridListKey() })}
       </div>
-      <div class="grid-footer">
-        ${hasMore ? `<button type="button" class="casa-btn ghost" id="btn-load-more-vod">${t('Carica altri titoli', 'Load more titles')} (${fmtNum(state.vodItems.length)} / ${fmtNum(state.vodTotal)})</button>` : ''}
-        <p>${t('Catalogo Cinema & Serie TV', 'Movies & Series Catalog')} · ${fmtNum(state.vodItems.length)} / ${fmtNum(state.vodTotal)}</p>
-      </div>
+      <div class="grid-footer"></div>
     `;
   }
 
@@ -2380,10 +2645,6 @@ function renderVodScreen(root) {
     e.stopPropagation();
     state.vodPlatformMenuOpen = false;
     state.vodLanguageMenuOpen = !state.vodLanguageMenuOpen;
-    const pMenu = $('#vod-platform-menu', root);
-    const pBtn = $('#vod-platform-btn', root);
-    if (pMenu) pMenu.hidden = true;
-    if (pBtn) pBtn.setAttribute('aria-expanded', 'false');
     const menu = $('#vod-language-menu', root);
     const btn = $('#vod-language-btn', root);
     if (menu) menu.hidden = !state.vodLanguageMenuOpen;
@@ -2402,30 +2663,6 @@ function renderVodScreen(root) {
       loadVodCatalog({ reset: true });
     }),
   );
-  $('#vod-platform-btn', root)?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    state.vodLanguageMenuOpen = false;
-    state.vodPlatformMenuOpen = !state.vodPlatformMenuOpen;
-    const lMenu = $('#vod-language-menu', root);
-    const lBtn = $('#vod-language-btn', root);
-    if (lMenu) lMenu.hidden = true;
-    if (lBtn) lBtn.setAttribute('aria-expanded', 'false');
-    const menu = $('#vod-platform-menu', root);
-    const btn = $('#vod-platform-btn', root);
-    if (menu) menu.hidden = !state.vodPlatformMenuOpen;
-    if (btn) btn.setAttribute('aria-expanded', state.vodPlatformMenuOpen ? 'true' : 'false');
-  });
-  $$('[data-vod-platform]', root).forEach((btn) =>
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const nextPlat = btn.dataset.vodPlatform || '';
-      state.vodPlatform = nextPlat;
-      if (nextPlat) state.vodGenre = '';
-      state.vodCategory = '';
-      state.vodPlatformMenuOpen = false;
-      loadVodCatalog({ reset: true });
-    }),
-  );
   $$('[data-vod-genre]', root).forEach((btn) =>
     btn.addEventListener('click', () => {
       const nextGenre = btn.dataset.vodGenre || '';
@@ -2437,7 +2674,6 @@ function renderVodScreen(root) {
       loadVodCatalog({ reset: true });
     }),
   );
-  $('#btn-load-more-vod')?.addEventListener('click', () => loadVodCatalog({ reset: false }));
 
   const contEl = $('#vod-continue-grid', root);
   if (contEl) {
@@ -2461,10 +2697,15 @@ function renderVodScreen(root) {
       const ch = continueItems[Number(card.dataset.idx)];
       if (ch) openCardContextMenu(ch, continueItems, e.clientX, e.clientY);
     });
+    contEl.addEventListener('load', (e) => handleGridImageLoaded(e.target), true);
+    contEl.addEventListener('error', (e) => handleGridImageError(e.target), true);
+    scanGridImages(contEl);
   }
   const mainWrap = $('#vod-main-grid-wrap', root);
   if (mainWrap && state.vodItems.length) {
+    updateVodFooterDom();
     bindChannelListEvents(mainWrap, state.vodItems);
+    setupVodInfiniteScroll();
   }
 }
 

@@ -371,11 +371,6 @@ fun GridChannelCard(
             }
             .clip(tileShape)
             .background(CasaSurface)
-            .border(
-                width = if (focused) 2.5.dp else 1.dp,
-                color = if (focused) frameFocusColor else Color.Transparent,
-                shape = tileShape,
-            )
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
@@ -392,6 +387,18 @@ fun GridChannelCard(
             focused = if (isLowRam) false else focused,
             isVod = isVod,
         )
+        if (focused) {
+            val outerRadius = if (isVod) 8.dp else 10.dp
+            val innerRadius = if (isVod) 5.dp else 7.dp
+            val contrastGapColor = if (isLight) Color.White else Color.Black
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(3.dp, frameFocusColor, RoundedCornerShape(outerRadius))
+                    .padding(3.dp)
+                    .border(2.5.dp, contrastGapColor, RoundedCornerShape(innerRadius)),
+            )
+        }
     }
 }
 
@@ -531,6 +538,7 @@ private fun PosterArtwork(
     modifier: Modifier = Modifier,
 ) {
     var failed by remember(channel.logo, channel.id) { mutableStateOf(false) }
+    var loaded by remember(channel.logo, channel.id) { mutableStateOf(false) }
     var isLandscapeStill by remember(channel.logo, channel.id) { mutableStateOf(false) }
     val context = LocalContext.current
     val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
@@ -554,12 +562,16 @@ private fun PosterArtwork(
                 .build()
         }
         Box(modifier = modifier) {
+            if (!loaded) {
+                TypographicTileFallback(title = displayTitle, modifier = Modifier.fillMaxSize())
+            }
             AsyncImage(
                 model = request,
                 contentDescription = displayTitle,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
                 onSuccess = { state ->
+                    loaded = true
                     val d = state.result.drawable
                     val w = d.intrinsicWidth
                     val h = d.intrinsicHeight
@@ -607,6 +619,7 @@ fun ChannelLogo(
     onContrastDetected: ((LogoContrastResult) -> Unit)? = null,
 ) {
     var failed by remember(channel.logo, channel.id) { mutableStateOf(false) }
+    var loaded by remember(channel.logo, channel.id) { mutableStateOf(false) }
     val context = LocalContext.current
     val isLowRam = remember(context) { CasaTvApplication.isLowRamDevice(context) }
     val scope = rememberCoroutineScope()
@@ -633,31 +646,45 @@ fun ChannelLogo(
         val onImageError = remember(logoUrl, channel.id) {
             { _: coil.compose.AsyncImagePainter.State.Error -> failed = true }
         }
-        AsyncImage(
-            model = request,
-            contentDescription = displayTitle,
-            contentScale = ContentScale.Fit,
-            modifier = modifier,
-            onSuccess = { state ->
-                if (onContrastDetected != null) {
-                    val peeked = LogoContrastCache.peek(logoUrl)
-                    if (peeked != null) {
-                        onContrastDetected(peeked)
-                    } else {
-                        scope.launch {
-                            val res = LogoContrastCache.analyzeDrawable(logoUrl, state.result.drawable)
-                            onContrastDetected(res)
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            if (!loaded) {
+                TypographicTileFallback(
+                    title = displayTitle,
+                    modifier = Modifier.fillMaxSize(),
+                    transparentBg = true,
+                )
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = displayTitle,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+                onSuccess = { state ->
+                    loaded = true
+                    if (onContrastDetected != null) {
+                        val peeked = LogoContrastCache.peek(logoUrl)
+                        if (peeked != null) {
+                            onContrastDetected(peeked)
+                        } else {
+                            scope.launch {
+                                val res = LogoContrastCache.analyzeDrawable(logoUrl, state.result.drawable)
+                                onContrastDetected(res)
+                            }
                         }
                     }
-                }
-            },
-            onError = onImageError,
-        )
+                },
+                onError = onImageError,
+            )
+        }
     }
 }
 
 @Composable
-private fun TypographicTileFallback(title: String, modifier: Modifier = Modifier) {
+private fun TypographicTileFallback(
+    title: String,
+    modifier: Modifier = Modifier,
+    transparentBg: Boolean = false,
+) {
     val isLight = it.casatv.tv.ui.theme.CasaIsLight
     val cleanTitle = remember(title) {
         title.replace(Regex("""^\s*(?:\([^)]{1,10}\)|\[[^\]]{1,10}\])\s*"""), "").trim().ifBlank { title }
@@ -665,7 +692,9 @@ private fun TypographicTileFallback(title: String, modifier: Modifier = Modifier
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(if (isLight) Color(0xFFE6E6EC) else Color(0xFF1A1A1F))
+            .then(
+                if (transparentBg) Modifier else Modifier.background(if (isLight) Color(0xFFE6E6EC) else Color(0xFF1A1A1F)),
+            )
             .padding(horizontal = 10.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {

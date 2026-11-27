@@ -1477,6 +1477,7 @@ private fun ChannelTileCard(
     val scope = rememberCoroutineScope()
     val isDarkSurface = MaterialTheme.colorScheme.background.red < 0.25f
     var logoFailed by remember(channel.logo, channel.id) { mutableStateOf(false) }
+    var logoLoaded by remember(channel.logo, channel.id) { mutableStateOf(false) }
     var isVodLandscapeStill by remember(channel.logo, channel.id) { mutableStateOf(false) }
     var contrast by remember(channel.logo, channel.id) {
         mutableStateOf(if (!isVod) MobileLogoContrastCache.peek(channel.logo) else null)
@@ -1506,6 +1507,18 @@ private fun ChannelTileCard(
         contentAlignment = Alignment.Center,
     ) {
         val logoUrl = channel.logo
+        if (logoUrl.isNullOrBlank() || logoFailed || !logoLoaded) {
+            Text(
+                text = displayTitle,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isDarkSurface) Color(0xFFF2F2F5) else Color(0xFF111114),
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+        }
         if (!logoUrl.isNullOrBlank() && !logoFailed) {
             val req = remember(logoUrl, isVod) {
                 ImageRequest.Builder(context)
@@ -1521,6 +1534,7 @@ private fun ChannelTileCard(
                 contentScale = if (isVod) ContentScale.Crop else ContentScale.Fit,
                 modifier = if (isVod) Modifier.fillMaxSize() else Modifier.fillMaxSize().padding(12.dp),
                 onSuccess = { state ->
+                    logoLoaded = true
                     if (!isVod) {
                         val peeked = MobileLogoContrastCache.peek(logoUrl)
                         if (peeked != null) contrast = peeked
@@ -1557,17 +1571,6 @@ private fun ChannelTileCard(
                     )
                 }
             }
-        } else {
-            Text(
-                text = displayTitle,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isDarkSurface) Color(0xFFF2F2F5) else Color(0xFF111114),
-                textAlign = TextAlign.Center,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
         }
 
         if (isVod && channel.contentType == "series") {

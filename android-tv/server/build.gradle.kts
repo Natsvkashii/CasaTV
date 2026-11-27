@@ -40,8 +40,8 @@ android {
         // while still running on older boxes and phones.
         minSdk = 26
         targetSdk = 35
-        versionCode = 2611057
-        versionName = "26.11.057"
+        versionCode = 2611058
+        versionName = "26.11.058"
         buildConfigField("String", "GITHUB_REPO", "\"Natsvkashii/CasaTV\"")
 
         vectorDrawables {

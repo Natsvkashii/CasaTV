@@ -385,8 +385,13 @@ fun TvModeScreen(
                     val liveSearchResults = remember(searchResults) {
                         searchResults.filterIsInstance<GlobalSearchResult.ChannelResult>().filter { !it.channel.isVodContent }
                     }
-                    val vodSearchResults = remember(searchResults) {
-                        searchResults.filterIsInstance<GlobalSearchResult.ChannelResult>().filter { it.channel.isVodContent }
+                    val movieSearchResults = remember(searchResults) {
+                        searchResults.filterIsInstance<GlobalSearchResult.ChannelResult>().filter {
+                            it.channel.contentType == "movie" || (it.channel.isVodContent && it.channel.contentType != "series")
+                        }
+                    }
+                    val seriesSearchResults = remember(searchResults) {
+                        searchResults.filterIsInstance<GlobalSearchResult.ChannelResult>().filter { it.channel.contentType == "series" }
                     }
                     val allSearchChannels = remember(searchResults) {
                         searchResults.filterIsInstance<GlobalSearchResult.ChannelResult>().map { it.channel }
@@ -407,10 +412,14 @@ fun TvModeScreen(
                     LaunchedEffect(searchResults.isNotEmpty(), searchFocusTargetId) {
                         if (searchResults.isNotEmpty() && !searchFocusTargetId.isNullOrBlank()) {
                             val livePos = liveSearchResults.indexOfFirst { it.channel.id == searchFocusTargetId }
-                            val vodPos = vodSearchResults.indexOfFirst { it.channel.id == searchFocusTargetId }
+                            val moviePos = movieSearchResults.indexOfFirst { it.channel.id == searchFocusTargetId }
+                            val seriesPos = seriesSearchResults.indexOfFirst { it.channel.id == searchFocusTargetId }
+                            val liveSectionItems = if (liveSearchResults.isNotEmpty()) 1 + liveSearchResults.size else 0
+                            val movieSectionItems = if (movieSearchResults.isNotEmpty()) 1 + movieSearchResults.size else 0
                             val targetGridIdx = when {
                                 livePos >= 0 -> 1 + livePos
-                                vodPos >= 0 -> (if (liveSearchResults.isNotEmpty()) 1 + liveSearchResults.size + 1 else 1) + vodPos
+                                moviePos >= 0 -> liveSectionItems + 1 + moviePos
+                                seriesPos >= 0 -> liveSectionItems + movieSectionItems + 1 + seriesPos
                                 else -> -1
                             }
                             if (targetGridIdx >= 0) {
@@ -465,10 +474,10 @@ fun TvModeScreen(
                                 )
                             }
                         }
-                        if (vodSearchResults.isNotEmpty()) {
+                        if (movieSearchResults.isNotEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Text(
-                                    text = strings.t("FILM & SERIE TV (${vodSearchResults.size})", "MOVIES & SERIES (${vodSearchResults.size})", "CINE Y SERIES (${vodSearchResults.size})"),
+                                    text = strings.t("FILM (${movieSearchResults.size})", "MOVIES (${movieSearchResults.size})", "PELÍCULAS (${movieSearchResults.size})"),
                                     color = CasaMuted,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
@@ -477,8 +486,40 @@ fun TvModeScreen(
                                 )
                             }
                             itemsIndexed(
-                                vodSearchResults,
-                                key = { _, result -> "sch_vod_${result.channel.id}" },
+                                movieSearchResults,
+                                key = { _, result -> "sch_movie_${result.channel.id}" },
+                            ) { _, result ->
+                                UniversalSearchResultCard(
+                                    result = result,
+                                    onClick = { vm.openVodItem(result.channel, allSearchChannels.ifEmpty { listOf(result.channel) }) },
+                                    onFavorite = { vm.toggleFavorite(result.channel) },
+                                    modifier = if (result.channel.id == searchFocusTargetId) {
+                                        Modifier.focusRequester(searchRestoreFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                    onLongClick = {
+                                        contextMenuIsContinue = false
+                                        contextMenuQueue = allSearchChannels.ifEmpty { listOf(result.channel) }
+                                        contextMenuChannel = result.channel
+                                    },
+                                )
+                            }
+                        }
+                        if (seriesSearchResults.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = strings.t("SERIE TV (${seriesSearchResults.size})", "TV SERIES (${seriesSearchResults.size})", "SERIES TV (${seriesSearchResults.size})"),
+                                    color = CasaMuted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp,
+                                    modifier = Modifier.padding(top = if (liveSearchResults.isNotEmpty() || movieSearchResults.isNotEmpty()) 6.dp else 0.dp),
+                                )
+                            }
+                            itemsIndexed(
+                                seriesSearchResults,
+                                key = { _, result -> "sch_series_${result.channel.id}" },
                             ) { _, result ->
                                 UniversalSearchResultCard(
                                     result = result,
