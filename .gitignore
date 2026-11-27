@@ -1,0 +1,59 @@
+# ==============================================================================
+# CasaTV — Git Ignore Configuration
+# ==============================================================================
+
+# OS & System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Android & Gradle Build Artifacts
+.gradle/
+.kotlin/
+build/
+*/build/
+*.apk
+*.aab
+*.ap_
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Android Studio & IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+local.properties
+.navigation/
+
+# Toolchains & Local Development
+.toolchain/
+*.log
+*.tmp
+*.bak
+
+# Node.js Server & Desktop
+node_modules/
+CasaTV/server/node_modules/
+CasaTV/desktop/node_modules/
+CasaTV/server/data/
+CasaTV/server/.env
+CasaTV/server/*.log
+dist/
+CasaTV/dist/*.apk
+CasaTV/desktop/dist/
+
+# Python & Virtual Environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local device backups
+backups/
