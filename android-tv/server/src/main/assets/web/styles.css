@@ -478,10 +478,33 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round
   -webkit-box-orient: vertical;
   word-break: break-word;
 }
-.card-tv-tag {
+.card-vod-corner {
   position: absolute;
   right: 6px;
   bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  pointer-events: none;
+  z-index: 2;
+}
+.card-lang-flags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2.5px;
+}
+.vod-lang-flag {
+  width: 11px;
+  height: 8px;
+  border-radius: 1.5px;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.78), 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+}
+.card-tv-tag {
   padding: 2px 5px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.78);
@@ -491,7 +514,6 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round
   letter-spacing: 0.4px;
   line-height: 1.1;
   pointer-events: none;
-  z-index: 2;
 }
 .card-still-scrim {
   position: absolute;
@@ -2610,6 +2632,34 @@ body.modal-scroll-lock {
   background: var(--bg);
   border: 1px solid var(--border);
   flex-wrap: wrap;
+  content-visibility: auto;
+  contain-intrinsic-size: 68px;
+}
+.playlists-manager-dialog {
+  width: min(860px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.playlists-manager-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.playlists-manager-toolbar .casa-input {
+  flex: 1;
+  min-width: 200px;
+}
+.playlists-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+  max-height: 58vh;
 }
 .playlist-row.is-error {
   border-color: rgba(255, 69, 58, 0.55);

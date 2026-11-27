@@ -3,7 +3,7 @@
 import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.025';
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.058';
+const WEB_APP_VERSION = '26.11.059';
 const LOW_RAM_WEB =
   typeof navigator !== 'undefined' &&
   Number(navigator.deviceMemory || 0) > 0 &&
@@ -300,6 +300,7 @@ const state = {
   vodObserver: null,
   vodScrollHandler: null,
   vodLoadError: false,
+  serverPlaylists: [],
   favorites: [],
   favoritesLoading: false,
   localOverrideChannels: null,
@@ -2052,6 +2053,15 @@ function renderChannelItemHtml(ch, idx, { showFlag = false, eager = false, group
   const upNextBadgeText = ch.upNext && ch.seasonNumber && ch.episodeNumber
     ? `S${String(ch.seasonNumber).padStart(2, '0')}E${String(ch.episodeNumber).padStart(2, '0')}`
     : (ch.upNext ? 'PROSSIMO' : '');
+  let langFlags = isVod
+    ? (Array.isArray(ch.languageFlags) ? ch.languageFlags : []).map(normalizeFlagCode).filter(Boolean)
+    : [];
+  if (isVod && !langFlags.length) {
+    const cc = normalizeFlagCode(ch.country);
+    if (cc) langFlags = [cc];
+  }
+  langFlags = [...new Set(langFlags)].slice(0, 5);
+  const hasVodCorner = isVod && (langFlags.length > 0 || ch.contentType === 'series');
 
   return `
     <article class="grid-channel-card ${isVod ? 'is-vod' : ''}" data-idx="${idx}" data-id="${esc(ch.id)}" tabindex="0" role="button" title="${esc(displayName)}" aria-label="${esc(displayName)}">
@@ -2059,7 +2069,11 @@ function renderChannelItemHtml(ch, idx, { showFlag = false, eager = false, group
         ${renderLogoOrFallback(ch, false, eager, displayName)}
         ${ch.favorite ? `<div class="card-top-right"><button type="button" class="card-fav-btn is-fav" data-fav-idx="${idx}" title="${t('Preferito', 'Favorite', 'Favorito')}">${SVG_ICONS.starFilled}</button></div>` : ''}
         ${!isVod ? '<span class="card-live-tag"><i></i>LIVE</span>' : ''}
-        ${ch.contentType === 'series' ? '<span class="card-tv-tag">TV</span>' : ''}
+        ${hasVodCorner ? `
+          <div class="card-vod-corner">
+            ${langFlags.length ? `<div class="card-lang-flags">${langFlags.map((cc) => `<img class="vod-lang-flag" src="/flags/${cc}.svg" alt="${cc.toUpperCase()}" loading="lazy" decoding="async" />`).join('')}</div>` : ''}
+            ${ch.contentType === 'series' ? '<span class="card-tv-tag">TV</span>' : ''}
+          </div>` : ''}
         ${upNextBadgeText ? `<span class="upnext-pill">${esc(upNextBadgeText)}</span>` : ''}
         ${resumePct > 0 ? `<div class="card-resume-track"><div class="card-resume-fill" style="width:${resumePct}%"></div></div>` : ''}
       </div>
@@ -6499,10 +6513,190 @@ function renderSettingsSources(detail, stats) {
     state.importPollTimer = setInterval(tick, 1500);
   }
 
+  function renderPlaylistRowHtml(pl) {
+    const isImporting = pl.status === 'importing';
+    const isBroken = !isImporting && (pl.status === 'error' || (pl.channelCount || 0) === 0);
+    const isWarn = !isImporting && !isBroken && pl.status === 'warn';
+    const rowClass = isBroken ? 'is-error' : isWarn ? 'is-warn' : '';
+    const pillClass = isImporting ? 'importing' : isBroken ? 'error' : isWarn ? 'warn' : 'ok';
+    const statusText = isImporting
+      ? t('Importazione…', 'Importing…', 'Importando…')
+      : isBroken
+        ? t('Non funziona', 'Not working', 'No funciona')
+        : isWarn
+          ? t('Avviso', 'Warning', 'Aviso')
+          : t('Attiva', 'Active', 'Activa');
+    const srcTag = pl.url ? 'LINK' : 'FILE';
+    const errMsg = pl.lastError || (isBroken ? t('Playlist non valida o senza canali funzionanti', 'Invalid playlist or no working channels') : '');
+    return `
+      <div class="playlist-row ${rowClass}">
+        <div class="playlist-row-meta">
+          <div class="playlist-title-line">
+            <strong>${esc(pl.name || pl.url || 'Playlist')}</strong>
+            <span class="playlist-status-pill ${pillClass}"><span class="playlist-status-dot"></span>${statusText}</span>
+            <span class="playlist-source-badge">${srcTag}</span>
+          </div>
+          <small>${fmtNum(pl.channelCount || 0)} ${t('canali', 'channels')}${pl.url ? ` · ${esc(pl.url)}` : ` · ${t('File caricato', 'Uploaded file')}`}</small>
+          ${errMsg ? `<div class="playlist-error-msg">${esc(errMsg)}</div>` : ''}
+        </div>
+        <div class="btn-row">
+          ${isImporting ? '' : `<button type="button" class="casa-btn ghost sm" data-pl-check="${esc(pl.id)}">${t('Verifica', 'Check')}</button>`}
+          ${!isImporting && pl.url ? `<button type="button" class="casa-btn ghost sm" data-pl-refresh="${esc(pl.id)}">${t('Aggiorna', 'Refresh')}</button>` : ''}
+          <button type="button" class="casa-btn danger sm" data-pl-del="${esc(pl.id)}">${t('Elimina', 'Delete')}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindPlaylistRowActions(container, onAfterMutate) {
+    $$('[data-pl-check]', container).forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plCheck)}/check`, { method: 'POST' });
+          const pl = resp.playlist;
+          if (pl?.status === 'error') {
+            toast(`${pl.name}: ${pl.lastError || t('non funziona', 'not working')}`, 'err');
+          } else if (pl?.status === 'warn') {
+            toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
+          } else {
+            toast(`${pl?.name || 'Playlist'}: ${t('attiva', 'working')}!`);
+          }
+          await loadServerConfig();
+          await onAfterMutate();
+        } catch (err) {
+          toast(err.message, 'err');
+          b.disabled = false;
+        }
+      }),
+    );
+    $$('[data-pl-refresh]', container).forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plRefresh)}/refresh`, { method: 'POST' });
+          const pl = resp.playlist;
+          if (pl?.status === 'error') {
+            toast(`${pl.name}: ${pl.lastError || t('errore', 'error')}`, 'err');
+          } else if (pl?.status === 'warn') {
+            toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
+          } else {
+            toast(t('Playlist aggiornata', 'Playlist refreshed'));
+          }
+          await loadServerConfig();
+          await loadChannels({ reset: true });
+          await onAfterMutate();
+        } catch (err) {
+          toast(err.message, 'err');
+          b.disabled = false;
+        }
+      }),
+    );
+    $$('[data-pl-del]', container).forEach((b) =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/api/playlists/${encodeURIComponent(b.dataset.plDel)}`, { method: 'DELETE' });
+          toast(t('Playlist eliminata', 'Playlist deleted'));
+          await loadServerConfig();
+          await loadChannels({ reset: true });
+          await onAfterMutate();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      }),
+    );
+  }
+
+  let modalQuery = '';
+  let modalFilter = 'all';
+
+  function renderAllPlaylistsModalBody(modal) {
+    const items = state.serverPlaylists || [];
+    const countTitle = $('#all-playlists-title', modal);
+    if (countTitle) {
+      countTitle.textContent = `${t('Gestisci tutte le playlist e sorgenti', 'Manage all playlists & sources', 'Gestionar todas las listas')} (${fmtNum(items.length)})`;
+    }
+    const q = modalQuery.trim().toLowerCase();
+    const filtered = items.filter((pl) => {
+      const isBroken = pl.status !== 'importing' && (pl.status === 'error' || (pl.channelCount || 0) === 0);
+      if (modalFilter === 'ok' && isBroken) return false;
+      if (modalFilter === 'error' && !isBroken) return false;
+      if (q) {
+        const hay = `${pl.name || ''} ${pl.url || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const listEl = $('#all-playlists-list', modal);
+    const subEl = $('#all-playlists-sub', modal);
+    if (subEl) {
+      subEl.textContent = `${fmtNum(filtered.length)} / ${fmtNum(items.length)} ${t('visualizzate', 'shown', 'mostradas')}`;
+    }
+    if (!listEl) return;
+    listEl.innerHTML = filtered.length
+      ? filtered.map(renderPlaylistRowHtml).join('')
+      : `<p style="margin:12px 0;color:var(--muted);font-size:13px">${t('Nessuna playlist trovata con questi filtri.', 'No playlists match this filter.')}</p>`;
+    bindPlaylistRowActions(listEl, async () => {
+      await drawPlaylists({ skipPollTrigger: true });
+      if (!modal.hidden) renderAllPlaylistsModalBody(modal);
+    });
+  }
+
+  function openAllPlaylistsModal() {
+    let modal = document.getElementById('all-playlists-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'all-playlists-modal';
+      modal.className = 'modal';
+      modal.hidden = true;
+      modal.innerHTML = `
+        <div class="modal-backdrop" data-close-all-playlists></div>
+        <div class="modal-card playlists-manager-dialog" role="dialog" aria-modal="true" aria-labelledby="all-playlists-title">
+          <div class="country-modal-head">
+            <div>
+              <h2 id="all-playlists-title">${t('Gestisci tutte le playlist', 'Manage all playlists')}</h2>
+              <p id="all-playlists-sub" style="margin:2px 0 0;color:var(--muted);font-size:12px"></p>
+            </div>
+            <button type="button" class="casa-btn ghost sm" data-close-all-playlists>${t('Chiudi', 'Close', 'Cerrar')}</button>
+          </div>
+          <div class="playlists-manager-toolbar">
+            <input type="search" class="casa-input" id="all-playlists-search" placeholder="${t('Cerca playlist per nome o link…', 'Search playlist by name or URL…')}" autocomplete="off" />
+            <div class="btn-row">
+              <button type="button" class="casa-btn ghost sm is-active" data-pl-filter="all">${t('Tutte', 'All', 'Todas')}</button>
+              <button type="button" class="casa-btn ghost sm" data-pl-filter="ok">${t('Attive', 'Active', 'Activas')}</button>
+              <button type="button" class="casa-btn ghost sm" data-pl-filter="error">${t('Con errori', 'Errors', 'Con errores')}</button>
+            </div>
+          </div>
+          <div class="playlists-manager-list" id="all-playlists-list"></div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      $$('[data-close-all-playlists]', modal).forEach((el) =>
+        el.addEventListener('click', () => {
+          modal.hidden = true;
+        }),
+      );
+      $('#all-playlists-search', modal)?.addEventListener('input', (e) => {
+        modalQuery = e.target.value || '';
+        renderAllPlaylistsModalBody(modal);
+      });
+      $$('[data-pl-filter]', modal).forEach((btn) =>
+        btn.addEventListener('click', () => {
+          modalFilter = btn.dataset.plFilter || 'all';
+          $$('[data-pl-filter]', modal).forEach((b) => b.classList.toggle('is-active', b === btn));
+          renderAllPlaylistsModalBody(modal);
+        }),
+      );
+    }
+    modal.hidden = false;
+    renderAllPlaylistsModalBody(modal);
+  }
+
   async function drawPlaylists({ skipPollTrigger = false } = {}) {
     try {
       const res = await api('/api/playlists');
       const items = res.playlists || [];
+      state.serverPlaylists = items;
       if (!skipPollTrigger && items.some((pl) => pl.status === 'importing')) {
         startImportPolling();
       }
@@ -6510,102 +6704,26 @@ function renderSettingsSources(detail, stats) {
       const countLbl = document.getElementById('playlists-count-label');
       const rowsEl = document.getElementById('playlists-rows');
       if (!countLbl || !rowsEl) return;
-      countLbl.textContent = `${items.length} ${t('playlist configurate', 'configured playlists')}`;
+      countLbl.textContent = `${fmtNum(items.length)} ${t('playlist configurate', 'configured playlists')}`;
+      const previewItems = items.slice(0, 5);
+      const remainingCount = items.length - previewItems.length;
       rowsEl.innerHTML = items.length
-        ? items
-            .map((pl) => {
-              const isImporting = pl.status === 'importing';
-              const isBroken = !isImporting && (pl.status === 'error' || (pl.channelCount || 0) === 0);
-              const isWarn = !isImporting && !isBroken && pl.status === 'warn';
-              const rowClass = isBroken ? 'is-error' : isWarn ? 'is-warn' : '';
-              const pillClass = isImporting ? 'importing' : isBroken ? 'error' : isWarn ? 'warn' : 'ok';
-              const statusText = isImporting
-                ? t('Importazione…', 'Importing…', 'Importando…')
-                : isBroken
-                  ? t('Non funziona', 'Not working', 'No funciona')
-                  : isWarn
-                    ? t('Avviso', 'Warning', 'Aviso')
-                    : t('Attiva', 'Active', 'Activa');
-              const srcTag = pl.url ? 'LINK' : 'FILE';
-              const errMsg = pl.lastError || (isBroken ? t('Playlist non valida o senza canali funzionanti', 'Invalid playlist or no working channels') : '');
-              return `
-          <div class="playlist-row ${rowClass}">
-            <div class="playlist-row-meta">
-              <div class="playlist-title-line">
-                <strong>${esc(pl.name || pl.url || 'Playlist')}</strong>
-                <span class="playlist-status-pill ${pillClass}"><span class="playlist-status-dot"></span>${statusText}</span>
-                <span class="playlist-source-badge">${srcTag}</span>
-              </div>
-              <small>${fmtNum(pl.channelCount || 0)} ${t('canali', 'channels')}${pl.url ? ` · ${esc(pl.url)}` : ` · ${t('File caricato', 'Uploaded file')}`}</small>
-              ${errMsg ? `<div class="playlist-error-msg">${esc(errMsg)}</div>` : ''}
-            </div>
-            <div class="btn-row">
-              ${isImporting ? '' : `<button type="button" class="casa-btn ghost sm" data-pl-check="${esc(pl.id)}">${t('Verifica', 'Check')}</button>`}
-              ${!isImporting && pl.url ? `<button type="button" class="casa-btn ghost sm" data-pl-refresh="${esc(pl.id)}">${t('Aggiorna', 'Refresh')}</button>` : ''}
-              <button type="button" class="casa-btn danger sm" data-pl-del="${esc(pl.id)}">${t('Elimina', 'Delete')}</button>
-            </div>
-          </div>
-        `;
-            })
-            .join('')
+        ? previewItems.map(renderPlaylistRowHtml).join('') +
+          (remainingCount > 0
+            ? `<button type="button" class="casa-btn ghost sm" id="btn-manage-all-playlists" style="align-self:flex-start;margin-top:4px">${t(
+                `Mostra e gestisci tutte (${fmtNum(items.length)})`,
+                `Show & manage all (${fmtNum(items.length)})`,
+                `Ver y gestionar todas (${fmtNum(items.length)})`,
+              )}</button>`
+            : '')
         : `<p style="margin:0;color:var(--muted);font-size:12.5px">${t('Nessuna playlist salvata.', 'No saved playlists.')}</p>`;
 
-      $$('[data-pl-check]', rowsEl).forEach((b) =>
-        b.addEventListener('click', async () => {
-          b.disabled = true;
-          try {
-            const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plCheck)}/check`, { method: 'POST' });
-            const pl = resp.playlist;
-            if (pl?.status === 'error') {
-              toast(`${pl.name}: ${pl.lastError || t('non funziona', 'not working')}`, 'err');
-            } else if (pl?.status === 'warn') {
-              toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
-            } else {
-              toast(`${pl?.name || 'Playlist'}: ${t('attiva', 'working')}!`);
-            }
-            await loadServerConfig();
-            drawPlaylists();
-          } catch (err) {
-            toast(err.message, 'err');
-            b.disabled = false;
-          }
-        }),
-      );
-      $$('[data-pl-refresh]', rowsEl).forEach((b) =>
-        b.addEventListener('click', async () => {
-          b.disabled = true;
-          try {
-            const resp = await api(`/api/playlists/${encodeURIComponent(b.dataset.plRefresh)}/refresh`, { method: 'POST' });
-            const pl = resp.playlist;
-            if (pl?.status === 'error') {
-              toast(`${pl.name}: ${pl.lastError || t('errore', 'error')}`, 'err');
-            } else if (pl?.status === 'warn') {
-              toast(`${pl.name}: ${pl.lastError || t('avviso', 'warning')}`);
-            } else {
-              toast(t('Playlist aggiornata', 'Playlist refreshed'));
-            }
-            await loadServerConfig();
-            await loadChannels({ reset: true });
-            drawPlaylists();
-          } catch (err) {
-            toast(err.message, 'err');
-            b.disabled = false;
-          }
-        }),
-      );
-      $$('[data-pl-del]', rowsEl).forEach((b) =>
-        b.addEventListener('click', async () => {
-          try {
-            await api(`/api/playlists/${encodeURIComponent(b.dataset.plDel)}`, { method: 'DELETE' });
-            toast(t('Playlist eliminata', 'Playlist deleted'));
-            await loadServerConfig();
-            await loadChannels({ reset: true });
-            drawPlaylists();
-          } catch (err) {
-            toast(err.message, 'err');
-          }
-        }),
-      );
+      bindPlaylistRowActions(rowsEl, () => drawPlaylists({ skipPollTrigger: true }));
+      $('#btn-manage-all-playlists', rowsEl)?.addEventListener('click', openAllPlaylistsModal);
+      const existingModal = document.getElementById('all-playlists-modal');
+      if (existingModal && !existingModal.hidden) {
+        renderAllPlaylistsModalBody(existingModal);
+      }
     } catch (_) {
       const countLbl = document.getElementById('playlists-count-label');
       if (countLbl) countLbl.textContent = t('Server non raggiungibile', 'Server unreachable');

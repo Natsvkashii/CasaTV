@@ -100,6 +100,7 @@ class CasaServerClient {
             flag = flag,
             category = category,
             language = languages.firstOrNull(),
+            languageFlags = languageFlags,
             quality = quality,
             epgId = epgId,
             playlistId = "casatv_server",

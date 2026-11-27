@@ -474,22 +474,53 @@ private fun ChannelArtwork(
                     )
                 }
             }
-            if (channel.contentType == "series") {
-                Box(
+            val vodFlags = remember(channel.languageFlags, channel.country, isVod) {
+                if (!isVod) {
+                    emptyList()
+                } else {
+                    val explicit = channel.languageFlags.mapNotNull(::resolveFlagAssetCode).distinct().take(5)
+                    if (explicit.isNotEmpty()) explicit else listOfNotNull(resolveFlagAssetCode(channel.country))
+                }
+            }
+            if (vodFlags.isNotEmpty() || channel.contentType == "series") {
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xC8000000))
-                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                        .padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = "TV",
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.4.sp,
-                    )
+                    if (vodFlags.isNotEmpty()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            vodFlags.forEach { cc ->
+                                CountryFlagIcon(
+                                    countryCode = cc,
+                                    width = 11.dp,
+                                    height = 8.dp,
+                                    cornerRadius = 1.5.dp,
+                                )
+                            }
+                        }
+                    }
+                    if (channel.contentType == "series") {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xC8000000))
+                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "TV",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.4.sp,
+                            )
+                        }
+                    }
                 }
             }
             if (channel.durationMs > 0L && channel.positionMs > 15_000L) {

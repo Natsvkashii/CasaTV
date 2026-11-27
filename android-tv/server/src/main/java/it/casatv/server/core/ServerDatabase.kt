@@ -2022,6 +2022,7 @@ class ServerDatabase private constructor(context: Context) :
             val scanCap = maxOf((offset + limit) * 14, 4800).coerceAtMost(14_000)
             val batchSize = 600
             val uniqueMap = LinkedHashMap<String, IptvChannel>(neededUnique.coerceAtMost(2000))
+            val langsByKey = HashMap<String, LinkedHashSet<String>>(neededUnique.coerceAtMost(2000))
             var rawOffset = 0
             var rawExhausted = false
             while (uniqueMap.size < neededUnique && rawOffset < scanCap) {
@@ -2033,6 +2034,10 @@ class ServerDatabase private constructor(context: Context) :
                 rawOffset += batch.size
                 for (ch in batch) {
                     val key = VodTaxonomy.normalizeVodDedupKey(ch)
+                    val flagSet = langsByKey.getOrPut(key) { LinkedHashSet(3) }
+                    if (flagSet.size < 5) {
+                        flagSet.addAll(VodTaxonomy.detectVodFlagCodes(ch))
+                    }
                     val prev = uniqueMap[key]
                     if (prev == null || VodTaxonomy.vodCandidateScore(ch) > VodTaxonomy.vodCandidateScore(prev)) {
                         uniqueMap[key] = ch
@@ -2043,7 +2048,10 @@ class ServerDatabase private constructor(context: Context) :
                     break
                 }
             }
-            val allUnique = uniqueMap.values.toList()
+            val allUnique = uniqueMap.entries.map { (key, ch) ->
+                val flags = langsByKey[key]?.take(5).orEmpty()
+                if (flags.isNotEmpty()) ch.copy(availableLanguageFlags = flags) else ch
+            }
             val items = allUnique.drop(offset).take(limit)
             val hasMore = allUnique.size > offset + items.size || !rawExhausted
             val estimatedTotal = if (rawExhausted) {
@@ -2913,6 +2921,7 @@ class ServerDatabase private constructor(context: Context) :
         val movieCur = StreamCursor(movieWhere)
         val seriesCur = StreamCursor(seriesWhere)
         val uniqueMap = LinkedHashMap<String, IptvChannel>(neededUnique.coerceAtMost(2000))
+        val langsByKey = HashMap<String, LinkedHashSet<String>>(neededUnique.coerceAtMost(2000))
         var totalScanned = 0
         while (uniqueMap.size < neededUnique && totalScanned < scanCap) {
             val m = movieCur.peek()
@@ -2930,12 +2939,19 @@ class ServerDatabase private constructor(context: Context) :
             val next = (if (takeMovie) movieCur.pop() else seriesCur.pop()) ?: break
             totalScanned++
             val key = VodTaxonomy.normalizeVodDedupKey(next)
+            val flagSet = langsByKey.getOrPut(key) { LinkedHashSet(3) }
+            if (flagSet.size < 5) {
+                flagSet.addAll(VodTaxonomy.detectVodFlagCodes(next))
+            }
             val prev = uniqueMap[key]
             if (prev == null || VodTaxonomy.vodCandidateScore(next) > VodTaxonomy.vodCandidateScore(prev)) {
                 uniqueMap[key] = next
             }
         }
-        val allUnique = uniqueMap.values.toList()
+        val allUnique = uniqueMap.entries.map { (key, ch) ->
+            val flags = langsByKey[key]?.take(5).orEmpty()
+            if (flags.isNotEmpty()) ch.copy(availableLanguageFlags = flags) else ch
+        }
         val items = allUnique.drop(offset).take(limit)
         val bothExhausted = movieCur.exhausted && movieCur.idx >= movieCur.buf.size &&
             seriesCur.exhausted && seriesCur.idx >= seriesCur.buf.size

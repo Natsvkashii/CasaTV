@@ -203,6 +203,7 @@ data class Channel(
     val categoryNames: List<String> = emptyList(),
     val languages: List<String> = emptyList(),
     val languageNames: List<String> = emptyList(),
+    val languageFlags: List<String> = emptyList(),
     val quality: String = "SD",
     val logo: String? = null,
     val favorite: Boolean = false,

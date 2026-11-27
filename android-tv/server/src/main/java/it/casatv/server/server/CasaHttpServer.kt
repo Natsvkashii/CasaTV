@@ -3466,6 +3466,18 @@ class CasaHttpServer(
             putJsonArray("languageNames") {
                 if (languageCode.isNotBlank()) add(languageName(languageCode, language))
             }
+            val vodLanguageFlags = if (channel.isVod) {
+                (channel.availableLanguageFlags.ifEmpty { VodTaxonomy.detectVodFlagCodes(channel) })
+                    .map { it.lowercase(Locale.ROOT) }
+                    .filter { it.length == 2 }
+                    .distinct()
+                    .take(5)
+            } else {
+                emptyList()
+            }
+            putJsonArray("languageFlags") {
+                vodLanguageFlags.forEach { add(it) }
+            }
             put("quality", channel.quality.ifBlank { "SD" })
             putOrNull("logo", cachedLogoUrl)
             put("favorite", favorite)

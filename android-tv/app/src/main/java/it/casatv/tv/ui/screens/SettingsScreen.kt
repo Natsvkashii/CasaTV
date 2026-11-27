@@ -18,10 +18,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -2206,6 +2208,7 @@ private fun PlaylistsSettingsCard(
 ) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
+    var showAllPlaylistsDialog by remember { mutableStateOf(false) }
     val uploadPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -2292,122 +2295,34 @@ private fun PlaylistsSettingsCard(
                 fontSize = 12.sp,
             )
         } else {
+            val visiblePlaylists = remember(playlists) { playlists.take(5) }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                playlists.forEach { p ->
-                    val isError = p.status == "error" || p.channelCount == 0
-                    val isWarn = !isError && p.status == "warn"
-                    val statusColor = when {
-                        isError -> CasaRed
-                        isWarn -> CasaAmber
-                        else -> CasaGreen
-                    }
-                    val statusLabel = when {
-                        isError -> strings.t("Non funziona", "Not working", "No funciona")
-                        isWarn -> strings.t("Avviso", "Warning", "Aviso")
-                        else -> strings.t("Attiva", "Active", "Activa")
-                    }
-                    val srcTag = if (p.url.isNotBlank()) "LINK" else "FILE"
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isError) CasaRed.copy(alpha = 0.08f) else Color(0x14FFFFFF))
-                            .border(
-                                1.dp,
-                                if (isError) CasaRed.copy(alpha = 0.7f) else Color(0x1FFFFFFF),
-                                RoundedCornerShape(12.dp),
-                            )
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(statusColor),
-                                )
-                                Text(
-                                    text = p.name,
-                                    color = CasaText,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = statusLabel.uppercase(),
-                                    color = statusColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(statusColor.copy(alpha = 0.16f))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                )
-                                Text(
-                                    text = srcTag,
-                                    color = CasaMuted,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0x1FFFFFFF))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                )
-                            }
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                text = "${p.channelCount} canali" + if (p.url.isNotBlank()) " · ${p.url}" else " · File caricato",
-                                color = CasaMuted,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (p.lastError.isNotBlank() || isError) {
-                                Spacer(Modifier.height(3.dp))
-                                Text(
-                                    text = p.lastError.ifBlank {
-                                        strings.t("Playlist non valida o senza canali funzionanti", "Invalid playlist or no working channels", "Lista no válida")
-                                    },
-                                    color = CasaRed,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        TvButton(
-                            text = strings.t("Verifica", "Check", "Verificar"),
-                            onClick = { vm.checkPlaylist(p.id) },
-                            primary = false,
-                            icon = Icons.Filled.Warning.takeIf { isError },
-                        )
-                        if (p.url.isNotBlank()) {
-                            Spacer(Modifier.width(6.dp))
-                            TvButton(
-                                text = strings.t("Aggiorna", "Refresh", "Actualizar"),
-                                onClick = { vm.refreshPlaylist(p.id) },
-                                primary = false,
-                                icon = Icons.Filled.Refresh,
-                            )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        TvButton(
-                            text = strings.t("Elimina", "Delete", "Eliminar"),
-                            onClick = { vm.deletePlaylist(p.id) },
-                            primary = false,
-                            icon = Icons.Filled.Delete,
-                        )
-                    }
+                visiblePlaylists.forEach { p ->
+                    PlaylistItemRow(p = p, vm = vm, strings = strings)
+                }
+                if (playlists.size > 5) {
+                    Spacer(Modifier.height(2.dp))
+                    TvButton(
+                        text = strings.t(
+                            "Mostra e gestisci tutte (${playlists.size})",
+                            "Show & manage all (${playlists.size})",
+                            "Ver y gestionar todas (${playlists.size})",
+                        ),
+                        onClick = { showAllPlaylistsDialog = true },
+                        primary = false,
+                    )
                 }
             }
         }
+    }
+
+    if (showAllPlaylistsDialog) {
+        AllPlaylistsDialog(
+            playlists = playlists,
+            vm = vm,
+            strings = strings,
+            onDismiss = { showAllPlaylistsDialog = false },
+        )
     }
 
     if (showAddDialog) {
@@ -2420,6 +2335,171 @@ private fun PlaylistsSettingsCard(
             },
         )
     }
+}
+
+@Composable
+private fun PlaylistItemRow(
+    p: it.casatv.tv.data.PlaylistDto,
+    vm: MainViewModel,
+    strings: it.casatv.tv.ui.AppStrings,
+) {
+    val isError = p.status == "error" || p.channelCount == 0
+    val isWarn = !isError && p.status == "warn"
+    val statusColor = when {
+        isError -> CasaRed
+        isWarn -> CasaAmber
+        else -> CasaGreen
+    }
+    val statusLabel = when {
+        isError -> strings.t("Non funziona", "Not working", "No funciona")
+        isWarn -> strings.t("Avviso", "Warning", "Aviso")
+        else -> strings.t("Attiva", "Active", "Activa")
+    }
+    val srcTag = if (p.url.isNotBlank()) "LINK" else "FILE"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isError) CasaRed.copy(alpha = 0.08f) else Color(0x14FFFFFF))
+            .border(
+                1.dp,
+                if (isError) CasaRed.copy(alpha = 0.7f) else Color(0x1FFFFFFF),
+                RoundedCornerShape(12.dp),
+            )
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor),
+                )
+                Text(
+                    text = p.name,
+                    color = CasaText,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = statusLabel.uppercase(),
+                    color = statusColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(statusColor.copy(alpha = 0.16f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+                Text(
+                    text = srcTag,
+                    color = CasaMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0x1FFFFFFF))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = "${p.channelCount} canali" + if (p.url.isNotBlank()) " · ${p.url}" else " · File caricato",
+                color = CasaMuted,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (p.lastError.isNotBlank() || isError) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = p.lastError.ifBlank {
+                        strings.t("Playlist non valida o senza canali funzionanti", "Invalid playlist or no working channels", "Lista no válida")
+                    },
+                    color = CasaRed,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        TvButton(
+            text = strings.t("Verifica", "Check", "Verificar"),
+            onClick = { vm.checkPlaylist(p.id) },
+            primary = false,
+            icon = Icons.Filled.Warning.takeIf { isError },
+        )
+        if (p.url.isNotBlank()) {
+            Spacer(Modifier.width(6.dp))
+            TvButton(
+                text = strings.t("Aggiorna", "Refresh", "Actualizar"),
+                onClick = { vm.refreshPlaylist(p.id) },
+                primary = false,
+                icon = Icons.Filled.Refresh,
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        TvButton(
+            text = strings.t("Elimina", "Delete", "Eliminar"),
+            onClick = { vm.deletePlaylist(p.id) },
+            primary = false,
+            icon = Icons.Filled.Delete,
+        )
+    }
+}
+
+@Composable
+private fun AllPlaylistsDialog(
+    playlists: List<it.casatv.tv.data.PlaylistDto>,
+    vm: MainViewModel,
+    strings: it.casatv.tv.ui.AppStrings,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CasaSurface,
+        titleContentColor = CasaText,
+        textContentColor = CasaText,
+        title = {
+            Text(
+                text = strings.t(
+                    "Tutte le playlist e sorgenti (${playlists.size})",
+                    "All playlists & sources (${playlists.size})",
+                    "Todas las listas y fuentes (${playlists.size})",
+                ),
+                color = CasaText,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+            )
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(playlists, key = { it.id }) { p ->
+                    PlaylistItemRow(p = p, vm = vm, strings = strings)
+                }
+            }
+        },
+        confirmButton = {
+            TvButton(
+                text = strings.t("Chiudi", "Close", "Cerrar"),
+                onClick = onDismiss,
+                primary = true,
+            )
+        },
+    )
 }
 
 @Composable

@@ -30,6 +30,7 @@ data class IptvChannel(
     val playlistId: String = "default",
     val contentType: String = "live", // "live" | "movie" | "series"
     val sourceCount: Int = 1,
+    val availableLanguageFlags: List<String> = emptyList(),
 ) {
     val isVod: Boolean
         get() = contentType == "movie" || contentType == "series"

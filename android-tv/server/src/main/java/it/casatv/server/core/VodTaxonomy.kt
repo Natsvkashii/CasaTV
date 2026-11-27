@@ -454,4 +454,63 @@ object VodTaxonomy {
         if (!channel.logo.isNullOrBlank()) score += 5
         return score
     }
+
+    private val ISO3_TO_LANG: Map<String, String> = mapOf(
+        "ita" to "it", "italian" to "it", "italiano" to "it",
+        "eng" to "en", "english" to "en", "inglese" to "en",
+        "spa" to "es", "esp" to "es", "spanish" to "es", "spagnolo" to "es", "castellano" to "es", "lat" to "es", "latino" to "es",
+        "fra" to "fr", "fre" to "fr", "french" to "fr", "francese" to "fr",
+        "deu" to "de", "ger" to "de", "german" to "de", "deutsch" to "de", "tedesco" to "de",
+        "por" to "pt", "portuguese" to "pt", "portoghese" to "pt", "pob" to "pt",
+        "jpn" to "ja", "japanese" to "ja", "giapponese" to "ja",
+        "kor" to "ko", "korean" to "ko", "coreano" to "ko",
+        "ara" to "ar", "arabic" to "ar", "arabo" to "ar",
+        "tur" to "tr", "turkish" to "tr", "turco" to "tr",
+        "rus" to "ru", "russian" to "ru", "russo" to "ru",
+        "pol" to "pl", "polish" to "pl", "polacco" to "pl",
+        "nld" to "nl", "dut" to "nl", "dutch" to "nl", "olandese" to "nl",
+        "ron" to "ro", "rum" to "ro", "romanian" to "ro", "rumeno" to "ro",
+        "hin" to "hi", "hindi" to "hi", "indiano" to "hi",
+        "zho" to "zh", "chi" to "zh", "chinese" to "zh", "cinese" to "zh",
+    )
+
+    fun detectVodFlagCodes(channel: IptvChannel): List<String> {
+        val out = LinkedHashSet<String>(4)
+        val rawLang = channel.language.trim().lowercase(Locale.ROOT)
+        if (rawLang.isNotEmpty()) {
+            rawLang.split(',', '/', '|', ';', ' ').forEach { tok ->
+                val clean = tok.trim()
+                if (clean.isNotEmpty()) {
+                    val mappedCode = ISO3_TO_LANG[clean] ?: clean
+                    val def = resolveLanguageDef(mappedCode)
+                    if (def != null && def.flag.isNotBlank()) {
+                        out += def.flag.lowercase(Locale.ROOT)
+                    }
+                }
+            }
+        }
+        val nameAndCat = buildString {
+            append(channel.name)
+            if (channel.category.isNotBlank()) {
+                append(' ')
+                append(channel.category)
+            }
+        }
+        for (def in LANGUAGES) {
+            if (def.flag.isBlank()) continue
+            if (def.tagRegex.containsMatchIn(nameAndCat)) {
+                out += def.flag.lowercase(Locale.ROOT)
+                if (out.size >= 5) break
+            }
+        }
+        if (out.size < 5) {
+            val cc = channel.country.trim().uppercase(Locale.ROOT).let { if (it == "UK") "GB" else it }
+            if (cc.length == 2 && cc.all { it in 'A'..'Z' } && cc != "XX" && cc != "ZZ") {
+                val langDef = LANGUAGES.firstOrNull { it.flag.isNotBlank() && cc in it.countries }
+                val flag = langDef?.flag?.lowercase(Locale.ROOT) ?: cc.lowercase(Locale.ROOT)
+                out += flag
+            }
+        }
+        return out.take(5)
+    }
 }
