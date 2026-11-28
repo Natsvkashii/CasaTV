@@ -62,6 +62,9 @@ class PlaylistImportEngine private constructor(context: Context) {
 
     @Volatile
     private var activeJobId: String? = null
+    private val pendingQueueCount = AtomicInteger(0)
+    @Volatile
+    private var needsCanonicalRebuild: Boolean = false
 
     private sealed interface QueuedImport {
         val jobId: String
@@ -103,12 +106,17 @@ class PlaylistImportEngine private constructor(context: Context) {
                     .onFailure { Log.w("CasaImport", "buildSearchIndexIncrementally failed: ${it.message}") }
                 runCatching { db.classifyContentTypesIncrementally() }
                     .onFailure { Log.w("CasaImport", "classifyContentTypesIncrementally failed: ${it.message}") }
-                runCatching { db.rebuildLiveCanonicalMapSync() }
-                    .onFailure { Log.w("CasaImport", "rebuildLiveCanonicalMapSync failed: ${it.message}") }
-                runCatching { db.checkpointWal(truncate = true) }
-                    .onFailure { Log.w("CasaImport", "checkpointWal failed: ${it.message}") }
+                if (pendingQueueCount.get() > 0 || activeJobId != null) {
+                    needsCanonicalRebuild = true
+                } else {
+                    runCatching { db.rebuildLiveCanonicalMapSync() }
+                        .onFailure { Log.w("CasaImport", "rebuildLiveCanonicalMapSync failed: ${it.message}") }
+                    runCatching { db.checkpointWal(truncate = true) }
+                        .onFailure { Log.w("CasaImport", "checkpointWal failed: ${it.message}") }
+                }
             }
             for (item in queue) {
+                pendingQueueCount.updateAndGet { (it - 1).coerceAtLeast(0) }
                 activeJobId = item.jobId
                 runCatching { processJob(item) }
                     .onFailure { err ->
@@ -125,6 +133,14 @@ class PlaylistImportEngine private constructor(context: Context) {
                         }
                     }
                 activeJobId = null
+                if (pendingQueueCount.get() == 0 && needsCanonicalRebuild) {
+                    needsCanonicalRebuild = false
+                    Log.i("CasaImport", "Coda importazione svuotata: ricostruzione mappa canonica live e checkpoint WAL")
+                    runCatching { db.rebuildLiveCanonicalMapSync(force = true) }
+                        .onFailure { Log.w("CasaImport", "rebuildLiveCanonicalMapSync failed: ${it.message}") }
+                    runCatching { db.checkpointWal(truncate = true) }
+                        .onFailure { Log.w("CasaImport", "checkpointWal failed: ${it.message}") }
+                }
             }
         }
     }
@@ -261,6 +277,7 @@ class PlaylistImportEngine private constructor(context: Context) {
                 contentHash = fingerprint,
             ),
         )
+        pendingQueueCount.incrementAndGet()
         queue.trySend(QueuedImport.FileJob(jobId, playlistId, cleanName, file))
         return snap
     }
@@ -298,6 +315,7 @@ class PlaylistImportEngine private constructor(context: Context) {
                 lastError = if (updatedExisting) "Aggiornamento in coda…" else "In coda per il download…",
             ),
         )
+        pendingQueueCount.incrementAndGet()
         queue.trySend(QueuedImport.UrlJob(jobId, playlistId, cleanName, cleanUrl))
         return snap
     }
@@ -547,16 +565,11 @@ class PlaylistImportEngine private constructor(context: Context) {
             val (status, lastError) = playlistManager.probeSamplesForPlaylist(playlistId, totalChannels)
             db.finalizePlaylistImport(playlistId, totalChannels, status, lastError)
             if (totalChannels > 0) {
-                workerScope.launch {
-                    runCatching { db.buildSearchIndexIncrementally() }
-                        .onFailure { Log.w("CasaImport", "buildSearchIndexIncrementally failed: ${it.message}") }
-                    runCatching { db.classifyContentTypesIncrementally() }
-                        .onFailure { Log.w("CasaImport", "classifyContentTypesIncrementally failed: ${it.message}") }
-                    runCatching { db.rebuildLiveCanonicalMapSync(force = true) }
-                        .onFailure { Log.w("CasaImport", "rebuildLiveCanonicalMapSync failed: ${it.message}") }
-                    runCatching { db.checkpointWal(truncate = true) }
-                        .onFailure { Log.w("CasaImport", "checkpointWal failed: ${it.message}") }
-                }
+                runCatching { db.buildSearchIndexIncrementally() }
+                    .onFailure { Log.w("CasaImport", "buildSearchIndexIncrementally failed: ${it.message}") }
+                runCatching { db.classifyContentTypesIncrementally() }
+                    .onFailure { Log.w("CasaImport", "classifyContentTypesIncrementally failed: ${it.message}") }
+                needsCanonicalRebuild = true
             }
             val elapsedSec = (System.currentTimeMillis() - tStartMs) / 1000.0
             updateJob(jobId) {

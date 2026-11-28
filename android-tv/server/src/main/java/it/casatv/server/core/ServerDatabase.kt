@@ -64,6 +64,7 @@ class ServerDatabase private constructor(context: Context) :
     private val statsGeneration = AtomicLong(0L)
     @Volatile
     private var lastClientPruneAt: Long = 0L
+    private val lastClientTouch = ConcurrentHashMap<String, Pair<Long, String>>()
 
     data class PersistedSourceHealth(
         val stallCount: Int,
@@ -622,22 +623,29 @@ class ServerDatabase private constructor(context: Context) :
             synchronized(writeLock) {
                 val wdb = writableDatabase
                 createLiveCanonicalTable(wdb)
-                wdb.beginTransaction()
-                try {
-                    wdb.delete("live_canonical_map", null, null)
-                    wdb.setTransactionSuccessful()
-                } finally {
-                    wdb.endTransaction()
-                }
+                wdb.execSQL("DROP TABLE IF EXISTS live_canonical_map_tmp")
+                wdb.execSQL(
+                    """
+                    CREATE TABLE live_canonical_map_tmp (
+                        channel_id TEXT PRIMARY KEY,
+                        group_key TEXT NOT NULL,
+                        is_primary INTEGER NOT NULL DEFAULT 0,
+                        source_count INTEGER NOT NULL DEFAULT 1
+                    )
+                    """.trimIndent(),
+                )
+            }
 
-                var i = 0
-                val n = entries.size
-                while (i < n) {
-                    val end = (i + 10_000).coerceAtMost(n)
+            var i = 0
+            val n = entries.size
+            while (i < n) {
+                val end = (i + 10_000).coerceAtMost(n)
+                synchronized(writeLock) {
+                    val wdb = writableDatabase
                     wdb.beginTransaction()
                     try {
                         wdb.compileStatement(
-                            "INSERT OR REPLACE INTO live_canonical_map(channel_id, group_key, is_primary, source_count) VALUES (?, ?, ?, ?)",
+                            "INSERT OR REPLACE INTO live_canonical_map_tmp(channel_id, group_key, is_primary, source_count) VALUES (?, ?, ?, ?)",
                         ).use { stmt ->
                             for (idx in i until end) {
                                 val (id, gKey) = entries[idx]
@@ -656,11 +664,18 @@ class ServerDatabase private constructor(context: Context) :
                     } finally {
                         wdb.endTransaction()
                     }
-                    i = end
                 }
+                i = end
+            }
 
+            synchronized(writeLock) {
+                val wdb = writableDatabase
                 wdb.beginTransaction()
                 try {
+                    wdb.execSQL("DROP TABLE IF EXISTS live_canonical_map")
+                    wdb.execSQL("ALTER TABLE live_canonical_map_tmp RENAME TO live_canonical_map")
+                    wdb.execSQL("CREATE INDEX IF NOT EXISTS idx_live_canon_group ON live_canonical_map(group_key)")
+                    wdb.execSQL("CREATE INDEX IF NOT EXISTS idx_live_canon_primary ON live_canonical_map(is_primary, channel_id)")
                     wdb.execSQL("INSERT OR REPLACE INTO search_meta(key, val) VALUES ('live_canon_version', ?)", arrayOf(LIVE_CANON_VERSION))
                     wdb.execSQL("INSERT OR REPLACE INTO search_meta(key, val) VALUES ('live_canon_max_rowid', ?)", arrayOf(maxRowId.toString()))
                     wdb.setTransactionSuccessful()
@@ -2588,8 +2603,14 @@ class ServerDatabase private constructor(context: Context) :
         channel: String,
         ip: String,
     ) {
+        val now = System.currentTimeMillis() / 1000
+        val sig = "$state|$channel|$profileId|$ip"
+        val prev = lastClientTouch[id]
+        if (prev != null && now - prev.first < 30L && prev.second == sig) {
+            return
+        }
+        lastClientTouch[id] = now to sig
         synchronized(writeLock) {
-            val now = System.currentTimeMillis() / 1000
             val db = writableDatabase
             db.execSQL(
                 """
