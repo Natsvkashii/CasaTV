@@ -60,6 +60,8 @@ class ServerDatabase private constructor(context: Context) :
     private val vodCategoryComputeLock = Any()
     private val statsComputeLock = Any()
     private val statsRefreshing = AtomicBoolean(false)
+    private val vodCatRefreshing = AtomicBoolean(false)
+    private val vodCountryRefreshing = AtomicBoolean(false)
     private val liveCanonRebuilding = AtomicBoolean(false)
     private val statsGeneration = AtomicLong(0L)
     @Volatile
@@ -85,8 +87,13 @@ class ServerDatabase private constructor(context: Context) :
         statsGeneration.incrementAndGet()
         statsCache = null
         disabledPlaylistsCache = null
-        vodCategoryCache.clear()
-        vodCountryCountCache.clear()
+        // Mark VOD caches stale instead of wiping them so UI requests always receive instant data
+        vodCategoryCache.keys.toList().forEach { k ->
+            vodCategoryCache[k]?.let { (_, list) -> vodCategoryCache[k] = 0L to list }
+        }
+        vodCountryCountCache.keys.toList().forEach { k ->
+            vodCountryCountCache[k]?.let { (_, map) -> vodCountryCountCache[k] = 0L to map }
+        }
         runCatching {
             synchronized(writeLock) {
                 writableDatabase.execSQL("DELETE FROM search_meta WHERE key IN ('catalog_stats_v1', 'catalog_stats_v2')")
@@ -1254,20 +1261,52 @@ class ServerDatabase private constructor(context: Context) :
         return sourceHealthCache[url.trim()]?.stallCount ?: 0
     }
 
+    private fun ftsTokensForLookup(raw: String): List<String> =
+        Regex("""[\p{L}\p{N}]+""")
+            .findAll(raw.lowercase(Locale.ROOT))
+            .map { it.value }
+            .filter { it.length >= 2 }
+            .distinct()
+            .take(5)
+            .toList()
+
     fun findSiblingVodLogo(channel: IptvChannel): String? {
-        if (!channel.isVod) return null
+        if (!channel.isVod || !ftsSearchReady) return null
         val baseTitle = if (channel.contentType == "series") {
             M3uParser.extractSeriesBaseTitle(channel.name)?.takeIf { it.isNotBlank() }
         } else null
         val lookup = (baseTitle ?: channel.name).trim()
         if (lookup.length < 2) return null
+        val tokens = ftsTokensForLookup(lookup)
+        if (tokens.isEmpty()) return null
+        val ftsMatch = tokens.joinToString(" ") { "$it*" }
         val db = readableDatabase
-        val likePrefix = escapeSqlLikeLiteral(lookup) + "%"
         return runCatching {
             db.rawQuery(
-                "SELECT logo FROM channels WHERE content_type = ? AND name LIKE ? ESCAPE '\\' AND logo IS NOT NULL AND logo != '' LIMIT 1",
-                arrayOf(channel.contentType, likePrefix),
-            ).use { c -> if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null }
+                """
+                SELECT c.name, c.logo FROM channels_fts f
+                CROSS JOIN channels c ON c.rowid = f.docid
+                WHERE channels_fts MATCH ? AND c.content_type = ? AND c.logo IS NOT NULL AND c.logo != ''
+                LIMIT 24
+                """.trimIndent(),
+                arrayOf(ftsMatch, channel.contentType),
+            ).use { c ->
+                var fallbackMatch: String? = null
+                while (c.moveToNext()) {
+                    val rowName = c.getString(0).orEmpty()
+                    val rowLogo = c.getString(1)?.takeIf { it.isNotBlank() } ?: continue
+                    if (rowName.startsWith(lookup, ignoreCase = true) || rowName.equals(lookup, ignoreCase = true)) {
+                        return@use rowLogo
+                    }
+                    if (fallbackMatch == null && channel.contentType == "series") {
+                        val rowBase = M3uParser.extractSeriesBaseTitle(rowName)
+                        if (rowBase != null && rowBase.equals(lookup, ignoreCase = true)) {
+                            fallbackMatch = rowLogo
+                        }
+                    }
+                }
+                fallbackMatch
+            }
         }.getOrNull()
     }
 
@@ -1305,17 +1344,60 @@ class ServerDatabase private constructor(context: Context) :
     fun updateChannelLogo(channelId: String, logoUrl: String, seriesBaseTitle: String = "") {
         val cleanUrl = logoUrl.trim()
         if (channelId.isBlank() || cleanUrl.isBlank()) return
+        val cleanBase = seriesBaseTitle.trim()
+        val siblingRowIds = if (cleanBase.length >= 3 && ftsSearchReady) {
+            val tokens = ftsTokensForLookup(cleanBase)
+            if (tokens.isNotEmpty()) {
+                val ftsMatch = tokens.joinToString(" ") { "$it*" }
+                runCatching {
+                    val out = ArrayList<Long>(32)
+                    readableDatabase.rawQuery(
+                        """
+                        SELECT c.rowid, c.name FROM channels_fts f
+                        CROSS JOIN channels c ON c.rowid = f.docid
+                        WHERE channels_fts MATCH ? AND c.content_type = 'series' AND (c.logo IS NULL OR c.logo = '')
+                        LIMIT 250
+                        """.trimIndent(),
+                        arrayOf(ftsMatch),
+                    ).use { c ->
+                        while (c.moveToNext()) {
+                            val rowId = c.getLong(0)
+                            val rowName = c.getString(1).orEmpty()
+                            if (rowName.startsWith(cleanBase, ignoreCase = true) ||
+                                M3uParser.extractSeriesBaseTitle(rowName).equals(cleanBase, ignoreCase = true)
+                            ) {
+                                out += rowId
+                            }
+                        }
+                    }
+                    out
+                }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
         synchronized(writeLock) {
             runCatching {
                 val db = writableDatabase
-                val cv = ContentValues().apply { put("logo", cleanUrl) }
-                db.update("channels", cv, "id = ?", arrayOf(channelId))
-                if (seriesBaseTitle.trim().length >= 3) {
-                    val likePrefix = escapeSqlLikeLiteral(seriesBaseTitle.trim()) + "%"
-                    db.execSQL(
-                        "UPDATE channels SET logo = ? WHERE content_type = 'series' AND name LIKE ? ESCAPE '\\' AND (logo IS NULL OR logo = '')",
-                        arrayOf(cleanUrl, likePrefix),
-                    )
+                db.beginTransaction()
+                try {
+                    val cv = ContentValues().apply { put("logo", cleanUrl) }
+                    db.update("channels", cv, "id = ?", arrayOf(channelId))
+                    if (siblingRowIds.isNotEmpty()) {
+                        db.compileStatement("UPDATE channels SET logo = ? WHERE rowid = ?").use { stmt ->
+                            for (rid in siblingRowIds) {
+                                stmt.clearBindings()
+                                stmt.bindString(1, cleanUrl)
+                                stmt.bindLong(2, rid)
+                                stmt.executeUpdateDelete()
+                            }
+                        }
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
                 }
             }
         }
@@ -2090,8 +2172,28 @@ class ServerDatabase private constructor(context: Context) :
             return items.take(limit) to totalHint
         }
 
-        val total = db.rawQuery("SELECT COUNT(*) FROM channels c $joinSql WHERE $whereSql", allArgs.toTypedArray()).use {
-            if (it.moveToFirst()) it.getInt(0) else 0
+        val cachedCountryCount = if (
+            useLiveCanonJoin &&
+            !country.isNullOrBlank() &&
+            category.isNullOrBlank() &&
+            categories.isEmpty() &&
+            languageCodes.isEmpty() &&
+            vodLangCountries.isEmpty() &&
+            vodLangCategories.isEmpty() &&
+            favoriteOnlyProfileId.isNullOrBlank() &&
+            !hasDisabledPlaylists()
+        ) {
+            val cc = country.trim().uppercase(Locale.ROOT)
+            (statsCache ?: staleStatsCache)?.byCountry?.firstOrNull { it.first.equals(cc, ignoreCase = true) }?.second
+        } else {
+            null
+        }
+        val total = if (cachedCountryCount != null && cachedCountryCount > 0) {
+            cachedCountryCount
+        } else {
+            db.rawQuery("SELECT COUNT(*) FROM channels c $joinSql WHERE $whereSql", allArgs.toTypedArray()).use {
+                if (it.moveToFirst()) it.getInt(0) else 0
+            }
         }
         val pagedArgs = (allArgs + limit.toString() + offset.toString()).toTypedArray()
         val items = db.rawQuery(
@@ -2981,43 +3083,188 @@ class ServerDatabase private constructor(context: Context) :
         return items to totalHint
     }
 
+    private fun saveVodMetaPairs(metaKey: String, pairs: List<Pair<String, Int>>) {
+        runCatching {
+            val arr = JSONArray()
+            pairs.forEach { (k, v) ->
+                arr.put(JSONArray().put(k).put(v))
+            }
+            synchronized(writeLock) {
+                writableDatabase.execSQL(
+                    "INSERT OR REPLACE INTO search_meta(key, val) VALUES (?, ?)",
+                    arrayOf(metaKey, arr.toString()),
+                )
+            }
+        }
+    }
+
+    private fun loadVodMetaPairs(metaKey: String): List<Pair<String, Int>> {
+        return runCatching {
+            val raw = readableDatabase.rawQuery(
+                "SELECT val FROM search_meta WHERE key = ? LIMIT 1",
+                arrayOf(metaKey),
+            ).use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: return emptyList()
+            val arr = JSONArray(raw)
+            buildList(arr.length()) {
+                for (i in 0 until arr.length()) {
+                    val row = arr.optJSONArray(i) ?: continue
+                    val k = row.optString(0).trim()
+                    val v = row.optInt(1, 0)
+                    if (k.isNotEmpty() && v > 0) add(k to v)
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun computeVodCountryCountsSql(normType: String): Map<String, Int> {
+        val db = readableDatabase
+        val clauses = ArrayList<String>(3)
+        clauses += enabledChannelWhere()
+        contentTypeClause(normType)?.let { clauses += it }
+        val whereSql = clauses.joinToString(" AND ")
+        val map = LinkedHashMap<String, Int>()
+        db.rawQuery(
+            "SELECT c.country, COUNT(*) FROM channels c WHERE c.country != '' AND $whereSql GROUP BY c.country",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                val code = c.getString(0)?.trim()?.uppercase(java.util.Locale.ROOT).orEmpty()
+                if (code.isNotEmpty()) {
+                    map[code] = (map[code] ?: 0) + c.getInt(1)
+                }
+            }
+        }
+        return map
+    }
+
+    private fun triggerVodCountryRefreshAsync(normType: String) {
+        if (!vodCountryRefreshing.compareAndSet(false, true)) return
+        Thread(
+            {
+                try {
+                    val targets = if (normType == "vod") listOf("movie", "series") else listOf(normType)
+                    for (t in targets) {
+                        val map = computeVodCountryCountsSql(t)
+                        if (map.isNotEmpty()) {
+                            vodCountryCountCache[t] = System.currentTimeMillis() to map
+                            saveVodMetaPairs("vod_countries_$t", map.entries.map { it.key to it.value })
+                        }
+                    }
+                    if (normType == "vod" || (vodCountryCountCache["movie"] != null && vodCountryCountCache["series"] != null)) {
+                        val merged = LinkedHashMap<String, Int>()
+                        vodCountryCountCache["movie"]?.second?.forEach { (k, v) -> merged[k] = (merged[k] ?: 0) + v }
+                        vodCountryCountCache["series"]?.second?.forEach { (k, v) -> merged[k] = (merged[k] ?: 0) + v }
+                        if (merged.isNotEmpty()) {
+                            vodCountryCountCache["vod"] = System.currentTimeMillis() to merged
+                        }
+                    }
+                } catch (_: Throwable) {
+                } finally {
+                    vodCountryRefreshing.set(false)
+                }
+            },
+            "CasaVodCountries",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+    }
+
     fun listVodCountryCounts(contentType: String = "vod"): Map<String, Int> {
         val normType = contentType.trim().lowercase(java.util.Locale.ROOT).ifBlank { "vod" }
         val now = System.currentTimeMillis()
-        vodCountryCountCache[normType]?.let { (ts, cached) ->
-            if (now - ts < 300_000L) return cached
+        val existing = vodCountryCountCache[normType]
+        if (existing != null) {
+            val (ts, cached) = existing
+            if (ts > 0L && now - ts < 900_000L) return cached
+            if (cached.isNotEmpty()) {
+                triggerVodCountryRefreshAsync(normType)
+                return cached
+            }
         }
         if (normType == "vod") {
             val merged = LinkedHashMap<String, Int>()
             listVodCountryCounts("movie").forEach { (k, v) -> merged[k] = (merged[k] ?: 0) + v }
             listVodCountryCounts("series").forEach { (k, v) -> merged[k] = (merged[k] ?: 0) + v }
-            vodCountryCountCache["vod"] = System.currentTimeMillis() to merged
+            if (merged.isNotEmpty()) {
+                vodCountryCountCache["vod"] = System.currentTimeMillis() to merged
+            }
             return merged
+        }
+        val persisted = loadVodMetaPairs("vod_countries_$normType").toMap()
+        if (persisted.isNotEmpty()) {
+            vodCountryCountCache[normType] = 0L to persisted
+            triggerVodCountryRefreshAsync(normType)
+            return persisted
+        }
+        val fallbackStats = (statsCache ?: staleStatsCache)?.byCountry?.filter { it.first.isNotBlank() }?.toMap().orEmpty()
+        if (fallbackStats.isNotEmpty()) {
+            vodCountryCountCache[normType] = 0L to fallbackStats
+            triggerVodCountryRefreshAsync(normType)
+            return fallbackStats
         }
         synchronized(vodCategoryComputeLock) {
             val nowLocked = System.currentTimeMillis()
             vodCountryCountCache[normType]?.let { (ts, cached) ->
-                if (nowLocked - ts < 300_000L) return cached
+                if (ts > 0L && nowLocked - ts < 900_000L) return cached
             }
-            val db = readableDatabase
-            val clauses = ArrayList<String>(3)
-            clauses += enabledChannelWhere()
-            contentTypeClause(normType)?.let { clauses += it }
-            val whereSql = clauses.joinToString(" AND ")
-            val map = LinkedHashMap<String, Int>()
-            db.rawQuery(
-                "SELECT c.country, COUNT(*) FROM channels c WHERE c.country != '' AND $whereSql GROUP BY c.country",
-                null,
-            ).use { c ->
-                while (c.moveToNext()) {
-                    val code = c.getString(0)?.trim()?.uppercase(java.util.Locale.ROOT).orEmpty()
-                    if (code.isNotEmpty()) {
-                        map[code] = (map[code] ?: 0) + c.getInt(1)
-                    }
-                }
-            }
+            val map = computeVodCountryCountsSql(normType)
             vodCountryCountCache[normType] = nowLocked to map
+            saveVodMetaPairs("vod_countries_$normType", map.entries.map { it.key to it.value })
             return map
+        }
+    }
+
+    private fun computeVodCategoriesSql(normType: String): List<Pair<String, Int>> {
+        val db = readableDatabase
+        val clauses = ArrayList<String>(3)
+        clauses += enabledChannelWhere()
+        contentTypeClause(normType)?.let { clauses += it }
+        val whereSql = clauses.joinToString(" AND ")
+        return db.rawQuery(
+            "SELECT c.category, COUNT(*) FROM channels c WHERE c.category != '' AND $whereSql GROUP BY c.category",
+            null,
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val cat = c.getString(0).orEmpty().trim()
+                    if (cat.isNotEmpty()) add(cat to c.getInt(1))
+                }
+            }.sortedByDescending { it.second }.take(300)
+        }
+    }
+
+    private fun triggerVodCategoriesRefreshAsync(normType: String) {
+        if (!vodCatRefreshing.compareAndSet(false, true)) return
+        Thread(
+            {
+                try {
+                    val targets = if (normType == "vod") listOf("movie", "series") else listOf(normType)
+                    for (t in targets) {
+                        val rows = computeVodCategoriesSql(t)
+                        if (rows.isNotEmpty()) {
+                            vodCategoryCache["$t||0|300"] = System.currentTimeMillis() to rows
+                            saveVodMetaPairs("vod_cats_$t", rows)
+                        }
+                    }
+                    if (normType == "vod" || (vodCategoryCache["movie||0|300"] != null && vodCategoryCache["series||0|300"] != null)) {
+                        val merged = LinkedHashMap<String, Int>()
+                        vodCategoryCache["movie||0|300"]?.second?.forEach { (cat, cnt) -> merged[cat] = (merged[cat] ?: 0) + cnt }
+                        vodCategoryCache["series||0|300"]?.second?.forEach { (cat, cnt) -> merged[cat] = (merged[cat] ?: 0) + cnt }
+                        if (merged.isNotEmpty()) {
+                            val sorted = merged.entries.sortedByDescending { it.value }.take(300).map { it.key to it.value }
+                            vodCategoryCache["vod||0|300"] = System.currentTimeMillis() to sorted
+                        }
+                    }
+                } catch (_: Throwable) {
+                } finally {
+                    vodCatRefreshing.set(false)
+                }
+            },
+            "CasaVodCategories",
+        ).apply {
+            isDaemon = true
+            start()
         }
     }
 
@@ -3032,29 +3279,71 @@ class ServerDatabase private constructor(context: Context) :
         val normType = contentType.trim().lowercase(java.util.Locale.ROOT).ifBlank { "vod" }
         val cleanCountries = countriesFilter.map { it.trim().uppercase(java.util.Locale.ROOT) }.filter { it.isNotEmpty() }.distinct().sorted().take(40)
         val cleanLangCats = rawCategoriesMatch.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().take(80)
+
+        // Language-scoped categories are filtered instantaneously in memory from the cached global list
+        // instead of executing an unindexed OR-scan across 18M+ rows.
+        if (normCountry.isEmpty() && (cleanCountries.isNotEmpty() || cleanLangCats.isNotEmpty())) {
+            val global = listVodCategories(null, normType, 300)
+            if (cleanLangCats.isNotEmpty()) {
+                val catSet = cleanLangCats.toHashSet()
+                val matched = global.filter { it.first in catSet }
+                if (matched.isNotEmpty()) return matched.take(limit)
+            }
+            return global.take(limit)
+        }
+
         val langCatsHash = cleanLangCats.joinToString("\u0001").hashCode()
         val key = "$normType|$normCountry|${cleanCountries.joinToString(",")}|$langCatsHash|$limit"
+        val globalKey = "$normType||0|300"
         val now = System.currentTimeMillis()
         vodCategoryCache[key]?.let { (ts, cached) ->
-            if (now - ts < 300_000L) return cached
+            if (ts > 0L && now - ts < 900_000L) return cached
+            if (cached.isNotEmpty()) {
+                if (normCountry.isEmpty()) triggerVodCategoriesRefreshAsync(normType)
+                return cached
+            }
+        }
+        if (normCountry.isEmpty()) {
+            vodCategoryCache[globalKey]?.let { (ts, cached) ->
+                if (cached.isNotEmpty()) {
+                    if (ts == 0L || now - ts >= 900_000L) triggerVodCategoriesRefreshAsync(normType)
+                    return cached.take(limit)
+                }
+            }
         }
         if (!vodClassifyReady && normCountry.isEmpty() && cleanCountries.isEmpty() && cleanLangCats.isEmpty()) {
             return computeCatalogStats().byCategory.filter { it.first.isNotBlank() }.take(limit)
         }
-        if (normType == "vod") {
+        if (normType == "vod" && normCountry.isEmpty()) {
             val merged = LinkedHashMap<String, Int>()
-            listVodCategories(country, "movie", maxOf(limit, 240), countriesFilter, rawCategoriesMatch)
+            listVodCategories(null, "movie", maxOf(limit, 240))
                 .forEach { (cat, cnt) -> merged[cat] = (merged[cat] ?: 0) + cnt }
-            listVodCategories(country, "series", maxOf(limit, 240), countriesFilter, rawCategoriesMatch)
+            listVodCategories(null, "series", maxOf(limit, 240))
                 .forEach { (cat, cnt) -> merged[cat] = (merged[cat] ?: 0) + cnt }
             val sorted = merged.entries.sortedByDescending { it.value }.take(limit).map { it.key to it.value }
-            vodCategoryCache[key] = System.currentTimeMillis() to sorted
+            if (sorted.isNotEmpty()) {
+                vodCategoryCache[globalKey] = System.currentTimeMillis() to sorted
+            }
             return sorted
+        }
+        if (normCountry.isEmpty()) {
+            val persisted = loadVodMetaPairs("vod_cats_$normType")
+            if (persisted.isNotEmpty()) {
+                vodCategoryCache[globalKey] = 0L to persisted
+                triggerVodCategoriesRefreshAsync(normType)
+                return persisted.take(limit)
+            }
+            val fallbackStats = (statsCache ?: staleStatsCache)?.byCategory?.filter { it.first.isNotBlank() }.orEmpty()
+            if (fallbackStats.isNotEmpty()) {
+                vodCategoryCache[globalKey] = 0L to fallbackStats
+                triggerVodCategoriesRefreshAsync(normType)
+                return fallbackStats.take(limit)
+            }
         }
         synchronized(vodCategoryComputeLock) {
             val nowLocked = System.currentTimeMillis()
             vodCategoryCache[key]?.let { (ts, cached) ->
-                if (nowLocked - ts < 300_000L) return cached
+                if (ts > 0L && nowLocked - ts < 900_000L) return cached
             }
             val db = readableDatabase
             val clauses = ArrayList<String>(4)
@@ -3064,20 +3353,6 @@ class ServerDatabase private constructor(context: Context) :
             if (normCountry.isNotEmpty()) {
                 clauses += "c.country = ?"
                 args += normCountry
-            }
-            if (cleanCountries.isNotEmpty() || cleanLangCats.isNotEmpty()) {
-                val parts = ArrayList<String>(2)
-                if (cleanCountries.isNotEmpty()) {
-                    val ph = cleanCountries.joinToString(",") { "?" }
-                    parts += "c.country IN ($ph)"
-                    args.addAll(cleanCountries)
-                }
-                if (cleanLangCats.isNotEmpty()) {
-                    val ph = cleanLangCats.joinToString(",") { "?" }
-                    parts += "c.category IN ($ph)"
-                    args.addAll(cleanLangCats)
-                }
-                clauses += "(${parts.joinToString(" OR ")})"
             }
             val whereSql = clauses.joinToString(" AND ")
             val list = db.rawQuery(
@@ -3089,10 +3364,15 @@ class ServerDatabase private constructor(context: Context) :
                         val cat = c.getString(0).orEmpty().trim()
                         if (cat.isNotEmpty()) add(cat to c.getInt(1))
                     }
-                }.sortedByDescending { it.second }.take(limit)
+                }.sortedByDescending { it.second }.take(300)
             }
-            vodCategoryCache[key] = nowLocked to list
-            return list
+            if (normCountry.isEmpty()) {
+                vodCategoryCache[globalKey] = nowLocked to list
+                saveVodMetaPairs("vod_cats_$normType", list)
+            } else {
+                vodCategoryCache[key] = nowLocked to list
+            }
+            return list.take(limit)
         }
     }
 

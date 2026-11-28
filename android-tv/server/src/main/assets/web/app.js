@@ -3,7 +3,7 @@
 import { WORLD_MAP_GRATICULE, WORLD_MAP_REGIONS } from './world-map-data.js?v=26.11.025';
 
 const GITHUB_REPO = 'Natsvkashii/CasaTV';
-const WEB_APP_VERSION = '26.11.059';
+const WEB_APP_VERSION = '26.11.061';
 const LOW_RAM_WEB =
   typeof navigator !== 'undefined' &&
   Number(navigator.deviceMemory || 0) > 0 &&
@@ -1669,9 +1669,7 @@ async function loadVodCategories() {
     state.vodCategories = genres;
     state.vodCategoriesKey = key;
   } catch (_) {
-    state.vodGenres = [];
-    state.vodPlatforms = [];
-    state.vodCategories = [];
+    state.vodCategoriesKey = '';
   }
 }
 
@@ -4217,6 +4215,53 @@ function renderRecordingsList() {
 }
 
 /* ---------------- Player, Quick Drawer & Multi-TV Sync ---------------- */
+const webBufDiagThrottle = new Map();
+function reportWebBufferingDiag(code, message, extra = {}) {
+  try {
+    const ch = state.playerChannel;
+    if (!ch || state.localOverrideChannels) return;
+    const now = Date.now();
+    const tKey = `${ch.id}:${code}`;
+    if (now - (webBufDiagThrottle.get(tKey) || 0) < 8000) return;
+    webBufDiagThrottle.set(tKey, now);
+    if (webBufDiagThrottle.size > 200) webBufDiagThrottle.clear();
+
+    const video = $('#player-video');
+    let bufferAheadMs = -1;
+    if (video && video.buffered && video.buffered.length) {
+      try {
+        bufferAheadMs = Math.max(0, Math.round((video.buffered.end(video.buffered.length - 1) - (video.currentTime || 0)) * 1000));
+      } catch (_) {}
+    }
+    const details = {
+      bufferAheadMs,
+      readyState: video?.readyState ?? -1,
+      networkState: video?.networkState ?? -1,
+      ...extra,
+    };
+    const payload = {
+      code,
+      severity: extra?.fatal ? 'error' : 'warn',
+      source: 'web',
+      deviceId: state.deviceId,
+      deviceName: `Web (${state.deviceType})`,
+      appVersion: WEB_APP_VERSION,
+      channelId: ch.id || '',
+      channelName: ch.name || '',
+      playbackMode: state.relayPlaylistUrl ? 'relay' : (ch.isVod ? 'vod' : 'direct'),
+      streamUrl: state.playerActiveUrl || ch.streamUrl || '',
+      message: String(message || '').slice(0, 400),
+      details,
+    };
+    const base = state.serverUrl && state.serverUrl !== window.location.origin ? state.serverUrl : '';
+    fetch(`${base}/api/diagnostics/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  } catch (_) {}
+}
+
 function openPlayer(channel, queue, { isMix = false, sources = null, sourceIdx = -1, pinSource = false } = {}) {
   stopCardPreview();
   closeCardContextMenu();
@@ -4658,6 +4703,25 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
 
   const onReady = () => {
     if (!state.playerOpen || state.tuneSeq !== seq) return;
+    if (state._webBufStartMs > 0 && state._webBufSeq === seq) {
+      const durMs = Date.now() - state._webBufStartMs;
+      state._webBufStartMs = 0;
+      if (durMs >= 1500 && !state.reconnectActive) {
+        reportWebBufferingDiag(
+          'WEB_BUF_SHORT',
+          `Pausa buffering web (${durMs}ms${state._lastHlsErr ? ` · ${state._lastHlsErr}` : ''})`,
+          {
+            bufferingDurationMs: durMs,
+            reason: state._lastHlsErr || 'waiting_underrun',
+            hlsDetails: state._lastHlsErr || '',
+            httpStatus: state._lastHlsHttpStatus || 0,
+            isVod: Boolean(vodMode),
+          },
+        );
+        state._lastHlsErr = '';
+        state._lastHlsHttpStatus = 0;
+      }
+    }
     clearTimeout(state.playerTuneFailTimer);
     state.playerTuneFailTimer = null;
     loading.hidden = true;
@@ -4876,6 +4940,16 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
     }, 15000);
     setVideoPreservesPitch(video, true);
     video.playbackRate = vodMode && state.playerPlaybackRate ? state.playerPlaybackRate : 1.0;
+    state._webBufStartMs = 0;
+    state._webBufSeq = seq;
+    state._lastHlsErr = '';
+    state._lastHlsHttpStatus = 0;
+    video.onwaiting = () => {
+      if (!state.playerOpen || state.tuneSeq !== seq) return;
+      if (state.hasPlayedCurrentChannel && !state.reconnectActive && !state._webBufStartMs) {
+        state._webBufStartMs = Date.now();
+      }
+    };
     video.onplaying = onReady;
     video.onloadeddata = clearAudioOnlyIfVideo;
     video.onresize = clearAudioOnlyIfVideo;
@@ -4967,7 +5041,32 @@ function tunePlayerChannel(ch, { isMix = state.playerIsMix, skipMarkPlayed = isM
         }
       });
       hls.on(window.Hls.Events.ERROR, (_, data) => {
-        if (!state.playerOpen || state.tuneSeq !== seq || !data.fatal) return;
+        if (!state.playerOpen || state.tuneSeq !== seq) return;
+        const det = String(data?.details || data?.type || '');
+        const httpSt = Number(data?.response?.code || 0);
+        if (det) state._lastHlsErr = det;
+        if (httpSt > 0) state._lastHlsHttpStatus = httpSt;
+        if (
+          data?.fatal ||
+          det === 'bufferStalledError' ||
+          det === 'fragLoadError' ||
+          det === 'fragLoadTimeOut' ||
+          det === 'manifestLoadError' ||
+          det === 'levelLoadError'
+        ) {
+          reportWebBufferingDiag(
+            det === 'bufferStalledError' ? 'WEB_BUF_STALL' : 'WEB_HLS_ERR',
+            `HLS ${det || 'error'}${httpSt ? ` (HTTP ${httpSt})` : ''}`,
+            {
+              hlsType: String(data?.type || ''),
+              hlsDetails: det,
+              httpStatus: httpSt,
+              fatal: Boolean(data?.fatal),
+              isVod: Boolean(vodMode),
+            },
+          );
+        }
+        if (!data.fatal) return;
         fatalCount += 1;
         if (fatalCount === 1 && data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
           hls.startLoad();
@@ -6856,6 +6955,19 @@ function renderSettingsServer(detail) {
             : `<p style="margin:0;color:var(--dim);font-size:12px">${t('Nessun dispositivo rilevato.', 'No devices detected.')}</p>`
         }
       </div>
+    </section>
+
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3>${t('Diagnostica Buffering (ultime 24h)', 'Buffering Diagnostics (last 24h)', 'Diagnóstico de Buffering (24h)')}</h3>
+        <p>${t('Registra quando e perché un canale va in buffering su TV o browser.', 'Records when and why a channel buffers on TV or browser.')}</p>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px">
+        <button type="button" class="casa-btn ghost sm" id="btn-load-buf-diag">${SVG_ICONS.refresh || SVG_ICONS.settings} ${t('Aggiorna log buffering', 'Refresh buffering logs')}</button>
+      </div>
+      <div id="buf-diag-container" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto">
+        <p style="margin:0;color:var(--dim);font-size:12px">${t('Premi "Aggiorna log buffering" per analizzare gli eventi.', 'Press "Refresh buffering logs" to inspect events.')}</p>
+      </div>
     </section>`
     : renderAdminGateCardHtml({
         heading: t('Impostazioni Server & Dispositivi', 'Server Settings & Connected Users'),
@@ -6925,6 +7037,38 @@ function renderSettingsServer(detail) {
     toast(t('Aggiornamento del catalogo avviato', 'Catalog update started'));
   });
   $('#btn-srv-updates')?.addEventListener('click', () => checkGitHubUpdates(true));
+  const loadBufferingDiagUi = async () => {
+    const box = $('#buf-diag-container', detail);
+    if (!box) return;
+    box.innerHTML = `<p style="margin:0;color:var(--muted);font-size:12px">${t('Caricamento diagnostica…', 'Loading diagnostics…')}</p>`;
+    try {
+      const data = await api('/api/diagnostics/buffering?hours=24&limit=25');
+      const events = data.events || [];
+      if (!events.length) {
+        box.innerHTML = `<p style="margin:0;color:var(--dim);font-size:12px">${t('Nessun episodio di buffering registrato nelle ultime 24h.', 'No buffering events recorded in the last 24h.')}</p>`;
+        return;
+      }
+      box.innerHTML = events
+        .map((ev) => {
+          const dt = new Date(ev.tsMs || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          const dur = ev.details?.bufferingDurationMs || ev.details?.elapsedMs || '';
+          const durTxt = dur ? ` · ${dur}ms` : '';
+          return `
+            <div class="device-row" style="align-items:flex-start;flex-direction:column;gap:3px">
+              <div style="display:flex;justify-content:space-between;width:100%;gap:8px">
+                <strong>${esc(ev.channelName || ev.channelId || 'Canale')}</strong>
+                <small style="color:var(--dim)">${esc(dt)} · ${esc(ev.deviceName || ev.source)}</small>
+              </div>
+              <div style="font-size:12px;color:var(--amber)">${esc(ev.probableCause || ev.message || ev.code)}${esc(durTxt)}</div>
+            </div>
+          `;
+        })
+        .join('');
+    } catch (err) {
+      box.innerHTML = `<p style="margin:0;color:var(--red);font-size:12px">${esc(err.message)}</p>`;
+    }
+  };
+  $('#btn-load-buf-diag', detail)?.addEventListener('click', loadBufferingDiagUi);
   $$('[data-freq]', detail).forEach((b) =>
     b.addEventListener('click', () => {
       state.updateFrequency = b.dataset.freq;

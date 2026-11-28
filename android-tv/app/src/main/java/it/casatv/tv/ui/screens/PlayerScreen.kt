@@ -176,6 +176,10 @@ private class PlayerDiagState {
     @Volatile var lastAudioCodec: String = ""
     @Volatile var lastBandwidthKbps: Int = 0
     @Volatile var midPlayBufferingSinceMs: Long = 0L
+    @Volatile var lastSyncSeekAtMs: Long = 0L
+    @Volatile var lastLoadErrorMsg: String = ""
+    @Volatile var lastHttpStatus: Int = 0
+    @Volatile var lastDroppedFrames: Int = 0
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -1184,6 +1188,8 @@ fun PlayerScreen(vm: MainViewModel) {
                 wasCanceled: Boolean,
             ) {
                 val httpStatus = (error as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+                diagState.lastHttpStatus = httpStatus ?: 0
+                diagState.lastLoadErrorMsg = (error.message ?: error.javaClass.simpleName).take(160)
                 reportChannelDiag(
                     code = TvDiagnosticCodes.TV_LOAD_ERROR,
                     severity = "warn",
@@ -1204,6 +1210,7 @@ fun PlayerScreen(vm: MainViewModel) {
                 droppedFrames: Int,
                 elapsedMs: Long,
             ) {
+                diagState.lastDroppedFrames += droppedFrames
                 if (droppedFrames >= 15) {
                     reportChannelDiag(
                         code = TvDiagnosticCodes.TV_FRAMES_DROPPED,
@@ -1251,19 +1258,41 @@ fun PlayerScreen(vm: MainViewModel) {
                 } else {
                     val bufStarted = diagState.midPlayBufferingSinceMs
                     if (playbackState == Player.STATE_READY && bufStarted > 0L) {
-                        val bufDurMs = System.currentTimeMillis() - bufStarted
-                        if (bufDurMs >= 2_500L && !reconnecting && latestTimeshiftStage == TimeshiftStage.LIVE) {
+                        val now = System.currentTimeMillis()
+                        val bufDurMs = now - bufStarted
+                        if (bufDurMs >= 1_500L && !reconnecting && latestTimeshiftStage == TimeshiftStage.LIVE) {
                             val srcUrl = currentStreamUrlState.orEmpty()
                             if (srcUrl.isNotBlank() && !latestChannel.isVodContent) {
                                 vm.reportChannelSourceAsync(latestChannel.id, srcUrl, "stall")
                             }
+                            val sinceSyncSeekMs = if (diagState.lastSyncSeekAtMs > 0L) now - diagState.lastSyncSeekAtMs else -1L
+                            val reason = when {
+                                sinceSyncSeekMs in 1L..6_000L -> "post_sync_seek"
+                                diagState.lastLoadErrorMsg.isNotBlank() -> "load_error"
+                                else -> "mid_play_underrun"
+                            }
+                            android.util.Log.w(
+                                "CasaBufDiag",
+                                "Buffering on ch='${latestChannel.name}' dur=${bufDurMs}ms reason=$reason http=${diagState.lastHttpStatus} syncActive=${syncState?.syncActive == true} bw=${diagState.lastBandwidthKbps}kbps err='${diagState.lastLoadErrorMsg}'",
+                            )
                             reportChannelDiag(
                                 code = TvDiagnosticCodes.TV_BUF_SHORT,
-                                severity = "warn",
-                                message = "Pausa di buffering in riproduzione (${bufDurMs}ms)",
-                                extraDetails = mapOf("bufferingDurationMs" to bufDurMs),
-                                throttleMs = 12_000L,
+                                severity = if (bufDurMs >= 4_000L) "error" else "warn",
+                                message = "Pausa di buffering in riproduzione (${bufDurMs}ms · $reason)",
+                                extraDetails = mapOf(
+                                    "bufferingDurationMs" to bufDurMs,
+                                    "reason" to reason,
+                                    "sinceSyncSeekMs" to sinceSyncSeekMs,
+                                    "httpStatus" to diagState.lastHttpStatus,
+                                    "lastLoadError" to diagState.lastLoadErrorMsg,
+                                    "droppedFrames" to diagState.lastDroppedFrames,
+                                    "isVod" to latestChannel.isVodContent,
+                                    "syncActive" to (syncState?.syncActive == true),
+                                ),
+                                throttleMs = 8_000L,
                             )
+                            diagState.lastLoadErrorMsg = ""
+                            diagState.lastHttpStatus = 0
                         }
                     }
                     diagState.midPlayBufferingSinceMs = 0L
@@ -1524,11 +1553,20 @@ fun PlayerScreen(vm: MainViewModel) {
                     if (!latestChannel.isVodContent && srcUrl.isNotBlank()) {
                         vm.reportChannelSourceAsync(latestChannel.id, srcUrl, "stall")
                     }
+                    val sinceSyncSeekMs = if (diagState.lastSyncSeekAtMs > 0L) now - diagState.lastSyncSeekAtMs else -1L
                     reportChannelDiag(
                         code = TvDiagnosticCodes.TV_BUF_TIMEOUT,
                         severity = "error",
                         message = "Buffering prolungato (${elapsedBufMs}ms), avvio riconnessione",
-                        extraDetails = mapOf("elapsedMs" to elapsedBufMs),
+                        extraDetails = mapOf(
+                            "elapsedMs" to elapsedBufMs,
+                            "reason" to if (sinceSyncSeekMs in 1L..8_000L) "post_sync_seek" else "buffering_timeout",
+                            "sinceSyncSeekMs" to sinceSyncSeekMs,
+                            "httpStatus" to diagState.lastHttpStatus,
+                            "lastLoadError" to diagState.lastLoadErrorMsg,
+                            "droppedFrames" to diagState.lastDroppedFrames,
+                            "syncActive" to (syncState?.syncActive == true),
+                        ),
                     )
                     scheduleAutoReconnect("buffering_timeout")
                 }
@@ -1732,6 +1770,7 @@ fun PlayerScreen(vm: MainViewModel) {
                         if (seekReady) {
                             if (!isLive && player.duration > 4_000L) {
                                 lastSeekTime = now
+                                diagState.lastSyncSeekAtMs = now
                                 runCatching {
                                     player.seekTo(compensatedPosMs.coerceIn(0L, (player.duration - 2_000L).coerceAtLeast(0L)))
                                     player.playbackParameters = PlaybackParameters(1.0f, 1.0f)
@@ -1755,6 +1794,7 @@ fun PlayerScreen(vm: MainViewModel) {
                                     val clampedTarget = targetPos.coerceIn(1_000L, maxSafePos)
                                     if (kotlin.math.abs(clampedTarget - currentPos) >= 2_000L) {
                                         lastSeekTime = now
+                                        diagState.lastSyncSeekAtMs = now
                                         runCatching {
                                             player.seekTo(clampedTarget)
                                             player.playbackParameters = PlaybackParameters(1.0f, 1.0f)

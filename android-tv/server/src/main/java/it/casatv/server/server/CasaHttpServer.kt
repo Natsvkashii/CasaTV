@@ -2696,10 +2696,16 @@ class CasaHttpServer(
                 globalRawCats.take(limit)
             }
             val tax = VodTaxonomy.classifyRawCategories(scopedRawCats, lang)
-            val genres = if (tax.genres.isNotEmpty()) {
-                tax.genres
-            } else {
-                scopedRawCats.filter { (cat, _) ->
+            val genres = when {
+                tax.genres.isNotEmpty() -> tax.genres
+                vodLangParam != null -> {
+                    val globalGenres = VodTaxonomy.classifyRawCategories(globalRawCats, lang).genres
+                    if (globalGenres.isNotEmpty()) globalGenres
+                    else globalRawCats.take(12).map { (cat, cnt) ->
+                        it.casatv.server.core.VodFacetItem("raw:$cat", categoryName(cat, lang), cnt)
+                    }
+                }
+                else -> scopedRawCats.filter { (cat, _) ->
                     VodTaxonomy.PLATFORMS.none { p -> p.matchers.any { it.containsMatchIn(cat) } }
                 }.take(12).map { (cat, cnt) ->
                     it.casatv.server.core.VodFacetItem("raw:$cat", categoryName(cat, lang), cnt)
@@ -3092,6 +3098,79 @@ class CasaHttpServer(
     /* Diagnostics API (/api/diagnostics/...)                              */
     /* ------------------------------------------------------------------ */
 
+    private fun isBufferingOrPlaybackCode(code: String): Boolean {
+        val up = code.uppercase(Locale.ROOT)
+        return "BUF" in up || "STALL" in up || "RECONNECT" in up || "UNDERRUN" in up ||
+            "DROP" in up || "HLS" in up || "LOAD_ERROR" in up || "ERR" in up
+    }
+
+    private fun inferBufferingCause(details: org.json.JSONObject): String {
+        val reason = details.optString("reason", "")
+        val sinceSyncSeekMs = details.optLong("sinceSyncSeekMs", -1L)
+        val httpStatus = details.optInt("httpStatus", details.optInt("httpStatusCode", 0))
+        val relayStatus = details.optString("relayStatus", "")
+        val exoBw = details.optInt("exoBandwidthKbps", 0)
+        val vBitrate = details.optInt("videoBitrateKbps", 0)
+        val stallCount = details.optInt("sourceStallCount", 0)
+        val serverImportActive = details.optBoolean("serverImportActive", false)
+        val bufAheadMs = details.optLong("bufferAheadMs", -1L)
+        val dropped = details.optInt("droppedFrames", 0)
+        val hlsDetails = details.optString("hlsDetails", "")
+        return when {
+            reason == "post_sync_seek" || (sinceSyncSeekMs in 1L..6_000L) ->
+                "Seek di sincronizzazione Multi-TV"
+            httpStatus >= 400 ->
+                "Errore HTTP upstream ($httpStatus) dal provider"
+            relayStatus == "error" || relayStatus == "stalled" || relayStatus == "dead" ->
+                "Flusso upstream interrotto o sorgente non rispondente"
+            hlsDetails == "fragLoadTimeOut" || hlsDetails == "fragLoadError" || hlsDetails == "manifestLoadError" ->
+                "Segmento HLS lento o non raggiungibile ($hlsDetails)"
+            exoBw > 0 && vBitrate > 0 && exoBw < (vBitrate * 0.85) ->
+                "Banda insufficiente (${exoBw} kbps < ${vBitrate} kbps richiesti)"
+            stallCount >= 2 ->
+                "Sorgente upstream instabile ($stallCount stalli registrati)"
+            serverImportActive && bufAheadMs in 0L..500L ->
+                "Contesa I/O durante importazione playlist sul server"
+            bufAheadMs in 0L..500L ->
+                "Buffer esaurito (sorgente upstream lenta o congestione rete)"
+            dropped >= 15 ->
+                "Sovraccarico decoder video sul dispositivo ($dropped frame persi)"
+            else ->
+                "Buffering temporaneo / ricaricamento segmenti"
+        }
+    }
+
+    private fun enrichDiagnosticEvent(input: DiagnosticLogInput): DiagnosticLogInput {
+        if (!isBufferingOrPlaybackCode(input.code)) return input
+        val details = runCatching {
+            if (input.detailsJson.isNotBlank() && input.detailsJson != "{}") {
+                org.json.JSONObject(input.detailsJson)
+            } else {
+                org.json.JSONObject()
+            }
+        }.getOrElse { org.json.JSONObject() }
+        val importActive = runCatching {
+            it.casatv.server.core.PlaylistImportEngine.get(context).hasActiveImport()
+        }.getOrDefault(false)
+        details.put("serverImportActive", importActive)
+        if (input.streamUrl.isNotBlank()) {
+            val (rStatus, rLatency) = runCatching { liveRelay.streamHealthInfo(input.streamUrl) }.getOrElse { "unknown" to null }
+            val stalls = runCatching { db.sourceStallCount(input.streamUrl) }.getOrDefault(0)
+            details.put("relayStatus", rStatus)
+            if (rLatency != null) details.put("relayLatencyMs", rLatency)
+            details.put("sourceStallCount", stalls)
+        }
+        val cause = details.optString("probableCause", "").ifBlank { inferBufferingCause(details) }
+        details.put("probableCause", cause)
+        val enrichedJson = details.toString()
+        val devLabel = input.deviceName.ifBlank { input.deviceId.ifBlank { input.source } }
+        android.util.Log.w(
+            "CasaBufDiag",
+            "[${input.code}] dev='$devLabel' ch='${input.channelName}' mode=${input.playbackMode.ifBlank { "-" }} cause='$cause' msg='${input.message}' details=$enrichedJson",
+        )
+        return input.copy(detailsJson = enrichedJson)
+    }
+
     private fun diagnosticsRoutes(session: IHTTPSession, parts: List<String>): Response {
         val sub = parts.getOrNull(1)
         if ((sub == "events" || sub == "log") && session.method == Method.POST) {
@@ -3118,28 +3197,89 @@ class CasaHttpServer(
                     is JsonPrimitive -> obj.string("detailsJson").ifBlank { detailsElem.content }
                     else -> obj.string("detailsJson").ifBlank { "{}" }
                 }
-                DiagnosticLogInput(
-                    tsMs = tsMs,
-                    source = obj.string("source").ifBlank { "tv" },
-                    severity = obj.string("severity").ifBlank { "warn" },
-                    code = code,
-                    deviceId = obj.string("deviceId").ifBlank { hdrDevId },
-                    deviceName = obj.string("deviceName").ifBlank { hdrDevName },
-                    appVersion = obj.string("appVersion").ifBlank { hdrAppVer },
-                    clientIp = obj.string("clientIp").ifBlank { hdrIp },
-                    channelId = obj.string("channelId"),
-                    channelName = obj.string("channelName"),
-                    playbackMode = obj.string("playbackMode"),
-                    relayKey = obj.string("relayKey"),
-                    streamUrl = obj.string("streamUrl"),
-                    message = obj.string("message"),
-                    detailsJson = detailsJson,
+                enrichDiagnosticEvent(
+                    DiagnosticLogInput(
+                        tsMs = tsMs,
+                        source = obj.string("source").ifBlank { "tv" },
+                        severity = obj.string("severity").ifBlank { "warn" },
+                        code = code,
+                        deviceId = obj.string("deviceId").ifBlank { hdrDevId },
+                        deviceName = obj.string("deviceName").ifBlank { hdrDevName },
+                        appVersion = obj.string("appVersion").ifBlank { hdrAppVer },
+                        clientIp = obj.string("clientIp").ifBlank { hdrIp },
+                        channelId = obj.string("channelId"),
+                        channelName = obj.string("channelName"),
+                        playbackMode = obj.string("playbackMode"),
+                        relayKey = obj.string("relayKey"),
+                        streamUrl = obj.string("streamUrl"),
+                        message = obj.string("message"),
+                        detailsJson = detailsJson,
+                    ),
                 )
             }
             val accepted = db.insertDiagnosticLogs(inputs)
             return jsonResponse(buildJsonObject {
                 put("ok", true)
                 put("accepted", accepted)
+            })
+        }
+        if (sub == "buffering" && session.method == Method.GET) {
+            requireAdmin(session)?.let { return it }
+            val now = System.currentTimeMillis()
+            val hours = session.parm("hours").toIntOrNull()?.coerceIn(1, 24 * 30) ?: 24
+            val limit = session.parm("limit").toIntOrNull()?.coerceIn(1, 200) ?: 100
+            val sinceMs = now - hours.toLong() * 3_600_000L
+            val allRecent = db.queryDiagnosticLogs(
+                sinceMs = sinceMs,
+                limit = 250,
+                offset = 0,
+            )
+            val bufRows = allRecent.filter { isBufferingOrPlaybackCode(it.code) }.take(limit)
+            val causeCounts = LinkedHashMap<String, Int>()
+            val channelCounts = LinkedHashMap<String, Int>()
+            val eventObjects = bufRows.map { row ->
+                val detailsObj = runCatching {
+                    if (row.detailsJson.isNotBlank() && row.detailsJson != "{}") org.json.JSONObject(row.detailsJson)
+                    else org.json.JSONObject()
+                }.getOrElse { org.json.JSONObject() }
+                val cause = detailsObj.optString("probableCause", "").ifBlank { inferBufferingCause(detailsObj) }
+                causeCounts[cause] = (causeCounts[cause] ?: 0) + 1
+                val chKey = row.channelName.ifBlank { row.channelId.ifBlank { "Sconosciuto" } }
+                channelCounts[chKey] = (channelCounts[chKey] ?: 0) + 1
+                val parsedDetails: JsonElement = runCatching {
+                    ApiJson.parseToJsonElement(row.detailsJson)
+                }.getOrElse { JsonPrimitive(row.detailsJson) }
+                buildJsonObject {
+                    put("id", row.id)
+                    put("tsMs", row.tsMs)
+                    put("tsIso", Instant.ofEpochMilli(row.tsMs).toString())
+                    put("source", row.source)
+                    put("severity", row.severity)
+                    put("code", row.code)
+                    put("deviceName", row.deviceName.ifBlank { row.deviceId.ifBlank { row.source } })
+                    put("channelName", row.channelName)
+                    put("channelId", row.channelId)
+                    put("playbackMode", row.playbackMode)
+                    put("message", row.message)
+                    put("probableCause", cause)
+                    put("details", parsedDetails)
+                }
+            }
+            return jsonResponse(buildJsonObject {
+                put("ok", true)
+                put("hours", hours)
+                put("count", eventObjects.size)
+                putJsonArray("summaryByCause") {
+                    causeCounts.entries.sortedByDescending { it.value }.forEach { (c, n) ->
+                        add(buildJsonObject { put("cause", c); put("count", n) })
+                    }
+                }
+                putJsonArray("summaryByChannel") {
+                    channelCounts.entries.sortedByDescending { it.value }.take(15).forEach { (ch, n) ->
+                        add(buildJsonObject { put("channel", ch); put("count", n) })
+                    }
+                }
+                putJsonArray("events") { eventObjects.forEach { add(it) } }
             })
         }
         if (sub == "logs" && session.method == Method.GET) {
